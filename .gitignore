@@ -1,0 +1,47 @@
+# ========== Python ==========
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# ========== 前端 ==========
+node_modules/
+frontend/dist/
+# 前端构建/运行日志（*.log 已统一忽略，这里保留以醒目）
+frontend/build.log
+
+# ========== 运行生成的数据（run_batch 重新生成，不入仓） ==========
+backend/app/data/
+
+# ========== 业务数据源 ResourceData ==========
+# 默认【提交】：仓库自包含，异地 clone + run_batch 即可跑。
+# 若你不想把业务 Excel / SPU 图片推进 git（数据敏感或过大），删掉下面这行注释即可忽略：
+# ResourceData/
+
+# ========== 助手工作记忆（非项目源码） ==========
+.workbuddy/
+
+# ========== 版本控制工具元数据 ==========
+# jj（Jujutsu）本地仓库元数据；colocated 模式下 git 会把它当未跟踪文件，必须忽略，勿提交进仓库
+.jj/
+
+# ========== 日志 / 临时 / 截图 ==========
+*.log
+screenshot_*.png
+
+# ========== 编辑器 / 系统文件 ==========
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# ========== Excel 锁文件（Excel 打开时产生，形如 ~$xxx.xlsx） ==========
+~$*
+
+# ========== 密钥 / 环境配置 ==========
+.env
+
+# ========== 临时脚本（scripts 下下划线前缀为临时文件） ==========
+scripts/_*.py

@@ -1,0 +1,4 @@
+# 后端依赖清单统一维护在 backend/requirements.txt（完整 freeze，版本已锁定，便于异地复现）。
+# 这里只做引用，方便在项目根目录一条命令安装：
+#   python -m venv .venv && .venv\Scripts\activate && pip install -r requirements.txt
+-r backend/requirements.txt

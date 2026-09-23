@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>风格 B · 简约艺术风 — POP 单品明细</title>
+<style>
+  :root {
+    --paper: #f7f5f1;
+    --card: #fffefb;
+    --ink: #23211d;
+    --ink-2: #6f6a5e;
+    --ink-3: #a8a294;
+    --hairline: #e4e0d6;
+    --accent: #b0442c;        /* 朱砂 */
+    --accent-soft: #f3e3de;
+    --sage: #5d7a68;
+    --gold: #a9852f;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "Helvetica Neue", "PingFang SC", "Microsoft YaHei", sans-serif;
+    min-height: 100vh;
+    padding: 40px 48px 80px;
+  }
+  .wrap { max-width: 1380px; margin: 0 auto; }
+  .serif { font-family: Georgia, "Songti SC", "SimSun", serif; }
+
+  /* ---------- 顶栏 ---------- */
+  header { display: flex; justify-content: space-between; align-items: flex-end; padding-bottom: 22px; border-bottom: 1px solid var(--ink); margin-bottom: 34px; }
+  h1 { font-size: 30px; font-weight: 500; letter-spacing: 6px; }
+  h1 .no { font-size: 13px; color: var(--accent); letter-spacing: 2px; display: block; margin-bottom: 8px; font-family: Georgia, serif; font-style: italic; }
+  .toolbar { display: flex; gap: 12px; align-items: center; font-size: 12.5px; color: var(--ink-2); }
+  .tool-chip { border: 1px solid var(--hairline); border-radius: 999px; padding: 7px 16px; background: var(--card); }
+  .tool-btn { border: 1px solid var(--ink); border-radius: 999px; padding: 7px 18px; background: var(--ink); color: var(--paper); cursor: pointer; font-size: 12.5px; letter-spacing: 1px; }
+  .update { color: var(--ink-3); font-size: 11.5px; }
+
+  /* ---------- 指标卡 ---------- */
+  .section-label { display: flex; align-items: baseline; gap: 14px; margin: 0 0 18px; }
+  .section-label .en { font-family: Georgia, serif; font-style: italic; font-size: 12px; color: var(--accent); letter-spacing: 2px; }
+  .section-label .cn { font-size: 15px; letter-spacing: 4px; color: var(--ink); }
+  .section-label .rule { flex: 1; height: 1px; background: var(--hairline); }
+
+  .cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0; border-top: 1px solid var(--hairline); border-left: 1px solid var(--hairline); margin-bottom: 44px; background: var(--card); }
+  .card { border-right: 1px solid var(--hairline); border-bottom: 1px solid var(--hairline); padding: 22px 24px 18px; position: relative; transition: background .25s; }
+  .card:hover { background: #fbf9f4; }
+  .card .k { font-size: 12px; color: var(--ink-2); letter-spacing: 2px; display: flex; justify-content: space-between; }
+  .card .k .idx { font-family: Georgia, serif; font-style: italic; color: var(--ink-3); }
+  .card .v { margin-top: 14px; font-size: 30px; font-weight: 400; font-variant-numeric: tabular-nums; letter-spacing: .5px; font-family: Georgia, "Songti SC", serif; }
+  .card .v.accent { color: var(--accent); }
+  .card .foot { margin-top: 10px; font-size: 11px; color: var(--ink-3); letter-spacing: 1px; }
+  .card .bar { position: absolute; left: 24px; right: 24px; bottom: 0; height: 2px; background: var(--hairline); }
+  .card .bar i { display: block; height: 100%; background: var(--accent); }
+
+  /* ---------- 表格 ---------- */
+  .panel { background: var(--card); border: 1px solid var(--hairline); }
+  .panel-head { display: flex; justify-content: space-between; align-items: center; padding: 16px 22px; border-bottom: 1px solid var(--ink); }
+  .panel-head .t { font-size: 15px; letter-spacing: 3px; }
+  .panel-head .tag { font-size: 11px; color: var(--ink-3); letter-spacing: 1px; }
+  .table-scroll { overflow-x: auto; }
+  table { border-collapse: separate; border-spacing: 0; width: 100%; min-width: 1500px; font-size: 13px; }
+  thead th {
+    background: var(--card); color: var(--ink-2); font-weight: 400; font-size: 11.5px; letter-spacing: 2px;
+    padding: 13px 16px; text-align: right; border-bottom: 1px solid var(--hairline); white-space: nowrap;
+  }
+  thead th.l, tbody td.l { text-align: left; }
+  tbody td { padding: 14px 16px; text-align: right; border-bottom: 1px solid var(--hairline); font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--ink); }
+  tbody tr:hover td { background: #faf7f0; }
+  .prod { display: flex; gap: 14px; align-items: center; }
+  .prod .img { width: 52px; height: 52px; border: 1px solid var(--hairline); background: #f2efe8; flex: none; display: flex; align-items: center; justify-content: center; color: var(--ink-3); font-size: 10px; }
+  .prod .nm { font-size: 13px; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .prod .spu { font-size: 11px; color: var(--accent); margin-top: 3px; letter-spacing: .5px; }
+  .sticky-col {
+    position: sticky; right: 0; background: var(--card) !important;
+    box-shadow: -10px 0 18px rgba(35, 33, 29, 0.06);
+    border-left: 1px solid var(--ink) !important; text-align: center !important;
+  }
+  .link-btn {
+    color: var(--accent); cursor: pointer; font-size: 12px; letter-spacing: 2px;
+    border-bottom: 1px solid var(--accent); padding-bottom: 2px; transition: opacity .2s;
+  }
+  .link-btn:hover { opacity: .6; }
+
+  /* ---------- 单品分析视图 ---------- */
+  .divider { display: flex; align-items: center; gap: 18px; margin: 60px 0 30px; }
+  .divider .diamond { width: 8px; height: 8px; background: var(--accent); transform: rotate(45deg); }
+  .divider .txt { font-size: 12px; letter-spacing: 4px; color: var(--ink-3); }
+  .divider .rule { flex: 1; height: 1px; background: var(--hairline); }
+
+  .spu-hero { display: flex; gap: 22px; align-items: center; padding: 26px; border: 1px solid var(--hairline); background: var(--card); margin-bottom: 26px; }
+  .spu-hero .img { width: 88px; height: 88px; border: 1px solid var(--hairline); background: #f2efe8; display: flex; align-items: center; justify-content: center; color: var(--ink-3); font-size: 11px; flex: none; }
+  .spu-hero h2 { font-size: 21px; font-weight: 500; letter-spacing: 2px; }
+  .spu-hero .meta { margin-top: 8px; font-size: 12px; color: var(--ink-2); letter-spacing: 1px; }
+  .spu-hero .meta b { color: var(--accent); font-weight: 500; }
+  .back { margin-left: auto; border: 1px solid var(--ink); background: none; border-radius: 999px; padding: 8px 20px; font-size: 12.5px; letter-spacing: 2px; cursor: pointer; color: var(--ink); }
+
+  .mini-cards { display: grid; grid-template-columns: repeat(6, 1fr); border-top: 1px solid var(--hairline); border-left: 1px solid var(--hairline); background: var(--card); margin-bottom: 34px; }
+  .mini { border-right: 1px solid var(--hairline); border-bottom: 1px solid var(--hairline); padding: 16px 18px; }
+  .mini .k { font-size: 11px; color: var(--ink-2); letter-spacing: 1.5px; }
+  .mini .v { margin-top: 8px; font-size: 21px; font-family: Georgia, serif; font-variant-numeric: tabular-nums; }
+
+  .chart-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin-bottom: 26px; }
+  .chart-box { border: 1px solid var(--hairline); background: var(--card); padding: 18px 20px; }
+  .chart-box h4 { font-size: 13px; letter-spacing: 3px; font-weight: 500; margin-bottom: 4px; }
+  .chart-box .en { font-family: Georgia, serif; font-style: italic; font-size: 10.5px; color: var(--ink-3); letter-spacing: 1px; margin-bottom: 10px; }
+  .chart-box svg { width: 100%; height: 170px; display: block; }
+
+  .vs-box { border: 1px solid var(--hairline); background: var(--card); padding: 18px 20px; margin-bottom: 26px; }
+  .vs-box svg { width: 100%; height: 190px; display: block; }
+
+  .insight { border: 1px solid var(--hairline); background: var(--card); padding: 28px 32px; position: relative; }
+  .insight::before { content: "“"; position: absolute; top: 6px; left: 16px; font-family: Georgia, serif; font-size: 64px; color: var(--accent-soft); }
+  .insight h4 { font-size: 14px; letter-spacing: 4px; font-weight: 500; margin-bottom: 14px; padding-left: 34px; }
+  .insight h4 .en { font-family: Georgia, serif; font-style: italic; color: var(--accent); font-size: 11px; letter-spacing: 2px; margin-right: 10px; }
+  .insight p { font-size: 13.5px; line-height: 2.1; color: var(--ink-2); letter-spacing: .5px; }
+  .insight b { color: var(--accent); font-weight: 500; }
+  .insight b.s { color: var(--sage); }
+
+  @media (max-width: 1100px) { .cards { grid-template-columns: repeat(2,1fr); } .mini-cards { grid-template-columns: repeat(3,1fr); } .chart-grid { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- ================= 主视图 ================= -->
+  <header>
+    <h1><span class="no">No.01 — Overview</span>POP 单品明细</h1>
+    <div class="toolbar">
+      <span class="tool-chip">2026-08-14 — 2026-09-13</span>
+      <span class="tool-chip">全部店铺</span>
+      <span class="update">更新于 09-16 08:19</span>
+      <button class="tool-btn">刷新数据</button>
+    </div>
+  </header>
+
+  <div class="section-label"><span class="en">Metrics</span><span class="cn">核心指标</span><span class="rule"></span></div>
+  <div class="cards">
+    <div class="card"><div class="k">总 SPU 数<span class="idx">01</span></div><div class="v">12</div><div class="foot">在架单品</div></div>
+    <div class="card"><div class="k">访客数<span class="idx">02</span></div><div class="v">286,410</div><div class="foot">商品访客数合计</div><div class="bar"><i style="width:82%"></i></div></div>
+    <div class="card"><div class="k">成交人数<span class="idx">03</span></div><div class="v">9,843</div><div class="foot">成交客户数合计</div></div>
+    <div class="card"><div class="k">成交商品件数<span class="idx">04</span></div><div class="v">12,076</div><div class="foot">件单价 ¥43.60</div></div>
+    <div class="card"><div class="k">成交金额<span class="idx">05</span></div><div class="v accent">¥526,514</div><div class="foot">UV 价值 ¥1.84</div><div class="bar"><i style="width:100%"></i></div></div>
+    <div class="card"><div class="k">转化率<span class="idx">06</span></div><div class="v">3.44%</div><div class="foot">成交人数 / 访客数</div></div>
+    <div class="card"><div class="k">取消及售后退款单量<span class="idx">07</span></div><div class="v">312</div><div class="foot">占成交单量 3.1%</div></div>
+    <div class="card"><div class="k">取消及售后退款金额<span class="idx">08</span></div><div class="v">¥13,860</div><div class="foot">占成交金额 2.6%</div></div>
+  </div>
+
+  <div class="section-label"><span class="en">Detail</span><span class="cn">单品明细表</span><span class="rule"></span></div>
+  <div class="panel">
+    <div class="panel-head"><span class="t">明细列表</span><span class="tag">372 行 · 「分析」列固定于右侧</span></div>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th class="l">#</th><th class="l">商品信息</th><th>成交金额</th><th>成交件数</th><th>转化率</th>
+            <th>访客数</th><th>成交人数</th><th>退款单量</th><th>退款金额</th>
+            <th>推广费</th><th>推广成交金额</th><th>ROI</th><th>推广占比</th>
+            <th class="sticky-col">分析</th>
+          </tr>
+        </thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ================= 单品分析视图 ================= -->
+  <div class="divider"><span class="diamond"></span><span class="txt">单品分析视图 · SPU ANALYSIS</span><span class="rule"></span><span class="diamond"></span></div>
+
+  <div class="spu-hero">
+    <div class="img">商品图</div>
+    <div>
+      <h2>钻芯 净水器滤芯 PPC 复合滤芯套装</h2>
+      <div class="meta">SPU <b>100058217268</b> · 钻芯旗舰店 · 净水器滤芯 · 2026-08-14 — 2026-09-13</div>
+    </div>
+    <button class="back">← 返回列表</button>
+  </div>
+
+  <div class="mini-cards">
+    <div class="mini"><div class="k">访客数</div><div class="v">58,204</div></div>
+    <div class="mini"><div class="k">成交人数</div><div class="v">2,318</div></div>
+    <div class="mini"><div class="k">成交商品件数</div><div class="v">2,905</div></div>
+    <div class="mini"><div class="k">成交金额</div><div class="v">¥132,406</div></div>
+    <div class="mini"><div class="k">转化率</div><div class="v">3.98%</div></div>
+    <div class="mini"><div class="k">退款单量 / 金额</div><div class="v">61 / ¥2,744</div></div>
+  </div>
+
+  <div class="chart-grid">
+    <div class="chart-box"><h4>转化率趋势</h4><div class="en">Conversion Rate Trend</div><svg id="c1" viewBox="0 0 400 170" preserveAspectRatio="none"></svg></div>
+    <div class="chart-box"><h4>成交金额趋势</h4><div class="en">GMV Trend</div><svg id="c2" viewBox="0 0 400 170" preserveAspectRatio="none"></svg></div>
+    <div class="chart-box"><h4>访客数趋势</h4><div class="en">Visitors Trend</div><svg id="c3" viewBox="0 0 400 170" preserveAspectRatio="none"></svg></div>
+  </div>
+
+  <div class="vs-box">
+    <h4 style="font-size:13px;letter-spacing:3px;font-weight:500;margin-bottom:4px;">工作日 × 节假日</h4>
+    <div style="font-family:Georgia,serif;font-style:italic;font-size:10.5px;color:var(--ink-3);letter-spacing:1px;margin-bottom:10px;">Workday vs Holiday · Daily Average</div>
+    <svg id="c4" viewBox="0 0 1200 190" preserveAspectRatio="none"></svg>
+  </div>
+
+  <div class="insight">
+    <h4><span class="en">Insight</span>综合分析</h4>
+    <p>
+      统计区间内，该单品<b>工作日日均成交金额 ¥4,486</b>，节假日日均 ¥3,902，<b>节假日较工作日低 13.0%</b>；
+      访客数节假日日均 1,862，低于工作日的 2,014，流量端同步回落。
+      但<b class="s">转化率节假日逆势升至 4.21%</b>（工作日 3.89%），说明节假日到访用户购买意向更明确——
+      流量减少主要来自曝光收窄，而非页面承接能力下降。
+      退款方面，节假日退款单量占比 2.4%，略优于工作日的 2.7%，售后表现稳定。
+      建议：节假日可适当加大搜索投放以弥补流量缺口，承接端无需调整；重点关注节后 2-3 天的转化回落窗口。
+    </p>
+  </div>
+
+</div>
+
+<script>
+const rows = [
+  ["钻芯 净水器滤芯 PPC 复合滤芯套装", "100058217268", "钻芯旗舰店", 132406, 2905, "3.98%", 58204, 2318, 61, 2744],
+  ["钻芯 反渗透 RO 膜滤芯 400G", "100058217290", "钻芯旗舰店", 98210, 1622, "3.55%", 41033, 1457, 48, 2960],
+  ["卡求 车载充电器 超级快充 66W", "100072341155", "卡求旗舰店", 76533, 2044, "4.12%", 38210, 1574, 39, 1455],
+  ["钻芯 净水器整机 五级过滤", "100058217301", "钻芯水饮电器旗舰店", 64120, 812, "2.66%", 28954, 770, 33, 2610],
+  ["钻芯 前置过滤器 40微米", "100058217315", "钻芯官方旗舰店", 51184, 1308, "3.31%", 30118, 997, 41, 1598],
+  ["卡求 数据线 Type-C 100W 编织", "100072341172", "卡求旗舰店", 44027, 2512, "5.02%", 41402, 2079, 52, 918],
+];
+const fmt = n => "¥" + n.toLocaleString("zh-CN");
+document.getElementById("tbody").innerHTML = rows.map((r, i) => `
+  <tr>
+    <td class="l" style="color:var(--ink-3);font-family:Georgia,serif;font-style:italic">${String(i + 1).padStart(2, "0")}</td>
+    <td class="l"><div class="prod"><div class="img">图</div><div><div class="nm">${r[0]}</div><div class="spu">SPU ${r[1]} · ${r[2]}</div></div></div></td>
+    <td style="color:var(--accent)">${fmt(r[3])}</td><td>${r[4].toLocaleString()}</td><td>${r[5]}</td>
+    <td>${r[6].toLocaleString()}</td><td>${r[7].toLocaleString()}</td><td>${r[8]}</td><td>${fmt(r[9])}</td>
+    <td style="color:var(--ink-3)">—</td><td style="color:var(--ink-3)">—</td>
+    <td style="color:var(--ink-3)">—</td><td style="color:var(--ink-3)">—</td>
+    <td class="sticky-col"><span class="link-btn">单品分析</span></td>
+  </tr>`).join("");
+
+function areaChart(id, data, color, pct) {
+  const svg = document.getElementById(id);
+  const W = 400, H = 170, P = 22;
+  const max = Math.max(...data) * 1.12, min = Math.min(...data) * 0.88;
+  const X = i => P + (W - 2 * P) * i / (data.length - 1);
+  const Y = v => H - P - (H - 2 * P) * (v - min) / (max - min);
+  const pts = data.map((v, i) => `${X(i)},${Y(v)}`).join(" ");
+  const gid = "g" + id;
+  svg.innerHTML = `
+    <defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="${color}" stop-opacity=".14"/><stop offset="1" stop-color="${color}" stop-opacity="0"/>
+    </linearGradient></defs>
+    ${[0.3, 0.55, 0.8].map(t => `<line x1="${P}" x2="${W - P}" y1="${H * t}" y2="${H * t}" stroke="#e4e0d6" stroke-dasharray="2 5"/>`).join("")}
+    <polygon points="${P},${H - P} ${pts} ${W - P},${H - P}" fill="url(#${gid})"/>
+    <polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.5"/>
+    <circle cx="${X(data.length - 1)}" cy="${Y(data[data.length - 1])}" r="3" fill="${color}"/>
+    <text x="${W - P}" y="${Y(data[data.length - 1]) - 8}" fill="${color}" font-size="11" text-anchor="end" font-family="Georgia,serif">${pct ? data[data.length-1].toFixed(2) + "%" : data[data.length-1].toLocaleString()}</text>`;
+}
+const conv = [3.6,3.8,3.5,3.9,4.2,4.0,3.7,3.9,4.1,4.3,3.8,3.6,4.0,4.2,3.9,4.1,3.7,3.95,4.05,4.21,3.88,4.0,3.75,3.9,4.1,4.05,3.8,3.95,4.1,3.98];
+const amt  = [3800,4100,3600,4300,4800,4500,3900,4200,4600,5100,4300,3700,4400,4900,4200,4600,3800,4100,4500,3900,3600,4300,4000,4200,4700,4400,3900,4100,4600,4486];
+const vis  = [1900,2050,1800,2100,2300,2150,1850,2000,2200,2400,2050,1750,2100,2250,1950,2150,1800,1900,2050,1862,1720,2000,1900,1980,2200,2100,1850,1920,2150,2014];
+areaChart("c1", conv, "#b0442c", true);
+areaChart("c2", amt, "#a9852f");
+areaChart("c3", vis, "#5d7a68");
+
+(function () {
+  const svg = document.getElementById("c4");
+  const groups = [
+    ["转化率(%)", 3.89, 4.21, "#b0442c"],
+    ["成交金额(百元/日)", 44.86, 39.02, "#a9852f"],
+    ["访客数(十人/日)", 201.4, 186.2, "#5d7a68"],
+    ["退款单量(单/日)", 10.4, 8.7, "#23211d"],
+  ];
+  const W = 1200, H = 190, P = 60, bw = 22, gap = 130, max = 210;
+  const Y = v => H - 30 - (H - 66) * v / max;
+  let x = P + 90;
+  let s = `<line x1="${P}" x2="${W - P}" y1="${H - 30}" y2="${H - 30}" stroke="#23211d" stroke-width="1"/>`;
+  groups.forEach(([label, wd, hd, color]) => {
+    s += `<rect x="${x}" y="${Y(wd)}" width="${bw}" height="${H - 30 - Y(wd)}" fill="${color}"/>`;
+    s += `<rect x="${x + bw + 5}" y="${Y(hd)}" width="${bw}" height="${H - 30 - Y(hd)}" fill="none" stroke="${color}" stroke-width="1.2"/>`;
+    s += `<text x="${x + bw}" y="${H - 10}" fill="#6f6a5e" font-size="12" text-anchor="middle">${label}</text>`;
+    s += `<text x="${x + bw / 2}" y="${Y(wd) - 6}" fill="${color}" font-size="11" text-anchor="middle" font-family="Georgia,serif">${wd}</text>`;
+    s += `<text x="${x + bw * 1.5 + 5}" y="${Y(hd) - 6}" fill="${color}" font-size="11" text-anchor="middle" font-family="Georgia,serif">${hd}</text>`;
+    x += gap * 2;
+  });
+  s += `<rect x="${W - 250}" y="12" width="10" height="10" fill="#23211d"/><text x="${W - 236}" y="21" fill="#6f6a5e" font-size="11">工作日（实心）</text>`;
+  s += `<rect x="${W - 150}" y="12" width="10" height="10" fill="none" stroke="#23211d"/><text x="${W - 136}" y="21" fill="#6f6a5e" font-size="11">节假日（描边）</text>`;
+  svg.innerHTML = s;
+})();
+</script>
+</body>
+</html>

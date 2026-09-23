@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>单品分析页 · 时间范围模式指标卡（样例，未改代码）</title>
+<style>
+  :root{
+    --bg:#f8fafc; --card:#fff; --line:#e5e7eb; --line2:#e2e8f0;
+    --ink:#0f172a; --ink2:#64748b; --ink3:#94a3b8;
+    --red:#e1251b; --blue:#2563eb; --amber:#f59e0b; --violet:#7c3aed;
+    --sum-bg:#f8fafc; --avg-bg:#fff7f6;
+  }
+  *{margin:0;padding:0;box-sizing:border-box;}
+  body{background:var(--bg);color:var(--ink);
+    font-family:-apple-system,"PingFang SC","Microsoft YaHei",Segoe UI,sans-serif;
+    padding:28px 32px 60px;line-height:1.5;}
+  .wrap{max-width:1180px;margin:0 auto;}
+  .banner{background:#fffbeb;border:1px solid #fde68a;border-left:4px solid #f59e0b;
+    border-radius:8px;padding:10px 16px;font-size:12.5px;color:#92400e;margin-bottom:18px;}
+  .topbar{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;
+    background:#fff;border:1px solid var(--line);border-radius:10px;padding:12px 16px;margin-bottom:14px;}
+  .topbar .ttl{font-size:15px;font-weight:600;}
+  .range-chip{font-size:12.5px;color:#475569;background:#f1f5f9;border:1px solid var(--line2);
+    border-radius:999px;padding:6px 14px;white-space:nowrap;}
+  .hero{display:flex;gap:16px;align-items:center;background:#fff;border:1px solid var(--line);
+    border-radius:10px;padding:14px 18px;margin-bottom:18px;}
+  .hero .img{width:84px;height:84px;border:1px solid #f1f5f9;background:#f8fafc;border-radius:8px;
+    flex:none;display:flex;align-items:center;justify-content:center;color:var(--ink3);font-size:12px;}
+  .hero .nm{font-size:16px;font-weight:600;margin-bottom:6px;}
+  .hero .meta{display:flex;gap:14px;flex-wrap:wrap;font-size:12.5px;color:var(--ink2);}
+  .hero .meta b{color:var(--blue);font-weight:500;}
+  .sec-title{display:flex;align-items:baseline;gap:12px;margin:6px 0 14px;}
+  .sec-title .cn{font-size:14px;font-weight:600;color:#334155;letter-spacing:1px;}
+  .sec-title .en{font-size:11px;color:var(--ink3);}
+  .sec-title .rule{flex:1;height:1px;background:var(--line2);}
+
+  /* ---------- 指标卡（求和 / 平均值 两分块） ---------- */
+  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px;}
+  .card{position:relative;background:var(--card);border:1px solid var(--line);border-radius:10px;
+    overflow:hidden;padding:12px 14px 14px;box-shadow:0 1px 3px rgba(15,23,42,.04);}
+  .card::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;
+    background:linear-gradient(180deg,var(--red),rgba(225,37,27,.15));opacity:.85;}
+  .ctitle{display:flex;justify-content:space-between;align-items:center;
+    font-size:13px;font-weight:600;color:#334155;margin-bottom:10px;padding-left:4px;}
+  .ctitle .tag{font-size:10.5px;font-weight:500;color:var(--ink3);
+    border:1px solid var(--line2);border-radius:4px;padding:1px 6px;}
+  .part{border-radius:8px;padding:9px 11px;}
+  .part.sum{background:var(--sum-bg);border:1px solid var(--line2);}
+  .part.avg{background:var(--avg-bg);border:1px solid #fecaca;}
+  .plabel{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--ink2);margin-bottom:6px;}
+  .plabel .dot{width:7px;height:7px;border-radius:2px;}
+  .part.sum .dot{background:#475569;}
+  .part.avg .dot{background:var(--red);}
+  .pval{font-size:22px;font-weight:700;color:var(--ink);font-variant-numeric:tabular-nums;letter-spacing:.3px;}
+  .pval.small{font-size:15px;font-weight:600;}
+  .pval.avgv{color:var(--red);}
+  .psub{font-size:11px;color:var(--ink3);margin-top:4px;font-variant-numeric:tabular-nums;}
+  .pdiv{height:8px;}
+  .note-num{font-size:10px;color:#cbd5e1;vertical-align:super;margin-left:2px;}
+
+  /* ---------- 设计说明 ---------- */
+  .notes{margin-top:26px;background:#fff;border:1px solid var(--line2);border-radius:10px;padding:18px 22px;}
+  .notes h3{font-size:14px;color:#334155;margin-bottom:12px;letter-spacing:1px;}
+  .notes ol{margin-left:18px;font-size:13px;color:#475569;line-height:1.9;}
+  .notes li{margin-bottom:8px;}
+  .notes b{color:var(--red);font-weight:600;}
+  .notes .q{color:var(--blue);font-weight:600;}
+  .notes code{background:#f1f5f9;border:1px solid var(--line2);border-radius:4px;padding:0 5px;font-size:12px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="banner">⚠️ 这是<strong>设计样例</strong>，仅用于确认样式与口径，<strong>未改动任何源码</strong>。下方为「单品分析页」在<strong>选定时间范围（非单日）</strong>时的指标卡形态。</div>
+
+  <div class="topbar">
+    <div class="ttl">单品分析 · 钻芯 净水器滤芯 PPC 复合滤芯套装</div>
+    <div class="range-chip">统计区间 2026-08-14 ~ 2026-09-13 · 共 31 天</div>
+  </div>
+
+  <div class="hero">
+    <div class="img">商品图</div>
+    <div>
+      <div class="nm">钻芯 净水器滤芯 PPC 复合滤芯套装</div>
+      <div class="meta">
+        <span>SPU <b>100058217268</b></span>
+        <span>钻芯旗舰店</span>
+        <span>净水器滤芯</span>
+        <span>2026-08-14 ~ 2026-09-13</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="sec-title"><span class="cn">指标卡</span><span class="en">求和 / 平均值 分两部分标注</span><span class="rule"></span></div>
+
+  <div class="cards">
+
+    <!-- 求和类指标：成交金额 -->
+    <div class="card">
+      <div class="ctitle"><span>成交金额</span><span class="tag">明细</span></div>
+      <div class="part sum">
+        <div class="plabel"><span class="dot"></span>求和 · 区间累计</div>
+        <div class="pval">¥132,406</div>
+        <div class="psub">日均 ¥4,271 · 31 天<span class="note-num">①</span></div>
+      </div>
+      <div class="pdiv"></div>
+      <div class="part avg">
+        <div class="plabel"><span class="dot"></span>平均值（日均）</div>
+        <div class="pval avgv">¥4,271</div>
+        <div class="psub">= 区间累计 ÷ 天数</div>
+      </div>
+    </div>
+
+    <!-- 求和类指标：成交单量 -->
+    <div class="card">
+      <div class="ctitle"><span>成交单量</span><span class="tag">明细</span></div>
+      <div class="part sum">
+        <div class="plabel"><span class="dot"></span>求和 · 区间累计</div>
+        <div class="pval">2,905</div>
+        <div class="psub">日均 94 单 · 31 天<span class="note-num">①</span></div>
+      </div>
+      <div class="pdiv"></div>
+      <div class="part avg">
+        <div class="plabel"><span class="dot"></span>平均值（日均）</div>
+        <div class="pval avgv">94</div>
+        <div class="psub">= 区间累计 ÷ 天数</div>
+      </div>
+    </div>
+
+    <!-- 求和类指标：商品访客数 -->
+    <div class="card">
+      <div class="ctitle"><span>商品访客数</span><span class="tag">明细</span></div>
+      <div class="part sum">
+        <div class="plabel"><span class="dot"></span>求和 · 区间累计</div>
+        <div class="pval">58,204</div>
+        <div class="psub">日均 1,878 · 31 天<span class="note-num">①</span></div>
+      </div>
+      <div class="pdiv"></div>
+      <div class="part avg">
+        <div class="plabel"><span class="dot"></span>平均值（日均）</div>
+        <div class="pval avgv">1,878</div>
+        <div class="psub">= 区间累计 ÷ 天数</div>
+      </div>
+    </div>
+
+    <!-- 比率类指标：成交转化率（求和块展示分子/分母） -->
+    <div class="card">
+      <div class="ctitle"><span>成交转化率</span><span class="tag">明细</span></div>
+      <div class="part sum">
+        <div class="plabel"><span class="dot"></span>求和 · 区间累计</div>
+        <div class="pval small">客户数 2,318</div>
+        <div class="psub">访客数 58,204<span class="note-num">②</span></div>
+      </div>
+      <div class="pdiv"></div>
+      <div class="part avg">
+        <div class="plabel"><span class="dot"></span>平均值（区间整体）</div>
+        <div class="pval avgv">3.98%</div>
+        <div class="psub">= 客户数 ÷ 访客数（先求和再相除）</div>
+      </div>
+    </div>
+
+    <!-- 比率类指标：ROI -->
+    <div class="card">
+      <div class="ctitle"><span>ROI</span><span class="tag">推广</span></div>
+      <div class="part sum">
+        <div class="plabel"><span class="dot"></span>求和 · 区间累计</div>
+        <div class="pval small">推广成交 ¥52,300</div>
+        <div class="psub">推广花费 ¥18,600<span class="note-num">②</span></div>
+      </div>
+      <div class="pdiv"></div>
+      <div class="part avg">
+        <div class="plabel"><span class="dot"></span>平均值（区间整体）</div>
+        <div class="pval avgv">2.81</div>
+        <div class="psub">= 推广成交 ÷ 推广花费</div>
+      </div>
+    </div>
+
+    <!-- 比率类指标：推广占比 -->
+    <div class="card">
+      <div class="ctitle"><span>推广占比</span><span class="tag">推广</span></div>
+      <div class="part sum">
+        <div class="plabel"><span class="dot"></span>求和 · 区间累计</div>
+        <div class="pval small">推广花费 ¥18,600</div>
+        <div class="psub">成交金额 ¥132,406<span class="note-num">②</span></div>
+      </div>
+      <div class="pdiv"></div>
+      <div class="part avg">
+        <div class="plabel"><span class="dot"></span>平均值（区间整体）</div>
+        <div class="pval avgv">14.05%</div>
+        <div class="psub">= 推广花费 ÷ 成交金额</div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- 设计说明 / 待确认 -->
+  <div class="notes">
+    <h3>设计说明与待确认点</h3>
+    <ol>
+      <li><b>①「求和部分再做一份平均值」</b>：求和类指标（金额 / 单量 / 访客数等）的「求和」块下方那行 <code>日均 ¥X · N 天</code> 就是额外补的平均值；下方「平均值」块内容与之相同（= 区间累计 ÷ 天数）。两处数值一致属正常——若觉得重复，可去掉独立「平均值」块，只保留求和块里的日均行。</li>
+      <li><b>② 比率类指标没有「求和」概念</b>（转化率 / ROI / 客单价 / 推广占比 / 搜索点击率）。样例里把它们「求和」块改成展示<strong>分子与分母的区间累计</strong>，「平均值」块展示<strong>区间整体比率</strong>（先求和再相除，与现有后端口径一致）。另一种做法是比率类「求和」块直接写「不适用 / 不累计」。</li>
+      <li class="q">待确认 A：比率类的「平均值」要不要改成「日均（每天比率求平均）」而非「区间整体」？两者数值略有差异，目前全站口径是「区间整体」，建议保持一致。</li>
+      <li class="q">待确认 B：卡片变高（两块 + 间距）后，是否需要「默认只显示求和、点击/展开才显示平均值」的折叠交互？单日模式仍可维持现状的单值卡片。</li>
+      <li class="q">待确认 C：是否要把「求和」和「平均值」拆成页面上两个独立分区（上排=求和指标区，下排=平均值指标区），而非每张卡内分两块？当前样例走的是「卡内两块」路线。</li>
+    </ol>
+  </div>
+
+</div>
+</body>
+</html>

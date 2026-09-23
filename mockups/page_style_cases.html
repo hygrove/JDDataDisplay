@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>整页风格方向案例 · A/B/C/D</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;}
+  body{background:#e9edf3;color:#334155;font-family:-apple-system,"PingFang SC","Microsoft YaHei",Segoe UI,sans-serif;padding:26px 22px 70px;}
+  h1{font-size:19px;font-weight:700;margin-bottom:6px;}
+  .lead{font-size:13px;color:#64748b;max-width:920px;line-height:1.8;margin-bottom:22px;}
+  .lead b{color:#0f172a;}
+  .stack{display:flex;flex-direction:column;gap:24px;align-items:center;}
+
+  /* 每个案例一个全宽 mini 页面 */
+  .case{width:100%;max-width:760px;}
+  .case .cap{font-size:15px;font-weight:700;color:#0f172a;margin-bottom:3px;}
+  .case .desc{font-size:12.5px;color:#64748b;line-height:1.7;margin-bottom:12px;background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:10px 12px;}
+
+  /* ====== 组件基础（用 CSS 变量，按案例覆盖） ====== */
+  .mini{display:flex;gap:0;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;background:var(--bg);}
+  .mini-side{width:148px;flex:none;background:var(--sider-bg);padding:16px 12px;display:flex;flex-direction:column;}
+  .mini-logo{display:flex;align-items:center;gap:8px;font-size:15px;font-weight:700;color:var(--accent);padding-bottom:14px;}
+  .mini-logo svg{width:22px;height:22px;}
+  .mini-nav-t{font-size:11px;color:var(--text-2);padding:0 6px 6px;}
+  .mini-nav a{display:block;padding:8px 10px;border-radius:7px;font-size:13px;color:var(--text);text-decoration:none;cursor:pointer;margin-bottom:2px;transition:background .15s,color .15s;}
+  .mini-nav a:hover{background:var(--accent-soft);}
+  .mini-nav a.on{background:var(--accent-soft);color:var(--accent);font-weight:600;}
+  .mini-main{flex:1;padding:16px;min-width:0;}
+  .topbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;gap:10px;}
+  .pg-title{font-size:15px;font-weight:600;color:var(--text);}
+  .seg{display:inline-flex;background:var(--card-bg);border:1px solid var(--border);border-radius:999px;padding:3px;}
+  .seg button{border:none;background:none;padding:5px 11px;border-radius:999px;font-size:12px;color:var(--text-2);cursor:pointer;transition:all .15s;}
+  .seg button.active{background:var(--accent);color:#fff;}
+  .gear{width:34px;height:34px;border:1px solid var(--border);border-radius:8px;background:var(--card-bg);display:flex;align-items:center;justify-content:center;color:var(--text-2);cursor:pointer;transition:all .15s;}
+  .gear:hover{color:var(--accent);border-color:var(--accent);}
+  .grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;}
+  .card{background:var(--card-bg);border:1px solid var(--border);border-radius:var(--radius);padding:12px;transition:transform .2s ease,box-shadow .2s ease;position:relative;}
+  .card:hover{transform:translateY(-4px);box-shadow:var(--shadow);}
+  .ch{display:flex;align-items:center;gap:8px;margin-bottom:8px;}
+  .thumb{width:46px;height:46px;border-radius:9px;background:var(--accent-soft);flex:none;}
+  .ch .nm{font-size:12.5px;font-weight:600;color:var(--text);line-height:1.3;}
+  .ch .spu{font-size:11px;color:var(--accent);display:flex;align-items:center;gap:4px;}
+  .copy{width:15px;height:15px;cursor:pointer;opacity:.55;transition:all .15s;}
+  .copy:hover{opacity:1;color:var(--accent);}
+  .copy.done{color:#16a34a;opacity:1;}
+  .rows{margin-top:4px;}
+  .r{display:flex;align-items:center;gap:6px;padding:3px 0;font-size:12.5px;}
+  .r .ic{width:16px;height:16px;color:var(--accent);display:flex;flex-shrink:0;transition:transform .15s;}
+  .r:hover .ic{transform:scale(1.18);}
+  .r .lab{color:var(--text-2);}
+  .r .v{margin-left:auto;font-weight:700;color:var(--text);font-variant-numeric:tabular-nums;}
+
+  /* ====== 案例 A：精致品牌风（浅色） ====== */
+  .case-a{--bg:#f1f5f9;--sider-bg:#fff;--card-bg:#fff;--accent:#e1251b;--accent-soft:#fef2f2;--text:#0f172a;--text-2:#64748b;--border:#e5e7eb;--shadow:0 8px 18px rgba(15,23,42,.08);--radius:10px;}
+  /* ====== 案例 B：渐变玻璃拟态 ====== */
+  .case-b{--bg:linear-gradient(135deg,#eef2ff,#fdf2f8);--sider-bg:rgba(255,255,255,.66);--card-bg:rgba(255,255,255,.6);--accent:#7c3aed;--accent-soft:#ede9fe;--text:#1e1b4b;--text-2:#6b7280;--border:rgba(124,58,237,.18);--shadow:0 10px 26px rgba(124,58,237,.16);--radius:14px;}
+  .case-b .mini,.case-b .card,.case-b .seg,.case-b .gear{backdrop-filter:blur(9px);-webkit-backdrop-filter:blur(9px);}
+  /* ====== 案例 C：暗色数据大屏 ====== */
+  .case-c{--bg:#0b1020;--sider-bg:#0f152b;--card-bg:#141b33;--accent:#22d3ee;--accent-soft:#0e2a33;--text:#e2e8f0;--text-2:#94a3b8;--border:#1e293b;--shadow:0 0 20px rgba(34,211,238,.20);--radius:12px;}
+  .case-c .card:hover{box-shadow:0 0 26px rgba(34,211,238,.4);}
+  .case-c .r .v{color:var(--accent);}
+  /* ====== 案例 D：活泼插画风（暖色圆润） ====== */
+  .case-d{--bg:#fef9f3;--sider-bg:#fff;--card-bg:#fff;--accent:#f59e0b;--accent-soft:#fef3c7;--text:#1f2937;--text-2:#92400e;--border:#fde68a;--shadow:0 8px 16px rgba(245,158,11,.16);--radius:18px;}
+  .case-d .card:hover{transform:translateY(-5px) rotate(-.5deg);}
+
+  .icon{width:16px;height:16px;}
+</style>
+</head>
+<body>
+<div class="stack">
+  <div style="width:100%;max-width:760px;">
+    <h1>整页视觉风格 · 4 个方向案例</h1>
+    <div class="lead">下面每个面板都是同一个页面（左侧导航 + 模块页 SPU 卡片）的<b>不同风格方向</b>，都带入了微交互：<b>卡片悬浮上浮</b>、<b>数字载入滚动计数</b>、<b>日期分段切换</b>、<b>SPU 复制图标</b>、<b>指标图标 hover 放大变色</b>。挑一个基调，我再据此统一改造真实页面（包括单品分析页、弹层等）。</div>
+  </div>
+  <div id="cases"></div>
+</div>
+
+<script>
+const ICON = {
+  logo:'<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 14l3-3 3 3 4-5"/></svg>',
+  yen:'<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6h12M9 6l3 6 3-6M12 12v7M8.5 14.5h7"/></svg>',
+  cart:'<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4h2l2 12h10l2-9H6"/><circle cx="9" cy="20" r="1"/><circle cx="17" cy="20" r="1"/></svg>',
+  funnel:'<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16l-6 7v6l-4 2v-8z"/></svg>',
+  eye:'<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6z"/><circle cx="12" cy="12" r="3"/></svg>',
+  mega:'<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10v4a1 1 0 0 0 1 1h2l9 5V4L7 9H5a1 1 0 0 0-1 1z"/><path d="M20 9a4 4 0 0 1-4 4"/></svg>',
+  trend:'<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l6-6 4 4 8-8"/><path d="M21 7h-4M21 7v4"/></svg>',
+  gear:'<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1.2l2-1.6-2-3.4-2.4 1a7 7 0 0 0-2-1.2L16 2h-4l-.5 2.6a7 7 0 0 0-2 1.2l-2.4-1-2 3.4 2 1.6A7 7 0 0 0 5 12c0 .4 0 .8.1 1.2l-2 1.6 2 3.4 2.4-1a7 7 0 0 0 2 1.2L12 22h4l.5-2.6a7 7 0 0 0 2-1.2l2.4 1 2-3.4-2-1.6c.1-.4.1-.8.1-1.2z"/></svg>',
+  copy:'<svg class="copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>',
+};
+const COPY_OK = '<svg class="copy done" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>';
+
+const SPUS = [
+  {spu:'100058217268', shop:'钻芯旗舰店', nm:'钻芯 净水器滤芯 PPC 复合滤芯套装',
+   m:[['yen','成交金额',132406,'cur'],['cart','成交单量',2905,'num'],['funnel','成交转化率',.0398,'pct'],
+      ['eye','商品访客数',58204,'num'],['mega','推广花费',18600,'cur'],['trend','ROI',2.81,'dec']]},
+  {spu:'100072341172', shop:'卡求旗舰店', nm:'卡求 数据线 Type-C 100W 编织',
+   m:[['yen','成交金额',76533,'cur'],['cart','成交单量',2044,'num'],['funnel','成交转化率',.0412,'pct'],
+      ['eye','商品访客数',38210,'num'],['mega','推广花费',4300,'cur'],['trend','ROI',2.55,'dec']]},
+];
+
+function fmt(v, t){
+  if(t==='cur') return '¥'+Math.round(v).toLocaleString('zh-CN');
+  if(t==='num') return Math.round(v).toLocaleString('zh-CN');
+  if(t==='pct') return (v*100).toFixed(2)+'%';
+  if(t==='dec') return v.toFixed(2);
+  return v;
+}
+function cardHTML(s){
+  const rows = s.m.map(([ic,lab,val,t])=>
+    `<div class="r"><span class="ic">${ICON[ic]}</span><span class="lab">${lab}</span><span class="v num" data-target="${val}" data-fmt="${t}">0</span></div>`
+  ).join('');
+  return `<div class="card">
+    <div class="ch">
+      <div class="thumb"></div>
+      <div style="min-width:0">
+        <div class="nm">${s.nm}</div>
+        <div class="spu">${ICON.copy}<span>${s.spu}</span></div>
+      </div>
+    </div>
+    <div class="rows">${rows}</div>
+  </div>`;
+}
+function caseHTML(cls, cap, desc){
+  const seg = ['本月','上月','近一周','全区间'].map((t,i)=>`<button class="${i===2?'active':''}">${t}</button>`).join('');
+  return `<div class="case ${cls}">
+    <div class="cap">${cap}</div>
+    <div class="desc">${desc}</div>
+    <div class="mini">
+      <div class="mini-side">
+        <div class="mini-logo">${ICON.logo}<span>JD 数据平台</span></div>
+        <div class="mini-nav-t">业务模块</div>
+        <div class="mini-nav"><a class="on">POP 单品明细</a><a>其他模块 A</a><a>其他模块 B</a></div>
+        <div class="mini-nav-t" style="margin-top:10px">店铺</div>
+        <div class="mini-nav"><a class="on">全部店铺</a><a>钻芯旗舰店</a><a>卡求旗舰店</a></div>
+      </div>
+      <div class="mini-main">
+        <div class="topbar">
+          <div class="pg-title">POP 单品明细</div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <div class="seg">${seg}</div>
+            <div class="gear" title="指标配置">${ICON.gear}</div>
+          </div>
+        </div>
+        <div class="grid">${SPUS.map(cardHTML).join('')}</div>
+      </div>
+    </div>
+  </div>`;
+}
+const CASES = [
+  ['case-a','A · 精致品牌风（浅色·克制专业）',
+   '保留 JD 红品牌色，白卡片 + 柔和阴影，hover 上浮；每个指标前加线性小图标；日期切换为胶囊分段控件；数字载入滚动计数。整体克制、专业，最贴近现有产品气质。'],
+  ['case-b','B · 渐变玻璃拟态（现代 dashboard）',
+   '浅紫渐变背景 + 毛玻璃半透明卡片 + 紫色强调，hover 发光上浮。更现代、有「SaaS 仪表盘」感，适合想显得更潮的场景。'],
+  ['case-c','C · 暗色数据大屏（霓虹高对比）',
+   '深色底 + 青色霓虹强调，卡片 hover 发光、数字青色高亮。适合投屏/大屏汇报，信息密度高且酷炫。'],
+  ['case-d','D · 活泼插画风（暖色圆润）',
+   '琥珀色强调、大圆角卡片、hover 轻微旋转弹跳，配合 undraw 插画更友好活泼，偏 C 端/轻松调性。'],
+];
+document.getElementById('cases').innerHTML = CASES.map(([c,cap,desc])=>caseHTML(c,cap,desc)).join('');
+
+// ---- 动态效果 ----
+// 1) 数字滚动计数
+function countUp(el){
+  const target = parseFloat(el.dataset.target), t = el.dataset.fmt;
+  const dur = 900, t0 = performance.now();
+  function step(now){
+    const p = Math.min(1,(now-t0)/dur);
+    const e = 1-Math.pow(1-p,3);
+    el.textContent = fmt(target*e, t);
+    if(p<1) requestAnimationFrame(step);
+    else el.textContent = fmt(target,t);
+  }
+  requestAnimationFrame(step);
+}
+document.querySelectorAll('.num').forEach(countUp);
+
+// 2) 分段控件切换
+document.querySelectorAll('.seg').forEach(seg=>{
+  seg.addEventListener('click',e=>{
+    if(e.target.tagName!=='BUTTON')return;
+    seg.querySelectorAll('button').forEach(b=>b.classList.remove('active'));
+    e.target.classList.add('active');
+  });
+});
+
+// 3) SPU 复制图标（点击变绿勾，1.2s 后复原）
+document.querySelectorAll('.spu').forEach(spu=>{
+  const cp = spu.querySelector('.copy');
+  if(!cp) return;
+  cp.addEventListener('click',()=>{
+    if(cp.classList.contains('done')) return;
+    const original = cp.outerHTML;
+    cp.outerHTML = COPY_OK;
+    const done = spu.querySelector('.copy.done');
+    setTimeout(()=>{ if(done) done.outerHTML = original; }, 1200);
+  });
+});
+</script>
+</body>
+</html>

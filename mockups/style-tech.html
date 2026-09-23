@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>风格 A · 科技风 — POP 单品明细</title>
+<style>
+  :root {
+    --bg: #070b16;
+    --panel: rgba(15, 23, 42, 0.72);
+    --panel-solid: #0d1526;
+    --line: rgba(56, 189, 248, 0.16);
+    --line-strong: rgba(56, 189, 248, 0.38);
+    --cyan: #22d3ee;
+    --blue: #3b82f6;
+    --violet: #8b5cf6;
+    --amber: #fbbf24;
+    --red: #f87171;
+    --green: #34d399;
+    --ink: #e2e8f0;
+    --ink-dim: #7d8aa3;
+    --ink-faint: #4b5a75;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+    background-image:
+      radial-gradient(ellipse 60% 40% at 15% -5%, rgba(34, 211, 238, 0.10), transparent),
+      radial-gradient(ellipse 50% 35% at 85% 0%, rgba(139, 92, 246, 0.10), transparent),
+      linear-gradient(rgba(56,189,248,0.035) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(56,189,248,0.035) 1px, transparent 1px);
+    background-size: auto, auto, 44px 44px, 44px 44px;
+    min-height: 100vh;
+    padding: 28px 36px 64px;
+  }
+  .wrap { max-width: 1440px; margin: 0 auto; }
+
+  /* ---------- 顶栏 ---------- */
+  header { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 22px; }
+  .title-block h1 {
+    font-size: 26px; font-weight: 700; letter-spacing: 2px;
+    background: linear-gradient(90deg, #7dd3fc, #22d3ee 45%, #8b5cf6);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .title-block .sub { margin-top: 6px; font-size: 12px; color: var(--ink-dim); letter-spacing: 4px; text-transform: uppercase; }
+  .toolbar { display: flex; gap: 10px; align-items: center; }
+  .chip, .pill-btn {
+    border: 1px solid var(--line-strong); border-radius: 8px;
+    background: rgba(34, 211, 238, 0.06);
+    color: var(--ink); font-size: 12.5px; padding: 8px 14px;
+  }
+  .pill-btn { cursor: pointer; background: linear-gradient(90deg, rgba(34,211,238,.18), rgba(139,92,246,.18)); box-shadow: 0 0 14px rgba(34,211,238,.18); }
+  .update { font-size: 11.5px; color: var(--ink-faint); }
+
+  /* ---------- 指标卡 ---------- */
+  .cards { display: grid; grid-template-columns: repeat(6, 1fr); gap: 14px; margin-bottom: 22px; }
+  .card {
+    position: relative; border-radius: 12px; padding: 16px 18px 14px;
+    background: var(--panel); border: 1px solid var(--line);
+    backdrop-filter: blur(6px); overflow: hidden;
+  }
+  .card::before {
+    content: ""; position: absolute; inset: 0 auto 0 0; width: 3px;
+    background: linear-gradient(180deg, var(--cyan), transparent);
+  }
+  .card.hot::before { background: linear-gradient(180deg, var(--amber), transparent); }
+  .card .k { font-size: 12px; color: var(--ink-dim); letter-spacing: 1px; }
+  .card .v {
+    margin-top: 8px; font-size: 24px; font-weight: 700;
+    font-variant-numeric: tabular-nums; letter-spacing: .5px;
+    text-shadow: 0 0 18px rgba(34, 211, 238, 0.35);
+  }
+  .card .v.money { text-shadow: 0 0 18px rgba(251, 191, 36, 0.35); }
+  .card .foot { margin-top: 6px; font-size: 11px; color: var(--ink-faint); }
+  .card .spark { position: absolute; right: 10px; bottom: 8px; opacity: .8; }
+
+  /* ---------- 表格 ---------- */
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; backdrop-filter: blur(6px); overflow: hidden; }
+  .panel-head {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 14px 18px; border-bottom: 1px solid var(--line);
+    font-size: 14px; letter-spacing: 2px; color: #a5f3fc;
+  }
+  .panel-head .tag { font-size: 11px; color: var(--ink-faint); letter-spacing: 1px; }
+  .table-scroll { overflow-x: auto; }
+  table { border-collapse: separate; border-spacing: 0; width: 100%; min-width: 1500px; font-size: 13px; }
+  thead th {
+    position: sticky; top: 0; background: #0b1220; color: var(--ink-dim);
+    font-weight: 500; font-size: 12px; letter-spacing: 1px;
+    padding: 12px 14px; text-align: right; border-bottom: 1px solid var(--line-strong); white-space: nowrap;
+  }
+  thead th.l, tbody td.l { text-align: left; }
+  tbody td { padding: 12px 14px; text-align: right; border-bottom: 1px solid rgba(56,189,248,0.07); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  tbody tr:hover td { background: rgba(34, 211, 238, 0.05); }
+  .prod { display: flex; gap: 12px; align-items: center; }
+  .prod .img {
+    width: 56px; height: 56px; border-radius: 8px; flex: none;
+    background: linear-gradient(135deg, #16233f, #0f1a30);
+    border: 1px solid var(--line); display: flex; align-items: center; justify-content: center;
+    color: var(--ink-faint); font-size: 10px;
+  }
+  .prod .nm { font-size: 13px; color: var(--ink); max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .prod .spu { font-size: 11px; color: var(--cyan); margin-top: 3px; }
+  td.num-up { color: var(--red); }
+  .sticky-col {
+    position: sticky; right: 0; background: #0b1424 !important;
+    box-shadow: -8px 0 16px rgba(0, 0, 0, 0.45);
+    border-left: 1px solid var(--line-strong) !important; text-align: center !important;
+  }
+  .link-btn {
+    color: var(--cyan); cursor: pointer; font-size: 12.5px; letter-spacing: 1px;
+    border: 1px solid var(--line-strong); border-radius: 6px; padding: 5px 12px;
+    background: rgba(34, 211, 238, 0.08); transition: all .2s;
+  }
+  .link-btn:hover { box-shadow: 0 0 12px rgba(34,211,238,.4); background: rgba(34,211,238,.16); }
+
+  /* ---------- 单品分析视图 ---------- */
+  .divider { display: flex; align-items: center; gap: 16px; margin: 44px 0 24px; color: var(--ink-faint); font-size: 12px; letter-spacing: 3px; }
+  .divider::before, .divider::after { content: ""; flex: 1; height: 1px; background: linear-gradient(90deg, transparent, var(--line-strong), transparent); }
+
+  .spu-hero { display: flex; gap: 18px; align-items: center; padding: 18px; margin-bottom: 18px; }
+  .spu-hero .img { width: 84px; height: 84px; border-radius: 12px; background: linear-gradient(135deg,#16233f,#0f1a30); border: 1px solid var(--line-strong); display:flex;align-items:center;justify-content:center;color:var(--ink-faint);font-size:11px; box-shadow: 0 0 24px rgba(34,211,238,.15); }
+  .spu-hero h2 { font-size: 19px; letter-spacing: 1px; }
+  .spu-hero .meta { margin-top: 6px; font-size: 12px; color: var(--ink-dim); }
+  .back { margin-left: auto; }
+
+  .mini-cards { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; margin-bottom: 18px; }
+  .mini { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+  .mini .k { font-size: 11px; color: var(--ink-dim); }
+  .mini .v { margin-top: 6px; font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+  .chart-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 18px; }
+  .chart-box { padding: 14px 16px; }
+  .chart-box h4 { font-size: 13px; color: #a5f3fc; letter-spacing: 2px; font-weight: 500; margin-bottom: 8px; }
+  .chart-box svg { width: 100%; height: 180px; display: block; }
+
+  .insight { padding: 18px 20px; border-left: 3px solid var(--violet); }
+  .insight h4 { font-size: 14px; color: #c4b5fd; letter-spacing: 2px; margin-bottom: 10px; }
+  .insight p { font-size: 13px; line-height: 1.9; color: #b6c2d8; }
+  .insight b.r { color: var(--red); } .insight b.g { color: var(--green); } .insight b.c { color: var(--cyan); }
+
+  @media (max-width: 1100px) { .cards, .mini-cards { grid-template-columns: repeat(3,1fr); } .chart-grid { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- ================= 主视图 ================= -->
+  <header>
+    <div class="title-block">
+      <h1>POP 单品明细</h1>
+      <div class="sub">JD POP · SPU PERFORMANCE MATRIX</div>
+    </div>
+    <div class="toolbar">
+      <span class="chip">2026-08-14 ~ 2026-09-13</span>
+      <span class="chip">全部店铺 ▾</span>
+      <span class="update">上次更新 09-16 08:19 · 成功</span>
+      <button class="pill-btn">⟳ 手动刷新</button>
+    </div>
+  </header>
+
+  <div class="cards">
+    <div class="card"><div class="k">总 SPU 数</div><div class="v">12</div><div class="foot">在架单品</div></div>
+    <div class="card"><div class="k">访客数</div><div class="v">286,410</div><div class="foot">环比 +4.2%</div></div>
+    <div class="card"><div class="k">成交人数</div><div class="v">9,843</div><div class="foot">环比 +2.8%</div></div>
+    <div class="card"><div class="k">成交商品件数</div><div class="v">12,076</div><div class="foot">件单价 ¥43.60</div></div>
+    <div class="card hot"><div class="k">成交金额</div><div class="v money">¥526,514</div><div class="foot">UV 价值 ¥1.84</div></div>
+    <div class="card"><div class="k">转化率</div><div class="v">3.44%</div><div class="foot">成交人数 / 访客数</div></div>
+    <div class="card"><div class="k">取消及售后退款单量</div><div class="v">312</div><div class="foot">占成交单量 3.1%</div></div>
+    <div class="card"><div class="k">取消及售后退款金额</div><div class="v money">¥13,860</div><div class="foot">占成交金额 2.6%</div></div>
+    <div class="card"><div class="k">推广费</div><div class="v">--</div><div class="foot">数据源未接入</div></div>
+    <div class="card"><div class="k">推广成交金额</div><div class="v">--</div><div class="foot">数据源未接入</div></div>
+    <div class="card"><div class="k">ROI</div><div class="v">--</div><div class="foot">--</div></div>
+    <div class="card"><div class="k">推广占比</div><div class="v">--</div><div class="foot">--</div></div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head">单品明细表 <span class="tag">372 行 · 横向滚动时「分析」列固定</span></div>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th class="l">#</th><th class="l">商品信息</th><th>成交金额</th><th>成交件数</th><th>转化率</th>
+            <th>访客数</th><th>成交人数</th><th>退款单量</th><th>退款金额</th>
+            <th>推广费</th><th>推广成交金额</th><th>ROI</th><th>推广占比</th>
+            <th class="sticky-col">分析</th>
+          </tr>
+        </thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ================= 单品分析视图 ================= -->
+  <div class="divider">点击「单品分析」后 · 单品分析视图预览</div>
+
+  <div class="panel spu-hero">
+    <div class="img">商品图</div>
+    <div>
+      <h2>钻芯 净水器滤芯 PPC 复合滤芯套装</h2>
+      <div class="meta">SPU 100058217268 · 钻芯旗舰店 · 净水器滤芯 · 统计区间 2026-08-14 ~ 2026-09-13</div>
+    </div>
+    <button class="pill-btn back">← 返回列表</button>
+  </div>
+
+  <div class="mini-cards">
+    <div class="mini"><div class="k">访客数</div><div class="v">58,204</div></div>
+    <div class="mini"><div class="k">成交人数</div><div class="v">2,318</div></div>
+    <div class="mini"><div class="k">成交商品件数</div><div class="v">2,905</div></div>
+    <div class="mini"><div class="k">成交金额</div><div class="v">¥132,406</div></div>
+    <div class="mini"><div class="k">转化率</div><div class="v">3.98%</div></div>
+    <div class="mini"><div class="k">退款单量 / 金额</div><div class="v">61 / ¥2,744</div></div>
+  </div>
+
+  <div class="chart-grid">
+    <div class="panel chart-box"><h4>转化率趋势</h4><svg id="c1" viewBox="0 0 400 180" preserveAspectRatio="none"></svg></div>
+    <div class="panel chart-box"><h4>成交金额趋势</h4><svg id="c2" viewBox="0 0 400 180" preserveAspectRatio="none"></svg></div>
+    <div class="panel chart-box"><h4>访客数趋势</h4><svg id="c3" viewBox="0 0 400 180" preserveAspectRatio="none"></svg></div>
+  </div>
+
+  <div class="panel chart-box" style="margin-bottom:18px;">
+    <h4>工作日 vs 节假日 · 日均对比</h4>
+    <svg id="c4" viewBox="0 0 1200 200" preserveAspectRatio="none" style="width:100%;height:200px;"></svg>
+  </div>
+
+  <div class="panel insight">
+    <h4>◈ 综合分析</h4>
+    <p>
+      统计区间内，该单品<b class="c">工作日日均成交金额 ¥4,486</b>，节假日日均 ¥3,902，<b class="r">节假日较工作日低 13.0%</b>；
+      访客数节假日日均 1,862，低于工作日的 2,014，流量端同步回落。
+      但<b class="c">转化率节假日逆势升至 4.21%</b>（工作日 3.89%），说明节假日到访用户购买意向更明确——
+      流量减少主要来自曝光收窄，而非页面承接能力下降。
+      退款方面，节假日退款单量占比 2.4%，略优于工作日的 2.7%，售后表现稳定。
+      建议：节假日可适当加大搜索投放以弥补流量缺口，承接端无需调整；重点关注节后 2-3 天的转化回落窗口。
+    </p>
+  </div>
+
+</div>
+
+<script>
+// ---------- 假数据 ----------
+const rows = [
+  ["钻芯 净水器滤芯 PPC 复合滤芯套装", "100058217268", "钻芯旗舰店", 132406, 2905, "3.98%", 58204, 2318, 61, 2744],
+  ["钻芯 反渗透 RO 膜滤芯 400G", "100058217290", "钻芯旗舰店", 98210, 1622, "3.55%", 41033, 1457, 48, 2960],
+  ["卡求 车载充电器 超级快充 66W", "100072341155", "卡求旗舰店", 76533, 2044, "4.12%", 38210, 1574, 39, 1455],
+  ["钻芯 净水器整机 五级过滤", "100058217301", "钻芯水饮电器旗舰店", 64120, 812, "2.66%", 28954, 770, 33, 2610],
+  ["钻芯 前置过滤器 40微米", "100058217315", "钻芯官方旗舰店", 51184, 1308, "3.31%", 30118, 997, 41, 1598],
+  ["卡求 数据线 Type-C 100W 编织", "100072341172", "卡求旗舰店", 44027, 2512, "5.02%", 41402, 2079, 52, 918],
+];
+const fmt = n => "¥" + n.toLocaleString("zh-CN");
+document.getElementById("tbody").innerHTML = rows.map((r, i) => `
+  <tr>
+    <td class="l" style="color:var(--ink-faint)">${String(i + 1).padStart(2, "0")}</td>
+    <td class="l"><div class="prod"><div class="img">图</div><div><div class="nm">${r[0]}</div><div class="spu">SPU ${r[1]} · ${r[2]}</div></div></div></td>
+    <td class="num-up">${fmt(r[3])}</td><td>${r[4].toLocaleString()}</td><td>${r[5]}</td>
+    <td>${r[6].toLocaleString()}</td><td>${r[7].toLocaleString()}</td><td>${r[8]}</td><td>${fmt(r[9])}</td>
+    <td style="color:var(--ink-faint)">--</td><td style="color:var(--ink-faint)">--</td>
+    <td style="color:var(--ink-faint)">--</td><td style="color:var(--ink-faint)">--</td>
+    <td class="sticky-col"><span class="link-btn">单品分析 →</span></td>
+  </tr>`).join("");
+
+// ---------- 迷你趋势图 ----------
+function areaChart(id, data, color, pct) {
+  const svg = document.getElementById(id);
+  const W = 400, H = 180, P = 24;
+  const max = Math.max(...data) * 1.15, min = Math.min(...data) * 0.85;
+  const X = i => P + (W - 2 * P) * i / (data.length - 1);
+  const Y = v => H - P - (H - 2 * P) * (v - min) / (max - min);
+  const pts = data.map((v, i) => `${X(i)},${Y(v)}`).join(" ");
+  const gid = "g" + id;
+  svg.innerHTML = `
+    <defs>
+      <linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="${color}" stop-opacity=".35"/>
+        <stop offset="1" stop-color="${color}" stop-opacity="0"/>
+      </linearGradient>
+      <filter id="glow"><feGaussianBlur stdDeviation="2.5" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    </defs>
+    ${[0.25, 0.5, 0.75].map(t => `<line x1="${P}" x2="${W - P}" y1="${H * t}" y2="${H * t}" stroke="rgba(56,189,248,.1)" stroke-dasharray="3 4"/>`).join("")}
+    <polygon points="${P},${H - P} ${pts} ${W - P},${H - P}" fill="url(#${gid})"/>
+    <polyline points="${pts}" fill="none" stroke="${color}" stroke-width="2" filter="url(#glow)"/>
+    <circle cx="${X(data.length - 1)}" cy="${Y(data[data.length - 1])}" r="3.5" fill="${color}" filter="url(#glow)"/>
+    <text x="${W - P}" y="${Y(data[data.length - 1]) - 8}" fill="${color}" font-size="11" text-anchor="end">${pct ? (data[data.length-1]).toFixed(2) + "%" : data[data.length-1].toLocaleString()}</text>`;
+}
+const conv = [3.6,3.8,3.5,3.9,4.2,4.0,3.7,3.9,4.1,4.3,3.8,3.6,4.0,4.2,3.9,4.1,3.7,3.95,4.05,4.21,3.88,4.0,3.75,3.9,4.1,4.05,3.8,3.95,4.1,3.98];
+const amt  = [3800,4100,3600,4300,4800,4500,3900,4200,4600,5100,4300,3700,4400,4900,4200,4600,3800,4100,4500,3900,3600,4300,4000,4200,4700,4400,3900,4100,4600,4486];
+const vis  = [1900,2050,1800,2100,2300,2150,1850,2000,2200,2400,2050,1750,2100,2250,1950,2150,1800,1900,2050,1862,1720,2000,1900,1980,2200,2100,1850,1920,2150,2014];
+areaChart("c1", conv, "#22d3ee", true);
+areaChart("c2", amt, "#fbbf24");
+areaChart("c3", vis, "#8b5cf6");
+
+// ---------- 工作日 vs 节假日 分组柱状 ----------
+(function () {
+  const svg = document.getElementById("c4");
+  const groups = [
+    ["转化率(%)", 3.89, 4.21, "#22d3ee"],
+    ["成交金额(百元/日)", 44.86, 39.02, "#fbbf24"],
+    ["访客数(十人/日)", 201.4, 186.2, "#8b5cf6"],
+    ["退款单量(单/日)", 10.4, 8.7, "#f87171"],
+  ];
+  const W = 1200, H = 200, P = 60, bw = 26, gap = 130;
+  const max = 210;
+  const Y = v => H - 30 - (H - 70) * v / max;
+  let x = P + 80;
+  let s = `<line x1="${P}" x2="${W - P}" y1="${H - 30}" y2="${H - 30}" stroke="rgba(56,189,248,.25)"/>`;
+  groups.forEach(([label, wd, hd, color]) => {
+    s += `<rect x="${x}" y="${Y(wd)}" width="${bw}" height="${H - 30 - Y(wd)}" rx="4" fill="${color}"/>`;
+    s += `<rect x="${x + bw + 6}" y="${Y(hd)}" width="${bw}" height="${H - 30 - Y(hd)}" rx="4" fill="${color}" opacity=".38"/>`;
+    s += `<text x="${x + bw}" y="${H - 10}" fill="#7d8aa3" font-size="12" text-anchor="middle">${label}</text>`;
+    s += `<text x="${x + bw / 2}" y="${Y(wd) - 6}" fill="${color}" font-size="11" text-anchor="middle">${wd}</text>`;
+    s += `<text x="${x + bw * 1.5 + 6}" y="${Y(hd) - 6}" fill="${color}" font-size="11" text-anchor="middle" opacity=".8">${hd}</text>`;
+    x += gap * 2;
+  });
+  s += `<rect x="${W - 260}" y="14" width="10" height="10" rx="2" fill="#22d3ee"/><text x="${W - 246}" y="23" fill="#7d8aa3" font-size="11">工作日</text>`;
+  s += `<rect x="${W - 190}" y="14" width="10" height="10" rx="2" fill="#22d3ee" opacity=".38"/><text x="${W - 176}" y="23" fill="#7d8aa3" font-size="11">节假日</text>`;
+  svg.innerHTML = s;
+})();
+</script>
+</body>
+</html>
