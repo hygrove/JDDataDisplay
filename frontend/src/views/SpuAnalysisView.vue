@@ -13,6 +13,7 @@ import { fmtBy } from "../modules";
 import { recentDaysRange } from "../utils/month";
 import { useModuleStore } from "../stores/module";
 import { useMetricsStore } from "../stores/metrics";
+import { useUiStore } from "../stores/ui";
 import { aggregateMetrics, sumRawMetrics, metricsOf, METRICS, METRIC_MAP, type MetricFormat } from "../metrics";
 import type { MetricSpec } from "../metrics";
 import type { CompareGroup, SpuAnalysis } from "../types";
@@ -28,6 +29,7 @@ const route = useRoute();
 const router = useRouter();
 const store = useModuleStore(); // 仅复用 manifest（date_range 做日期边界）
 const metricsStore = useMetricsStore();
+const ui = useUiStore();
 
 const shop = computed(() => (route.query.shop as string) || "");
 const data = ref<SpuAnalysis | null>(null);
@@ -53,18 +55,50 @@ function defaultRange(): { start: string; end: string } {
   return recentDaysRange(DEFAULT_WINDOW_DAYS, fullRange.value[0], fullRange.value[1]);
 }
 
-// 由原始图片 URL 推导缩略图 URL（hero 仅 96px，下原图纯浪费带宽，改走 AVIF 优先 + WebP 兜底）
+/**
+ * 由原始图片 URL 推导缩略图 URL。
+ *
+ * @remarks
+ * 本页 hero 图只有 96px，直接下原图（PNG 常 0.9~3MB）纯属浪费带宽，
+ * 故改走批处理预生成的 AVIF 缩略图（WebP 兜底），见 backend/jobs/make_thumbs.py。
+ *
+ * @param {string | null | undefined} orig - 原图访问路径，形如 "/images/100123.png"；
+ *      为空时返回空串（模板里 <picture> 会走「暂无图片」分支）。
+ * @param {number} size - 缩略图尺寸（96 / 120 / 180），需与后端生成的目录一致。
+ * @param {"avif" | "webp"} [fmt="avif"] - 缩略图格式；默认 avif（体积最小）。
+ * @returns {string} 缩略图访问路径，形如 "/thumbs/96/100123.avif"。
+ * @example
+ * ```ts
+ * thumb("/images/100123.png", 96);       // "/thumbs/96/100123.avif"
+ * thumb("/images/100123.png", 96, "webp"); // "/thumbs/96/100123.webp"
+ * ```
+ */
 function thumb(orig: string | null | undefined, size: number, fmt: "avif" | "webp" = "avif"): string {
   if (!orig) return "";
+  // 去掉 "/images/" 前缀得到文件名，再去掉扩展名得到 stem（即 SPU 号）
   const base = orig.replace("/images/", "");
   const stem = base.replace(/\.[^.]+$/, "");
   return `/thumbs/${size}/${stem}.${fmt}`;
 }
 
+/**
+ * 拉取单品分析数据（按当前路由、店铺、区间）。
+ *
+ * @remarks
+ * 后端是「读已缓存扁平 JSON + 按需聚合」，不是整库重算，所以切区间很快。
+ *
+ * @returns {Promise<void>} 完成后 resolve；失败时也 resolve，错误写进 error 由模板展示。
+ * @throws 不抛出——所有异常被捕获后转成 error 文本。
+ * @example
+ * ```ts
+ * await load(); // 切换 SPU、店铺、区间时调用
+ * ```
+ */
 async function load() {
   loading.value = true;
   error.value = "";
   try {
+    // 用户没手动选过区间时用默认「近一周」，选过就用用户的选择
     const r = rangeSet.value ? { start: start.value, end: end.value } : defaultRange();
     data.value = await fetchSpuAnalysis(props.moduleId, props.spu, {
       shop: shop.value || undefined,
@@ -83,6 +117,16 @@ async function load() {
   }
 }
 
+/**
+ * 日期区间变化回调（含「清空 = 全区间」）。
+ *
+ * @param {{start: string; end: string}} v - 新的起止日期；两者都为空串表示全区间。
+ * @returns {void} 无返回值；内部触发重新加载。
+ * @example
+ * ```ts
+ * onRangeChange({ start: "2026-09-18", end: "2026-09-24" });
+ * ```
+ */
 function onRangeChange(v: { start: string; end: string }) {
   start.value = v.start;
   end.value = v.end;
@@ -92,6 +136,16 @@ function onRangeChange(v: { start: string; end: string }) {
 
 // 直接进入本页（刷新/分享链接）时 store 里可能还没有 manifest，先补拉一次，
 // 否则拿不到数据最新日、默认「近一周」就退化成全区间。
+/**
+ * 确保 manifest 已加载（拿不到数据最新日就无法算「近一周」）。
+ *
+ * @returns {Promise<void>} 已有 manifest 时立即返回；拉取失败也 resolve（静默）。
+ * @throws 不抛出——manifest 失败会在后续分析接口里体现，这里刻意不中断流程。
+ * @example
+ * ```ts
+ * await ensureManifest();
+ * ```
+ */
 async function ensureManifest() {
   if (store.manifest) return;
   try {
@@ -102,6 +156,9 @@ async function ensureManifest() {
 }
 
 onMounted(async () => {
+  // 组件已挂载：路由级遮罩（覆盖 chunk 下载+解析）交棒给本页自身的「数据加载中…」遮罩，
+  // 后者覆盖后端分析接口的请求阶段，二者无缝衔接、不闪空。
+  ui.setNavigating(false);
   await ensureManifest();
   if (!rangeSet.value) {
     const r = defaultRange();
@@ -136,12 +193,43 @@ const GROUP_LABEL: Record<string, string> = {
 const EXTRA_LABEL: Record<string, string> = {
   search_clicks: "搜索点击次数",
 };
+/**
+ * 取指标的中文名（用于比率类卡片展示「分子 / 分母」）。
+ *
+ * @param {string} key - 指标 key，可能是「隐藏分子」（如 search_clicks）。
+ * @returns {string} 中文名；清单里没有时查 EXTRA_LABEL 兜底，再没有就原样返回 key。
+ * @example
+ * ```ts
+ * labelOf("buyers");        // "成交客户数"
+ * labelOf("search_clicks"); // "搜索点击次数"（来自 EXTRA_LABEL）
+ * ```
+ */
 function labelOf(key: string): string {
   return METRIC_MAP[key]?.title ?? EXTRA_LABEL[key] ?? key;
 }
-/** 分子/分母的展示格式：清单里没有的 key（如 search_clicks）按整数处理。 */
+
+/**
+ * 取分子/分母的展示格式：清单里没有的 key（如 search_clicks）按整数处理。
+ *
+ * @param {string} key - 指标 key。
+ * @returns {MetricFormat} 展示格式；未登记时返回 "number"。
+ * @example
+ * ```ts
+ * fmtOf("search_clicks"); // "number"
+ * ```
+ */
 function fmtOf(key: string): MetricFormat {
   return METRIC_MAP[key]?.format ?? "number";
+}
+/** 日均/平均值专用格式：整数型指标（退款单量/成交单量/客户数/访客数等）的日均需保留小数，
+ *  否则 fmtBy("number") 会把 15÷22=0.68 四舍五入成 1。最多 2 位小数、无多余尾零
+ *  （0.68→"0.68"、5→"5"、1234.5→"1,234.5"）。其余格式沿用自身。 */
+function fmtAvg(format: MetricFormat, v: number | null | undefined): string {
+  if (v === null || v === undefined || Number.isNaN(v)) return "0";
+  if (format === "number") {
+    return v.toLocaleString("zh-CN", { maximumFractionDigits: 2 });
+  }
+  return fmtBy(format, v);
 }
 interface CardVM {
   key: string;
@@ -205,9 +293,9 @@ const cards = computed<CardVM[]>(() => {
       kind: "sum",
       missing,
       sumMain: fmtBy(s.format, val),
-      sumSub: `日均 ${fmtBy(s.format, avg)} · ${days} 天`,
+      sumSub: `日均 ${fmtAvg(s.format, avg)} · ${days} 天`,
       avgLabel: "平均值（日均）",
-      avgMain: fmtBy(s.format, avg),
+      avgMain: fmtAvg(s.format, avg),
       avgSub: "= 区间累计 ÷ 天数",
     };
   });
@@ -241,16 +329,16 @@ function mkSeries(key: string, axisIndex: 0 | 1): TrendSeries {
 
 const TREND_PANELS: TrendPanel[] = [
   {
-    key: "conv_visitor",
-    title: "成交转化率 & 商品访客数",
-    axes: [{ name: "商品访客数", format: "number" }, { name: "成交转化率", format: "percent" }],
-    series: [mkSeries("visitors", 0), mkSeries("conversion_rate", 1)],
+    key: "conv_click",
+    title: "成交转化率 & 搜索点击率",
+    axes: [{ name: "成交转化率", format: "percent" }, { name: "搜索点击率", format: "percent" }],
+    series: [mkSeries("conversion_rate", 0), mkSeries("search_click_rate", 1)],
   },
   {
-    key: "amount_click",
-    title: "成交金额 & 搜索点击率",
-    axes: [{ name: "成交金额", format: "currency" }, { name: "搜索点击率", format: "percent" }],
-    series: [mkSeries("amount", 0), mkSeries("search_click_rate", 1)],
+    key: "amount_cost",
+    title: "成交金额 & 推广花费金额",
+    axes: [{ name: "成交金额", format: "currency" }, { name: "推广花费", format: "currency" }],
+    series: [mkSeries("amount", 0), mkSeries("promotion_cost", 1)],
   },
   {
     key: "promotion_ratio",
@@ -264,7 +352,21 @@ const TREND_PANELS: TrendPanel[] = [
 // 推广占比趋势图的警戒线阈值（单位 %），可在页面上手动修改并实时生效
 const thresholdPct = ref(20);
 
-/** y 轴刻度格式化：百分比率 -> {v*100}%；金额 -> 紧凑¥；其余 -> 千分位。 */
+/**
+ * 生成 y 轴刻度标签的格式化函数：百分比 -> "12.3%"；金额 -> 紧凑 "¥1.2万"；其余 -> 千分位。
+ *
+ * @remarks
+ * 金额超过 1 万时压缩成「万」，否则轴标签会变成 "¥123456" 这种又长又难读的字符串，
+ * 挤占绘图区宽度。
+ *
+ * @param {MetricFormat} format - 该轴的展示格式。
+ * @returns {(v: number) => string} 接收轴刻度值、返回标签文本的函数。
+ * @example
+ * ```ts
+ * axisTickFormatter("percent")(0.123);  // "12.3%"
+ * axisTickFormatter("currency")(12345); // "¥1.2万"
+ * ```
+ */
 function axisTickFormatter(format: MetricFormat): (v: number) => string {
   if (format === "percent") return (v: number) => (v * 100).toFixed(1) + "%";
   if (format === "currency") return (v: number) =>
@@ -272,7 +374,21 @@ function axisTickFormatter(format: MetricFormat): (v: number) => string {
   return (v: number) => v.toLocaleString("zh-CN");
 }
 
-/** tooltip 按各序列自身的格式展示（双轴时左轴/右轴格式不同）。 */
+/**
+ * 生成 tooltip 的 HTML 格式化函数（按各序列自身的格式展示）。
+ *
+ * @remarks
+ * 必须按序列自己的 format 渲染：双轴面板里左轴是金额、右轴是百分比，
+ * 若统一按一种格式渲染就会把金额显示成百分比（或反之）。
+ *
+ * @param {TrendPanel} panel - 趋势面板配置，用于按 seriesIndex 找到对应序列。
+ * @returns {(params: unknown) => string} ECharts tooltip 的 formatter 函数，
+ *      返回一段含日期表头与各序列数值的 HTML。
+ * @example
+ * ```ts
+ * // 由 buildTrendOption 装配进 option.tooltip.formatter
+ * ```
+ */
 function makeTooltip(panel: TrendPanel) {
   return (params: unknown) => {
     const arr = Array.isArray(params) ? params : [params];
@@ -287,13 +403,82 @@ function makeTooltip(panel: TrendPanel) {
   };
 }
 
+/**
+ * 取某面板所有序列在逐日数据里的最大值（用于需要对齐双轴刻度时统一量程）。
+ *
+ * @param {TrendPanel} panel - 趋势面板配置。
+ * @returns {number} 该面板所有序列、所有日期中的最大数值；无有效数据时返回 0。
+ * @example
+ * ```ts
+ * panelDataMax(TREND_PANELS[0]); // 如 0.086（8.6%）
+ * ```
+ */
+function panelDataMax(panel: TrendPanel): number {
+  const daily = data.value?.daily ?? [];
+  let max = 0;
+  for (const d of daily) {
+    for (const s of panel.series) {
+      const v = (d.metrics as Record<string, number | null>)[s.key];
+      // 跳过 null（缺失日）与 NaN，避免 Math.max 被污染成 NaN
+      if (typeof v === "number" && !Number.isNaN(v)) max = Math.max(max, v);
+    }
+  }
+  return max;
+}
+
+/**
+ * 把最大值向上取到「整齐」的刻度上限（1% / 2% / 5% / 10% / 20% / 50% / 100%…）。
+ *
+ * @remarks
+ * 直接把最大值当轴上限会得到 8.6% 这种零碎刻度，左右轴虽然数值相同但格线很难读；
+ * 取到整档后刻度落在 10%、20% 这类整齐值上，观感更好。
+ *
+ * @param {number} v - 数据最大值（小数形式的比率）。
+ * @returns {number} 向上取整后的刻度上限；v <= 0 时返回 0.01（1%）。
+ * @example
+ * ```ts
+ * niceCeil(0.086); // 0.1  (10%)
+ * niceCeil(0.3);   // 0.5  (50%)
+ * niceCeil(0);     // 0.01 (1%)
+ * ```
+ */
+function niceCeil(v: number): number {
+  if (!(v > 0)) return 0.01;
+  const steps = [0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1];
+  for (const s of steps) if (v <= s) return s;
+  return Math.ceil(v);
+}
+
+/**
+ * 按面板配置生成 ECharts 配置项。
+ *
+ * @remarks
+ * 关键设计——双轴刻度对齐：
+ * 「成交转化率 & 搜索点击率」两条序列都是百分比，若让 ECharts 各自独立定刻度，
+ * 左右轴的刻度数字会不一样（如左 0~10%、右 0~8%），两条线的高度就不可比。
+ * 所以对这个面板强制左右轴共用同一量程（0 ~ niceCeil(数据最大值)）。
+ * 其余面板（如成交金额 vs 推广花费，量级差很大）保持各自独立刻度，避免小的那条被压平。
+ *
+ * @param {TrendPanel} panel - 趋势面板配置（轴、序列、是否带警戒线）。
+ * @returns {EChartsOption} ECharts 配置项。
+ * @example
+ * ```ts
+ * const opt = buildTrendOption(TREND_PANELS[0]);
+ * // opt.yAxis[0].max === opt.yAxis[1].max（该面板双轴对齐）
+ * ```
+ */
 function buildTrendOption(panel: TrendPanel): EChartsOption {
+  // 成交转化率 & 搜索点击率 两张都是百分比，强制左右轴共用同一量程（0 ~ 同一上限），
+  // 使两侧刻度数字完全一致、两条线可直接比较；其余面板保持各自独立刻度。
+  const alignScale = panel.key === "conv_click";
+  const sharedMax = alignScale ? niceCeil(panelDataMax(panel)) : 0;
   const yAxis = panel.axes.map((ax, i) => ({
     type: "value" as const,
     name: ax.name,
     position: (i === 0 ? "left" : "right") as "left" | "right",
     axisLabel: { formatter: axisTickFormatter(ax.format) },
     splitLine: i === 0 ? { lineStyle: { color: "#f1f5f9" } } : { show: false },
+    ...(alignScale ? { min: 0, max: sharedMax } : {}),
   }));
   const series = panel.series.map((se) => {
     const base: Record<string, unknown> = {
@@ -347,12 +532,39 @@ interface CompareRow {
   w: number; // 原始值（算条高比例）
   h: number;
 }
+/**
+ * 从「工作日 / 节假日」分组里安全取一个数值字段。
+ *
+ * @param {CompareGroup} g - 分组统计对象。
+ * @param {keyof CompareGroup} field - 要取的字段名。
+ * @returns {number | null} 字段值；字段缺失或不是数字时返回 null（调用方按 0 兜底）。
+ * @example
+ * ```ts
+ * groupValue(workday, "amount_avg"); // 1234.5 或 null
+ * ```
+ */
 function groupValue(g: CompareGroup, field: keyof CompareGroup): number | null {
   const v = g[field];
   return typeof v === "number" ? v : null;
 }
+
+/** 「工作日 vs 节假日」固定展示这 4 项（不随指标勾选变化：对比图是固定分析视角） */
 const COMPARE_KEYS = ["amount", "conversion_rate", "promotion_ratio", "roi"];
-/** 按给定顺序取 spec（优先使用清单里定义的顺序，但保留调用方指定的排列）。 */
+
+/**
+ * 按给定顺序取 spec 列表（保留调用方指定的排列）。
+ *
+ * @remarks
+ * 与 metricsOf 的区别：metricsOf 按**清单顺序**返回（用于卡片/列，保证稳定），
+ * 这里按**传入顺序**返回（用于对比图，让「日均成交金额」排首位符合阅读习惯）。
+ *
+ * @param {string[]} keys - 指标 key 数组（顺序即返回顺序）。
+ * @returns {MetricSpec[]} 对应的指标定义；未命中的 key 被过滤掉。
+ * @example
+ * ```ts
+ * orderedSpecs(["roi", "amount"]).map((m) => m.title); // ["ROI", "成交金额"]
+ * ```
+ */
 function orderedSpecs(keys: string[]): MetricSpec[] {
   const map = new Map(METRICS.map((m) => [m.key as string, m]));
   return keys.map((k) => map.get(k)).filter((m): m is MetricSpec => !!m);
@@ -380,12 +592,38 @@ const compareRows = computed<CompareRow[]>(() => {
   return rows;
 });
 
+/**
+ * 计算对比条形图里某根柱子的高度百分比。
+ *
+ * @remarks
+ * 按行内两个值的较大者再留 40% 余量作为满高基准：
+ * 直接以最大值为满高会让最高的柱子顶到轨道顶端、视觉上很挤，留余量更好看；
+ * 同时用 Math.max(..., 3) 保证值极小的柱子也有 3% 的可见高度，不会「消失」。
+ *
+ * @param {number} v - 该柱子的数值（工作日或节假日的值）。
+ * @param {CompareRow} row - 所在行（含 w / h 两个原始值，用于确定基准）。
+ * @returns {string} 高度百分比字符串，形如 "71.4%"。
+ * @example
+ * ```ts
+ * barPct(100, { w: 100, h: 50 } as CompareRow); // "71.4%"
+ * ```
+ */
 function barPct(v: number, row: CompareRow): string {
   // 按行内两个值的最大者留出 40% 余量，算柱子高度百分比
+  // 1e-9 兜底：两个值都为 0 时避免除零（此时 max 极小，结果被下面的 3% 兜住）
   const max = Math.max(row.w, row.h, 1e-9) * 1.4;
   return Math.max((v / max) * 100, 3).toFixed(1) + "%";
 }
 
+/**
+ * 返回模块列表页。
+ *
+ * @returns {void} 无返回值。
+ * @example
+ * ```ts
+ * goBack(); // 点「← 返回列表」
+ * ```
+ */
 function goBack() {
   void router.push({ name: "module", params: { moduleId: props.moduleId } });
 }

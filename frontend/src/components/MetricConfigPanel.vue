@@ -5,14 +5,46 @@
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { METRICS, METRIC_GROUPS, DEFAULT_METRIC_KEYS } from "../metrics";
 
-const props = defineProps<{ keys: string[] }>();
+/**
+ * 组件 Props。
+ */
+const props = defineProps<{
+  /** 当前勾选的指标 key 数组（由父组件通过 v-model 传入） */
+  keys: string[];
+}>();
+
+/**
+ * 组件事件：`update:keys` —— 勾选变化时回写新的 key 数组（配合 v-model:keys 使用）。
+ */
 const emit = defineEmits<{ (e: "update:keys", value: string[]): void }>();
 
+/** 下拉面板是否展开 */
 const open = ref(false);
+/** 面板根节点引用，用于「点击外部关闭」时判断点击是否在面板内 */
 const rootRef = ref<HTMLElement | null>(null);
 
+/**
+ * 当前勾选集合（Set 形式，便于模板里 O(1) 判断是否勾选）。
+ *
+ * @returns {Set<string>} 已勾选的指标 key 集合。
+ * @example
+ * ```ts
+ * selected.value.has("amount"); // true / false
+ * ```
+ */
 const selected = computed(() => new Set(props.keys));
 
+/**
+ * 按分组整理指标（供面板分组渲染），并过滤掉空分组。
+ *
+ * @returns {Array<{key: string; title: string; hint: string; items: MetricSpec[]}>}
+ *      分组元信息 + 该组下的指标列表；没有任何指标的分组被丢弃。
+ * @example
+ * ```ts
+ * groups.value[0].title;  // "商品明细表"
+ * groups.value[0].items;  // 该组的 9 个指标
+ * ```
+ */
 const groups = computed(() =>
   METRIC_GROUPS.map((g) => ({
     ...g,
@@ -20,12 +52,38 @@ const groups = computed(() =>
   })).filter((g) => g.items.length > 0),
 );
 
+/**
+ * 回写勾选结果。
+ *
+ * @remarks
+ * 输出前统一按 METRICS 清单顺序重排：
+ * 否则「先勾访客数再勾成交金额」会让页面上的指标顺序跟着勾选顺序变，
+ * 用户每次改配置都会看到卡片顺序跳来跳去。
+ *
+ * @param {string[]} keys - 新的 key 数组（顺序任意、可能含无效 key）。
+ * @returns {void} 无返回值；通过 emit("update:keys") 把规范化后的数组交给父组件。
+ * @example
+ * ```ts
+ * writeKeys(["visitors", "amount"]); // 实际输出 ["amount", "visitors"]（按清单顺序）
+ * writeKeys([]);                     // 清空
+ * ```
+ */
 function writeKeys(keys: string[]) {
   // 统一按清单顺序输出，避免勾选顺序影响卡片/列的实际排列
   const set = new Set(keys);
   emit("update:keys", METRICS.filter((m) => set.has(m.key as string)).map((m) => m.key as string));
 }
 
+/**
+ * 切换单个指标的勾选状态。
+ *
+ * @param {string} key - 要切换的指标 key。
+ * @returns {void} 无返回值；内部复用 writeKeys 保证输出顺序一致。
+ * @example
+ * ```ts
+ * toggle("orders"); // 成交单量：勾选 <-> 取消
+ * ```
+ */
 function toggle(key: string) {
   const next = new Set(props.keys);
   if (next.has(key)) next.delete(key);
@@ -33,14 +91,46 @@ function toggle(key: string) {
   writeKeys([...next]);
 }
 
+/**
+ * 全部指标的 key 列表（「全选」快捷操作用）。
+ *
+ * @returns {string[]} METRICS 中所有指标的 key，按清单顺序。
+ * @example
+ * ```ts
+ * allKeys().length; // 15
+ * ```
+ */
 function allKeys() {
   return METRICS.map((m) => m.key as string);
 }
 
+/**
+ * 点击面板外部时关闭下拉。
+ *
+ * @param {MouseEvent} e - 文档点击事件。
+ * @returns {void} 无返回值。
+ * @example
+ * ```ts
+ * // 由 document 的 click 监听触发；点击面板内部时保持展开
+ * ```
+ */
 function onDocClick(e: MouseEvent) {
+  // 面板未展开时不做任何判断，省一次 contains 计算
   if (!open.value) return;
+  // 点击落在面板内部 -> 不关闭（否则点选项会立刻把面板关掉）
   if (rootRef.value && !rootRef.value.contains(e.target as Node)) open.value = false;
 }
+
+/**
+ * 按 Esc 关闭下拉（无障碍/键盘操作习惯）。
+ *
+ * @param {KeyboardEvent} e - 键盘事件。
+ * @returns {void} 无返回值。
+ * @example
+ * ```ts
+ * // 由 document 的 keydown 监听触发
+ * ```
+ */
 function onEsc(e: KeyboardEvent) {
   if (e.key === "Escape") open.value = false;
 }

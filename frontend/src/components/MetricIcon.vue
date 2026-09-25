@@ -1,11 +1,33 @@
 <script setup lang="ts">
 // 指标线性图标（lucide 风格，24x24，currentColor 描边）。
 // 图标名与 metrics.ts 里每个指标的 icon 字段一一对应。
+//
+// 为什么手写 SVG 而不是引入图标库：
+//   本项目只用到十来个图标，引入整个 lucide/iconify 会显著增加打包体积；
+//   手写内联 path 零依赖，且描边用 currentColor，能自动跟随父级文字颜色（hover 变红等）。
 import { computed } from "vue";
 
-const props = withDefaults(defineProps<{ name: string; size?: number }>(), { size: 16 });
+/**
+ * 组件 Props。
+ */
+const props = withDefaults(
+  defineProps<{
+    /** 图标名，需与 metrics.ts 中指标的 icon 字段一致（如 "yen"、"cart"） */
+    name: string;
+    /** 图标边长（px）；默认 16 */
+    size?: number;
+  }>(),
+  { size: 16 },
+);
 
-// 每个图标是一段 SVG 内部标记（path/circle/polyline…），由外层 svg 的 currentColor 描边
+/**
+ * ICONS：图标名 -> SVG 内部标记（path / circle / polyline…）。
+ *
+ * @remarks
+ * 只存**内部**标记，外层 <svg> 统一提供 viewBox 与描边属性，
+ * 这样每个图标只需关心形状，颜色/线宽由外层统一控制（currentColor）。
+ * 新增图标时：在这里加一项，并在 metrics.ts 对应指标的 icon 字段引用它。
+ */
 const ICONS: Record<string, string> = {
   // 成交金额
   yen: '<path d="M7 5h10"/><path d="M10 5l2 5 2-5"/><path d="M12 10v8"/><path d="M8.5 13h7"/>',
@@ -37,10 +59,21 @@ const ICONS: Record<string, string> = {
   refund: '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/>',
 };
 
+/**
+ * 当前图标的内部 SVG 标记。
+ *
+ * @remarks
+ * 未知图标名时回退成一个空心圆，而不是渲染空 SVG——
+ * 空 SVG 会让布局塌成 0 宽（图标位消失），空心圆至少占位稳定。
+ */
 const inner = computed(() => ICONS[props.name] ?? '<circle cx="12" cy="12" r="9"/>');
 </script>
 
 <template>
+  <!--
+    用 v-html 注入 inner：图标内容是可信的常量字符串（非用户输入），
+    不存在 XSS 风险；且这样能避免为每个图标单写一个组件。
+  -->
   <svg
     :width="size"
     :height="size"

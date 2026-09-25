@@ -3,9 +3,11 @@
 import { computed, onMounted } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useModuleStore } from "./stores/module";
+import { useUiStore } from "./stores/ui";
 import { fetchManifest } from "./api";
 
 const store = useModuleStore();
+const ui = useUiStore();
 const route = useRoute();
 const router = useRouter();
 
@@ -23,26 +25,67 @@ onMounted(async () => {
   }
 });
 
-// 店铺列表：从路由当前模块推导，不依赖 store.moduleId
-// （单品分析页不调用 store.init，store.moduleId 为空会导致店铺列表消失）
+/**
+ * 侧边栏「店铺」列表。
+ *
+ * @remarks
+ * 刻意**从路由上的 moduleId 查 manifest**，而不是用 store.currentModule：
+ * 单品分析页不调用 store.init()，且离开模块页时 store.reset() 会清空 moduleId，
+ * 依赖 store 会让分析页的店铺列表凭空消失。按路由自查 manifest 最稳。
+ *
+ * @returns {string[]} 当前模块的店铺名数组；manifest 未加载或模块不存在时为空数组。
+ * @example
+ * ```ts
+ * shops.value; // ["钻芯旗舰店", "卡求旗舰店"]
+ * ```
+ */
 const shops = computed(
   () => store.manifest?.modules.find((m) => m.module_id === route.params.moduleId)?.shops ?? [],
 );
 
-// 当前选中店铺：分析页以路由 query.shop 为准，列表页以 store.shop 为准
+/**
+ * 当前高亮的店铺。
+ *
+ * @remarks
+ * 两个页面的「当前店铺」来源不同：
+ * - 单品分析页以 URL 上的 query.shop 为准（可分享、可刷新保持）；
+ * - 模块列表页以 store.shop（用户筛选状态）为准。
+ *
+ * @returns {string} 店铺名；空串表示「全部店铺」。
+ * @example
+ * ```ts
+ * activeShop.value; // "" 或 "钻芯旗舰店"
+ * ```
+ */
 const activeShop = computed(() =>
   route.name === "spu-analysis" ? ((route.query.shop as string) || "") : store.shop,
 );
 
-// 点击店铺：列表页直接切换店铺筛选；分析页则离开分析回到商品明细页（模块列表）
+/**
+ * 点击侧边栏店铺：按当前所在页面走不同行为。
+ *
+ * @remarks
+ * 在单品分析页点店铺时**不能**只改 store.shop——分析页不读 store.shop，
+ * 改了也看不到效果。所以这里跳转回模块页并把店铺带在 query 上，行为符合直觉。
+ *
+ * @param {string} shop - 目标店铺名；传空串表示「全部店铺」。
+ * @returns {void} 无返回值。
+ * @example
+ * ```ts
+ * onShopClick("钻芯旗舰店"); // 列表页：筛选该店；分析页：跳回列表页并带上 shop
+ * onShopClick("");           // 切回全部店铺
+ * ```
+ */
 function onShopClick(shop: string) {
   if (route.name === "spu-analysis") {
+    // 分析页 -> 跳回模块列表页，店铺通过 query 传递（空店铺时不带 shop 参数）
     void router.push({
       name: "module",
       params: { moduleId: route.params.moduleId as string },
       query: shop ? { shop } : {},
     });
   } else {
+    // 列表页 -> 直接切换筛选（store 内部会触发重新拉数据）
     store.setShop(shop);
   }
 }
@@ -95,12 +138,19 @@ function onShopClick(shop: string) {
         </div>
       </div>
 
-      <img class="sider-watermark" src="/undraw_all-the-data_ijgn.svg" alt="" />
+      <img class="sider-watermark" src="/navbar-background.svg" alt="" />
     </aside>
 
     <main class="main">
       <router-view />
     </main>
+  </div>
+
+  <!-- 路由级加载遮罩：跳转到单品分析页（懒加载大 chunk）时，路由一开始即亮起，
+       覆盖 chunk 下载+解析的等待；组件挂载后由 SpuAnalysisView 复位（交棒页面自身遮罩）。 -->
+  <div v-if="ui.navigating" class="nav-loading">
+    <div class="nl-spinner"></div>
+    <div class="nl-text">{{ ui.loadingText }}</div>
   </div>
 </template>
 
@@ -136,6 +186,36 @@ function onShopClick(shop: string) {
   opacity: 0.2;
   pointer-events: none;
   z-index: 0;
+}
+/* ---------- 路由级加载遮罩（跳转单品分析页时立即出现）---------- */
+.nav-loading {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  background: rgba(255, 255, 255, 0.62);
+  backdrop-filter: blur(1.5px);
+  -webkit-backdrop-filter: blur(1.5px);
+}
+.nl-spinner {
+  width: 44px;
+  height: 44px;
+  border: 4px solid #f6cfcc;
+  border-top-color: #e1251b;
+  border-radius: 50%;
+  animation: nl-spin 0.8s linear infinite;
+}
+@keyframes nl-spin {
+  to { transform: rotate(360deg); }
+}
+.nl-text {
+  font-size: 14px;
+  color: #475569;
+  letter-spacing: 0.5px;
 }
 .logo {
   display: flex;
@@ -196,5 +276,9 @@ function onShopClick(shop: string) {
   overflow: auto;
   padding: 20px 24px;
   box-sizing: border-box;
+  /* 右侧主展示区背景：用前端 public 下的白底图片铺底（构建时原样拷进 dist 根目录，
+     运行时以 /white-background.jpg 访问）；左侧 .sider 保持纯白不变。
+     center/cover 保证图片居中且铺满整个展示区、按比例缩放不变形。 */
+  background: #fff url("/white-background.jpg") center / cover no-repeat;
 }
 </style>
