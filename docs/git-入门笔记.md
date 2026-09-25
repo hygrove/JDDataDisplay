@@ -4,6 +4,8 @@
 >
 > 适合人群：刚学 Git、不想死背命令、想看一个真实项目怎么进仓库的人。
 
+
+
 ---
 
 ## 0. 前置准备（别急着敲命令）
@@ -68,7 +70,7 @@ git branch -M main
 **顺序很重要**：先 `add .gitignore`，再 `add .`。这样暂存时忽略规则已生效，不会把垃圾文件一起收进去。
 
 ```powershell
-git add .gitignore   # 先把忽略规则本身加进暂存区（exit=0）
+    # 先把忽略规则本身加进暂存区（exit=0）
 git add .            # 再把整个项目加进暂存区（exit=0）
 ```
 
@@ -77,17 +79,17 @@ git add .            # 再把整个项目加进暂存区（exit=0）
 
 ### 本项目的 `.gitignore` 都拦了啥（节选 + 白话）
 
-| 规则 | 拦掉的东西 | 为什么要拦 |
-|---|---|---|
-| `.venv/` | Python 虚拟环境 | 用 `pip install` 生成的，换台机器重建即可 |
-| `node_modules/` | 前端 npm 依赖 | 几百 MB，靠 `package.json` 一键重装 |
-| `frontend/dist/` | 前端构建产物 | `npm run build` 重新生成 |
-| `backend/app/data/` | 运行生成的图片数据 | `run_batch` 重新生成 |
-| `.workbuddy/` | 助手工作记忆 | 不是项目源码 |
-| `.jj/` | jj 的本地元数据 | 后面要学 jj，必须拦，否则 git 会把它当未跟踪文件 |
-| `*.log` / `screenshot_*.png` | 日志、截图 | 临时产物 |
-| `.env` | 环境密钥 | 防泄密 |
-| `scripts/_*.py` | 临时脚本 | 下划线前缀的临时文件 |
+| 规则                           | 拦掉的东西       | 为什么要拦                        |
+| ---------------------------- | ----------- | ---------------------------- |
+| `.venv/`                     | Python 虚拟环境 | 用 `pip install` 生成的，换台机器重建即可 |
+| `node_modules/`              | 前端 npm 依赖   | 几百 MB，靠 `package.json` 一键重装  |
+| `frontend/dist/`             | 前端构建产物      | `npm run build` 重新生成         |
+| `backend/app/data/`          | 运行生成的图片数据   | `run_batch` 重新生成             |
+| `.workbuddy/`                | 助手工作记忆      | 不是项目源码                       |
+| `.jj/`                       | jj 的本地元数据   | 后面要学 jj，必须拦，否则 git 会把它当未跟踪文件 |
+| `*.log` / `screenshot_*.png` | 日志、截图       | 临时产物                         |
+| `.env`                       | 环境密钥        | 防泄密                          |
+| `scripts/_*.py`              | 临时脚本        | 下划线前缀的临时文件                   |
 
 > `ResourceData/` 默认**不忽略**（已注释掉），因为我们希望仓库自包含：别人 clone 下来 + 跑 `run_batch` 就能直接跑，不用你另外发数据文件。如果你觉得业务数据敏感/太大，把第 21 行的 `# ResourceData/` 注释去掉即可忽略它。
 
@@ -245,5 +247,60 @@ git ls-remote origin   # 确认远端分支存在（偶发 502 时重试即可�
 
 ---
 
+## 13. 后续日常提交流程（第一次之后怎么循环）
+
+第一次提交做了一半是**一次性地基**，之后永远不用重来。先把"哪些只用做一次"切干净，再讲日常循环。
+
+### 13.1 只用做一次的动作（别每次重来）
+
+| 动作 | 命令 | 说明 |
+|---|---|---|
+| 建本地仓库 | `git init` | 仓库已存在，跳过 |
+| 主干改名 | `git branch -M main` | 已改，跳过 |
+| 关联远端 | `git remote add origin <url>` | 已关联，跳过 |
+| 绑定跟踪 | `git push -u origin main` | `-u` 已绑过，之后 `git push` 不用再写分支名 |
+
+地基打好了，上面"盖房子"（提交代码）才是日常。
+
+### 13.2 日常循环（recurring）
+
+尤其你是「异地多机开发」，最稳的顺序：
+
+```bash
+git pull                        # ① 开工前先同步远端最新
+git status                      # ② 看哪些文件动过
+# ……改代码……
+git diff                        # ③ 提交前过一遍自己改了啥
+git add <具体文件>               # ④ 把要提交的改动放进暂存区
+git commit -m "type: 一句话说明"  # ⑤ 生成版本快照
+git push                        # ⑥ 推到 GitHub（-u 绑过，不用再写分支名）
+```
+
+逐条原理：
+
+- **① `git pull`** = `fetch` + `merge`。你可能在公司机和家里机都改过，开工先拉，把远端新提交合进来再基于最新代码改，否则后面 push 会被拒（non-fast-forward 分叉）。
+- **② `git status`**：工作树快照，红=已改/未跟踪，绿=已暂存。
+- **③ `git diff`**：行级看具体改动，提交前自检，避免把调试代码误提交。
+- **④ `git add <文件>`**：**精准添加**，推荐 `git add -p` 做"按块暂存"——同一文件里只想提交其中一部分时用，调试片段就不会混进去。
+- **⑤ `git commit`**：把暂存区快照成版本。信息用 Conventional Commits：`feat:`(新功能) / `fix:`(修 bug) / `docs:`(文档) / `refactor:`(重构) / `chore:`(杂务)。
+- **⑥ `git push`**：因为第一次用了 `-u`，本地 main 已跟踪 `origin/main`，直接 `git push` 即可，不用再写 `origin main`。
+
+### 13.3 这套项目要上心的几点
+
+1. **`.gitignore` 已就位，现在 `git add .` 比第一次安全**——`.venv`/`node_modules`/`dist`/`app/data`/`.workbuddy`/`.jj` 全拦着。但别因此放松：`ResourceData/` 是**默认提交**的，你往里加新 Excel/CSV/图片，`git add .` 会一并带走（设计意图：数据源随仓库走）。
+2. **生成物别手改也别提交**：前端 `npm run build` 出的 `dist/`、批处理 `run_batch` 出的 `app/data/`，都是自动生成，改源码/数据源后重跑即可。
+3. **代理 502 老朋友**：本机出口代理偶发 502，push 报 `CONNECT tunnel failed, response 502` / `Empty reply`——不是你错，**重试**就行。
+4. **认证**：第一次用临时 PAT 推完就清掉了 remote URL。后续 `git push` 会让 Git Credential Manager 弹窗要凭据（用户名 `hygrove`，密码填那个 PAT），**只输一次会被缓存**。想彻底不碰 PAT，去配 SSH（见第 12 节）。
+
+### 13.4 早点养成的好习惯
+
+- **小步提交**：一个逻辑改完就 commit，别攒一周；回滚时粒度细才好切。
+- **一个提交只讲一件事**：别把"修 bug + 加功能 + 格式化"塞一个 commit。
+- **push 前先 pull**：跨机器尤其如此，永远先同步再动手。
+- 拿不准改了啥：`git diff --staged` 看已暂存、`git log --oneline` 看历史。
+
+---
+
 ### 本次实战一句话回顾
+
 身份 → init → 改名 main → 先忽略后 add → check-ignore 验身 → commit → remote 关联 → push（撞 502 重试）→ set-url 清 PAT → 验证。94 个文件已安全躺在 `main` 分支上。
