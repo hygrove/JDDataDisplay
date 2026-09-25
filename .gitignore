@@ -9,6 +9,7 @@ __pycache__/
 # ========== 前端 ==========
 node_modules/
 frontend/dist/
+frontend/tsconfig.tsbuildinfo
 # 前端构建/运行日志（*.log 已统一忽略，这里保留以醒目）
 frontend/build.log
 
