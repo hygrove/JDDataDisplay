@@ -301,6 +301,68 @@ git push                        # ⑥ 推到 GitHub（-u 绑过，不用再写�
 
 ---
 
+## 14. 提交信息前缀：Conventional Commits（约定式提交）
+
+### 14.1 是什么
+
+Conventional Commits 是一套**提交信息格式约定**，让历史一眼可读、还能自动生成 CHANGELOG、驱动语义化版本号。格式：
+
+```
+<type>(<scope>): <subject>
+
+<optional body>
+
+<optional footer>
+```
+
+- `type`：改动性质（见下表）
+- `scope`：可选，受影响范围（如 `feat(parser):`）
+- `subject`：一句话，祈使句、不长（如「新增单品分析页」而非「新增了单品分析页」）
+
+### 14.2 常用 type 与含义
+
+| 前缀 | 含义 | 例子 |
+|---|---|---|
+| `feat` | 新功能 | `feat: 新增单品分析页` |
+| `fix` | 修 bug | `fix: 修复缩略图尺寸计算错误` |
+| `docs` | 只动文档（不改代码逻辑） | `docs: 补充部署指南` |
+| `style` | **代码格式**调整（空格/分号/命名风格/换行），**不影响逻辑、不含 bug 修复** | `style: 统一用 2 空格缩进` |
+| `refactor` | 重构：既非新功能也非修 bug（重命名、提取函数、调结构） | `refactor: 抽取指标聚合函数` |
+| `perf` | 性能优化 | `perf: 指标计算改并行` |
+| `test` | 测试相关 | `test: 补充 pipeline 单测` |
+| `build` | 构建系统/外部依赖（package.json、vite 配置、requirements.txt） | `build: 升级 vite 到 5.4` |
+| `ci` | CI 配置（GitHub Actions 等） | `ci: 加自动构建工作流` |
+| `chore` | 杂务：不碰 src/test 的改动（.gitignore、脚本、配置） | `chore: 补 .gitignore 规则` |
+| `revert` | 回滚某次提交 | `revert: 回滚 feat: 新增筛选` |
+
+### 14.3 ⚠️ 最容易踩的坑：`style` 不是「UI 样式」
+
+很多人（包括我给你出的拆分计划里）把「前端视觉 / 静态资源改动」写成 `style:` —— **这是错的**。`style` 在约定里专指**代码格式**（空格、分号、缩进、import 排序），和肉眼看到的界面长什么样无关。
+
+- 改了页面布局、加了插画、做了动画、换了背景图 → 这是**功能 / 界面变更**，该用 `feat:`（新界面/新元素）或 `chore:`（纯资源改名/搬运）。
+- 只有「把单引号全改成双引号、调缩进」这种才用 `style:`。
+
+所以前面第 13 节拆分计划里那条 `style: 静态资源稳定命名 + 空态插画 + 箭头动画`，严格说应拆成 `feat: 空态插画与箭头动画` + `chore: 静态资源改名`，别照抄那个 `style:` 前缀。（这就是「讲着规矩自己先破例」的活教材。）
+
+### 14.4 破坏性变更
+
+不兼容旧版本时，在 type 后加 `!` 或在 footer 写 `BREAKING CHANGE:`：
+
+```
+feat(api)!: 接口返回结构改为按日期分组
+
+BREAKING CHANGE: /spu 接口旧字段 date 移除，改用 dates[]
+```
+
+### 14.5 为什么值得遵守
+
+- 历史 `git log` 一眼分清「加了啥 / 修了啥 / 只是文档」。
+- 工具（standard-version、release-please）能据此自动出 CHANGELOG、自动 bump 版本号。
+- 团队协作时，review 别人 PR 前看前缀就知道这次改动大概多重。
+- 本笔记第 11、13 节的提交都用了 `docs:` / `feat:` / `fix:` 前缀，照着写就行。
+
+---
+
 ### 本次实战一句话回顾
 
 身份 → init → 改名 main → 先忽略后 add → check-ignore 验身 → commit → remote 关联 → push（撞 502 重试）→ set-url 清 PAT → 验证。94 个文件已安全躺在 `main` 分支上。
