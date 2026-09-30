@@ -41,6 +41,21 @@ app.add_middleware(
 # 业务 API 路由（/api/manifest、/api/module/...、/api/refresh 等）
 app.include_router(api_router)
 
+
+# 启动钩子：确保 SQLite 表已存在（幂等）。
+# 真正的「摄入」由 run_batch / /api/refresh 完成；这里只建表，
+# 避免「服务起来了但还没跑过批处理」时查询报「表不存在」。建表失败不阻断启动
+# （页面照常可开，只是暂时无数据），仅打印告警便于排查
+@app.on_event("startup")
+def _init_db_schema() -> None:
+    """应用启动时幂等建表，保证 daily_detail / processed_file 存在。"""
+    from ..jobs.db import ensure_schema
+
+    try:
+        ensure_schema()
+    except Exception as e:  # noqa: BLE001
+        print(f"[db] 启动建表失败（不影响页面）：{type(e).__name__}: {e}")
+
 # SPU 原图：目录可能尚不存在（首次跑批处理前），先建目录避免 StaticFiles 启动即报错
 config.IMAGES_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/images", StaticFiles(directory=config.IMAGES_DIR), name="images")

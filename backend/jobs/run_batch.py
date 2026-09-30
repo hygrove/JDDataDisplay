@@ -29,6 +29,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from backend.jobs import config, pipeline  # noqa: E402
+from backend.jobs import db as jobdb  # noqa: E402
 from backend.jobs.models import BatchStatus  # noqa: E402
 
 
@@ -83,13 +84,18 @@ def run_once() -> BatchStatus:
     last_err = ""
     for attempt in range(1, max_attempts + 1):
         try:
+            # 增量摄入：先把 Excel/CSV 清洗后写入 SQLite（daily_detail + processed_file 哈希追踪），
+            # 再由 pipeline 从 DB 读取干净长表产出 JSON / summary。两步都在同一事务边界内完成，
+            # 保证「库里存的」与「页面看到的」永远一致
+            db_result = jobdb.ingest_excel_to_db(config.POP_SOURCE_DIR)
+            print(f"[db] 摄入：{db_result}")
             manifest = pipeline.run_all()
             status = BatchStatus(
                 last_run_at=started_at,
                 success=True,
                 attempts=attempt,
                 duration_seconds=round(time.time() - start, 2),
-                message=f"成功：{len(manifest.modules)} 个模块",
+                message=f"成功：{len(manifest.modules)} 个模块，DB {db_result['rows']} 行",
                 source_dir=str(config.POP_SOURCE_DIR),
                 modules=[m.module_id for m in manifest.modules],
             )

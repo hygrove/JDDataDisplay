@@ -30,6 +30,11 @@ BACKEND_DIR = Path(__file__).resolve().parent.parent
 # DATA_DIR：批处理产出的 JSON / 图片都放这里，由 FastAPI 静态托管后供前端读取
 DATA_DIR = Path(os.getenv("JD_DATA_DIR", BACKEND_DIR / "app" / "data"))
 
+# DB_PATH：SQLite 数据库文件位置（单文件嵌入式数据库）。
+# 落在 DATA_DIR（已被 .gitignore 忽略），所以数据库**不进 git**，
+# 由 run_batch 从 Excel/CSV 增量重建；原生 sqlite3，零新依赖。
+DB_PATH = Path(os.getenv("JD_DB_PATH", DATA_DIR / "app.db"))
+
 # MODULES_DIR：各模块的明细 / 汇总 JSON 存放目录（如 pop_spu_detail.json）
 MODULES_DIR = DATA_DIR / "modules"
 

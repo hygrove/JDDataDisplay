@@ -26,7 +26,7 @@ from . import config, transforms
 from .make_thumbs import build_thumbnails
 from .models import Manifest, ModuleManifest
 from .sources.base import Source
-from .sources.excel_source import PopSpuExcelSource
+from .sources.sqlite_source import SqliteSource
 
 
 @dataclass
@@ -45,7 +45,7 @@ class ModuleSpec:
         ...     module_id="pop_spu_detail",
         ...     title="POP 单品明细",
         ...     description="按店铺/SPU/日期的商品经营指标",
-        ...     sources=[PopSpuExcelSource()],
+        ...     sources=[SqliteSource()],
         ... )
         >>> spec.module_id
         'pop_spu_detail'
@@ -163,7 +163,7 @@ def default_registry() -> list[ModuleSpec]:
             module_id="pop_spu_detail",
             title="POP 单品明细",
             description="按店铺/SPU/日期的商品经营指标：访客、成交、转化、推广。",
-            sources=[PopSpuExcelSource()],
+            sources=[SqliteSource()],
         ),
     ]
 
