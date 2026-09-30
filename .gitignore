@@ -15,11 +15,13 @@ frontend/build.log
 
 # ========== 运行生成的数据（run_batch 重新生成，不入仓） ==========
 backend/app/data/
+# SQLite 数据库文件（由 run_batch 从 Excel 增量重建，不入库）
+*.db
 
-# ========== 业务数据源 ResourceData ==========
-# 默认【提交】：仓库自包含，异地 clone + run_batch 即可跑。
-# 若你不想把业务 Excel / SPU 图片推进 git（数据敏感或过大），删掉下面这行注释即可忽略：
-# ResourceData/
+# ========== 业务数据源 ResourceData（后续不入仓库，仅保留 sample_data/ 作样例） ==========
+# ResourceData/ 含每日增长的业务 Excel / CSV / SPU 图片，体积大且含业务数据，不进 git；
+# 异地 / 本地测试用 sample_data/ 下的少量样例表（git 跟踪），跑前用 scripts/setup_sample.py 复制过去。
+ResourceData/
 
 # ========== 助手工作记忆（非项目源码） ==========
 .workbuddy/
@@ -30,7 +32,13 @@ backend/app/data/
 
 # ========== 日志 / 临时 / 截图 ==========
 *.log
+logs/
 screenshot_*.png
+
+# ========== 本地工具 / 演示 / 临时探针（非项目源码） ==========
+DB.Browser.for.SQLite-v3.13.1-win64/
+preview/
+_*.txt
 
 # ========== 编辑器 / 系统文件 ==========
 .vscode/
