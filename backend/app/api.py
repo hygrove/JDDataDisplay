@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from ..jobs import config
@@ -373,42 +374,36 @@ def get_manifest() -> Manifest:
     return Manifest.model_validate_json(raw)
 
 
-@router.get("/module/{module_id}/rows", response_model=PagedRows)
-def get_rows(
+def _build_rows(
     module_id: str,
-    shop: Optional[str] = Query(None, description="店铺名；空=全部店铺"),
-    start: Optional[str] = Query(None, description="起始日期 YYYY-MM-DD（与 end 构成区间）"),
-    end: Optional[str] = Query(None, description="截止日期 YYYY-MM-DD（与 start 构成区间）"),
-    date: Optional[str] = Query(None, description="【兼容旧调用】单日 YYYY-MM-DD；与 start/end 二选一"),
-    keyword: Optional[str] = Query(None, description="SPU 号或名称模糊搜索"),
-    sort_by: Optional[str] = Query(None, description="指标 key 或 spu/shop"),
-    sort_order: str = Query("desc", pattern="^(asc|desc)$"),
-    page: int = Query(1, ge=1),
-    page_size: int = Query(300, ge=1, le=500),
-) -> PagedRows:
-    """模块分页明细：按区间 / 店铺 / 关键词过滤，按指标排序后分页。
+    shop: Optional[str],
+    start: Optional[str],
+    end: Optional[str],
+    date: Optional[str],
+    keyword: Optional[str],
+    sort_by: Optional[str],
+    sort_order: str,
+) -> tuple[list[RowOut], list[str]]:
+    """按区间 / 店铺 / 关键词过滤并聚合为「逐日」行（不分页）。
+
+    抽离自 get_rows 的核心逻辑：导出接口需要**全量**（不受前端无限滚动分页影响），
+    故把「过滤 + 按 (shop,spu) 聚合 + 排序 + 构造 RowOut」的部分复用出来，
+    返回 (行列表, 区间内日期升序列表)。
 
     Args:
-        module_id: 模块标识（路径参数）。
-        shop: 店铺名过滤；None 表示全部店铺。
-        start: 区间起始日期；与 end 配对使用，优先级高于 date。
-        end: 区间截止日期；与 start 配对使用。
-        date: 【兼容旧调用】单日日期；仅传它时等价于 start=end=date。
-        keyword: SPU 号或名称的模糊关键词（大小写不敏感）。
-        sort_by: 排序字段，取值为 METRIC_KEYS 之一或 "spu" / "shop"；None 表示不排序。
-        sort_order: 排序方向，"asc" 或 "desc"，默认 "desc"。
-        page: 页码，从 1 开始。
-        page_size: 每页条数，1~500，默认 300。
+        module_id: 模块标识。
+        shop / start / end / date / keyword / sort_by / sort_order: 语义与 get_rows 完全一致。
 
     Returns:
-        PagedRows: 含 total（过滤后总数）与当页 rows。
-            区间模式下每行的 days 铺满区间内每一天（缺失日指标为 None）。
+        tuple[list[RowOut], list[str]]: (过滤聚合后的全量行, 区间内日期升序列表)。
 
     Raises:
         HTTPException: 404 —— 模块数据文件不存在（由 flatten_module 抛出）。
 
     Example:
-        GET /api/module/pop_spu_detail/rows?start=2026-09-01&end=2026-09-24&sort_by=amount&page=1
+        >>> rows, dates = _build_rows("pop_spu_detail", None, "2026-09-01", "2026-09-24", None, None, "amount", "desc")
+        >>> len(rows) >= 0
+        True
     """
     all_rows = flatten_module(module_id)
     all_dates = sorted({r.date for r in all_rows})
@@ -502,7 +497,30 @@ def get_rows(
                 days=days,
             )
         )
+    return out_rows, date_list
 
+
+@router.get("/module/{module_id}/rows", response_model=PagedRows)
+def get_rows(
+    module_id: str,
+    shop: Optional[str] = Query(None, description="店铺名；空=全部店铺"),
+    start: Optional[str] = Query(None, description="起始日期 YYYY-MM-DD（与 end 构成区间）"),
+    end: Optional[str] = Query(None, description="截止日期 YYYY-MM-DD（与 start 构成区间）"),
+    date: Optional[str] = Query(None, description="【兼容旧调用】单日 YYYY-MM-DD；与 start/end 二选一"),
+    keyword: Optional[str] = Query(None, description="SPU 号或名称模糊搜索"),
+    sort_by: Optional[str] = Query(None, description="指标 key 或 spu/shop"),
+    sort_order: str = Query("desc", pattern="^(asc|desc)$"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(300, ge=1, le=500),
+) -> PagedRows:
+    """模块分页明细：复用 _build_rows 取全量，再按页码切片返回当页。
+
+    Args / Returns / Raises 同 _build_rows；区别仅在于本函数按 page/page_size 切片。
+
+    Example:
+        GET /api/module/pop_spu_detail/rows?start=2026-09-01&end=2026-09-24&sort_by=amount&page=1
+    """
+    out_rows, _ = _build_rows(module_id, shop, start, end, date, keyword, sort_by, sort_order)
     total = len(out_rows)
     start_idx = (page - 1) * page_size
     return PagedRows(total=total, page=page, page_size=page_size, rows=out_rows[start_idx : start_idx + page_size])
@@ -525,6 +543,266 @@ def get_summary(module_id: str) -> ModuleSummary:
         GET /api/module/pop_spu_detail/summary
     """
     return load_summary(module_id)
+
+
+# ---------------- 数据导出（xlsx）----------------
+class ExportMetricAgg(BaseModel):
+    """导出指标口径：与前端 metrics.ts 的 MetricSpec.agg 对齐。
+
+    Fields:
+        kind: "sum" 直接求和；"ratio" 先分别累加分子分母再相除。
+        num: ratio 类型的分子指标 key；sum 类型时为 None。
+        den: ratio 类型的分母指标 key；sum 类型时为 None。
+    """
+
+    kind: str
+    num: Optional[str] = None
+    den: Optional[str] = None
+
+
+class ExportMetricSpec(BaseModel):
+    """前端传来的单个导出指标定义（key + 中文标题 + 口径）。
+
+    Fields:
+        key: 指标 key，需与 MetricRecord 字段名一致。
+        title: 中文展示名（作导出表头）。
+        agg: 区间汇总口径（见 ExportMetricAgg）。
+    """
+
+    key: str
+    title: str
+    agg: ExportMetricAgg
+
+
+class ExportRequest(BaseModel):
+    """导出请求体：过滤条件 + 要导出的指标清单。
+
+    Fields:
+        shop / start / end / keyword / sort_by / sort_order: 与 get_rows 同语义。
+        metrics: 前端按「指标配置唯一事实来源」传入的有序指标清单（Q3=B 即全部 15 项）。
+
+    Example:
+        >>> ExportRequest(metrics=[ExportMetricSpec(key="amount", title="成交金额",
+        ...     agg=ExportMetricAgg(kind="sum"))]).metrics[0].key
+        'amount'
+    """
+
+    shop: Optional[str] = None
+    start: Optional[str] = None
+    end: Optional[str] = None
+    keyword: Optional[str] = None
+    sort_by: Optional[str] = None
+    sort_order: str = "desc"
+    metrics: list[ExportMetricSpec]
+
+
+def _resolve_thumb(image: Optional[str]) -> Optional[Path]:
+    """把 RowOut.image（"/images/xxx.png" 形式）解析成本地缩略图 / 原图文件路径。
+
+    优先用批处理预生成的 120 尺寸缩略图（webp→avif 兜底），体积远小于原图；
+    都不存在时退回原图目录；都没有则返回 None（导出时该 SPU 不嵌图）。
+
+    Args:
+        image: 图片相对路径，如 "/images/100123.png"；空返回 None。
+
+    Returns:
+        Optional[Path]: 可用于 openpyxl 嵌入的本地图片路径；找不到时 None。
+    """
+    if not image:
+        return None
+    stem = Path(image).stem
+    for ext in ("webp", "avif"):
+        p = config.THUMBS_DIR / "120" / f"{stem}.{ext}"
+        if p.exists():
+            return p
+    orig = config.IMAGES_DIR / Path(image).name
+    return orig if orig.exists() else None
+
+
+def _build_export_workbook(
+    rows: list[RowOut], date_list: list[str], specs: list[ExportMetricSpec]
+) -> bytes:
+    """构造「每 SPU 一块」的 xlsx 字节流（区间模式布局，与样本表结构一致）。
+
+    布局（与用户提供的单品测试表对齐）：
+      - 全局表头：A 图片 / B 商品名称 / C spu / D 店铺 / E 类目 / F 指标 / G 总计 / H… 日期；
+      - 每个 SPU 占一块：A 列图片纵向合并；B-E 重复该 SPU 元信息；
+        F 为指标名；H… 为该指标逐日值；G 为区间总计
+        （求和类=日值之和，比率类=分子分母总量相除=口径A）；块间留一空行。
+    数值统一存真实数值（货币符号不要），保证可在 Excel 内排序 / 求和；
+    仅当比率类分母为 0（无数据）时总计与缺失日单元格留空。
+
+    Args:
+        rows: _build_rows 产出的全量行（每个 SPU 一行，days 承载逐日数据）。
+        date_list: 区间日期升序列表（列 H… 的来源）。
+        specs: 前端传入的有序指标清单（决定导出列与口径）。
+
+    Returns:
+        bytes: 完整 xlsx 文件的字节流（内存中生成，无需落盘）。
+
+    Example:
+        >>> _build_export_workbook([], [], [])  # doctest: +SKIP
+        b'PK\\x03\\x04...'
+    """
+    import io
+
+    from openpyxl import Workbook
+    from openpyxl.drawing.image import Image as XLImage
+    from openpyxl.drawing.spreadsheet_drawing import (
+        AnchorMarker,
+        OneCellAnchor,
+        XDRPositiveSize2D,
+    )
+    from openpyxl.utils import get_column_letter
+    from openpyxl.utils.units import pixels_to_EMU
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "单品数据"
+
+    # 全局表头
+    ws.cell(1, 1, "图片")
+    ws.cell(1, 2, "商品名称")
+    ws.cell(1, 3, "spu")
+    ws.cell(1, 4, "店铺")
+    ws.cell(1, 5, "类目")
+    ws.cell(1, 6, "指标")
+    ws.cell(1, 7, "总计")
+    for j, d in enumerate(date_list):
+        ws.cell(1, 8 + j, d)
+
+    # 列宽
+    ws.column_dimensions["A"].width = 18
+    for col in ("B", "C", "D", "E", "F", "G"):
+        ws.column_dimensions[col].width = 16
+    for j in range(len(date_list)):
+        ws.column_dimensions[get_column_letter(8 + j)].width = 12
+
+    def _num(v: object) -> Optional[float]:
+        """把值规整成 float（非数字返回 None）。"""
+        return v if isinstance(v, (int, float)) else None
+
+    def _round(v: object) -> object:
+        """把数值保留 2 位小数；整数仍保持整数（避免 12.0 这类尾随 .0）。
+
+        Args:
+            v: 任意值（数字 / None / 其他）。
+
+        Returns:
+            object: 数字则保留 2 位（整数去尾随 .0），否则原样返回。
+        """
+        if isinstance(v, bool):
+            return v
+        if isinstance(v, (int, float)):
+            r = round(float(v), 2)
+            return int(r) if r == int(r) else r
+        return v
+
+    r = 2  # 第 1 行是表头，数据从第 2 行起
+    for row in rows:
+        block_start = r
+        n = len(specs)
+        block_end = block_start + n - 1
+        # 图片列纵向合并（跨整个 SPU 指标块）
+        ws.merge_cells(start_row=block_start, start_column=1, end_row=block_end, end_column=1)
+        img_path = _resolve_thumb(row.image)
+        if img_path:
+            try:
+                img = XLImage(str(img_path))
+                # 缩放到约 120px 高（不放大）：避免大原图撑爆行高
+                target = 120
+                scale = (target / img.height) if img.height else 1.0
+                if scale > 1:
+                    scale = 1.0
+                w = int(round(img.width * scale))
+                h = int(round(img.height * scale))
+                # 关键：必须显式设置图片宽高与锚点 ext。openpyxl 的 OneCellAnchor
+                # 在缺省 ext 时会写成 XDRPositiveSize2D(0, 0)，落盘后图片尺寸为 0，
+                # Excel 中完全不可见——这正是上一版“图片没成功”的根因（仅数到图片数
+                # 非零不足以证明可见，必须核对锚点 ext 尺寸字段）。
+                img.width = w
+                img.height = h
+                img.anchor = OneCellAnchor(
+                    _from=AnchorMarker(col=0, row=block_start - 1, colOff=0, rowOff=0),
+                    ext=XDRPositiveSize2D(pixels_to_EMU(w), pixels_to_EMU(h)),
+                )
+                ws.add_image(img)
+            except Exception:
+                # 单张图嵌入失败不阻断整份导出
+                pass
+
+        for i, spec in enumerate(specs):
+            rr = block_start + i
+            # B-E 重复该 SPU 元信息（与样本表一致）
+            ws.cell(rr, 2, row.spu_name or "")
+            ws.cell(rr, 3, row.spu)
+            ws.cell(rr, 4, row.shop)
+            ws.cell(rr, 5, row.category or "")
+            ws.cell(rr, 6, spec.title)
+            # 逐日值：求和类缺失日补 0，比率类缺失日留空
+            for j, d in enumerate(date_list):
+                dm = row.days[j].metrics if j < len(row.days) else None
+                v = _num(getattr(dm, spec.key, None)) if dm else None
+                cell = ws.cell(rr, 8 + j)
+                cell.value = _round(0.0 if (v is None and spec.agg.kind == "sum") else v)
+            # 总计列
+            if spec.agg.kind == "sum":
+                total = 0.0
+                for d in row.days:
+                    nv = _num(getattr(d.metrics, spec.key, None))
+                    if nv is not None:
+                        total += nv
+                ws.cell(rr, 7, _round(total))
+            else:
+                num = 0.0
+                den = 0.0
+                for d in row.days:
+                    nv = _num(getattr(d.metrics, spec.agg.num, None))
+                    dv = _num(getattr(d.metrics, spec.agg.den, None))
+                    if nv is not None:
+                        num += nv
+                    if dv is not None:
+                        den += dv
+                # 口径A：总量相除（分母为 0 时无数据，留空而非 0）；结果保留 2 位
+                ws.cell(rr, 7, _round(num / den) if den else None)
+        r = block_end + 2  # 块间留一空行分隔
+
+    bio = io.BytesIO()
+    wb.save(bio)
+    return bio.getvalue()
+
+
+@router.post("/module/{module_id}/export")
+def export_module(module_id: str, body: ExportRequest) -> Response:
+    """导出当前筛选条件下的数据为 xlsx（后端全量生成，openpyxl 构造）。
+
+    与页面展示同口径：复用 _build_rows 取全量（不受前端分页影响），按前端传入的指标清单
+    铺成「每 SPU 一块 + 图片合并 + 总计列」的表格（详见 _build_export_workbook）。
+
+    Args:
+        module_id: 模块标识（路径参数）。
+        body: 过滤条件 + 指标清单（见 ExportRequest）。
+
+    Returns:
+        Response: xlsx 二进制流（application/vnd.openxmlformats-officedocument.spreadsheetml.sheet）。
+
+    Raises:
+        HTTPException: 404 —— 所选范围内没有可导出的数据。
+
+    Example:
+        POST /api/module/pop_spu_detail/export
+    """
+    out_rows, date_list = _build_rows(
+        module_id, body.shop, body.start, body.end, None, body.keyword, body.sort_by, body.sort_order
+    )
+    if not out_rows:
+        raise HTTPException(status_code=404, detail="所选范围内没有可导出的数据")
+    data = _build_export_workbook(out_rows, date_list, body.metrics)
+    return Response(
+        content=data,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=export.xlsx"},
+    )
 
 
 # _ANALYSIS_SUM_KEYS：单品分析按日期聚合时参与「可累加」求和的原始指标。

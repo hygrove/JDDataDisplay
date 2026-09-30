@@ -9,6 +9,7 @@
 - 可配置指标卡/表格列/趋势图（共 **15 个指标**，分 3 组，默认勾选 8 个）：商品明细表 9 项 + 推广数据表 4 项 + 退款/其他 2 项；展示项由 `frontend/src/metrics.ts` 的 `METRICS` 派生，可在 ⚙ 指标配置 中调整
 - 3 种图表：日期趋势（金额+访客双轴折线）、SPU 成交金额 TOP10（横向柱状）、店铺成交金额占比（饼图）
 - SPU 明细表格：商品图片 180×180、虚拟滚动、分页加载（300 行/页）、缺失指标展示 `--`
+- 数据导出：一键把当前筛选条件下的**全量**数据导出为 xlsx（每 SPU 一块、图片嵌入、总计列口径与页面一致、数值保留 2 位小数）
 - 手动刷新：前端按钮触发后端重跑批处理
 
 > **关于推广指标**：推广费/推广成交金额/ROI/推广占比来自各店铺的 `推广数据_*.csv`（京准通报表），由批处理按 (店铺, 日期, SPU) 左连接补充到明细长表；明细表本身不含这些列。若某 SPU 在推广 csv 中无对应记录，则相关指标展示 `--`。
@@ -28,7 +29,7 @@ project/
   backend/
     app/
       main.py            # FastAPI：静态托管 + SPA 回退 + 图片挂载
-      api.py             # /api/manifest /module/{id}/rows /summary /spu/{spu}/analysis /status /refresh
+      api.py             # /api/manifest /module/{id}/rows /summary /export /spu/{spu}/analysis /status /refresh
       data/              # 批处理产出（manifest.json, status.json, modules/*.json, images/ + thumbs/）
       analysis.py        # 单品分析：节假日口径、工作日/节假日对比、洞察文案
     jobs/
@@ -38,9 +39,11 @@ project/
       models.py          # Pydantic 模型（与前端 src/types.ts 对齐）
       config.py          # 路径/重试等配置，全部支持环境变量覆盖
       sources/
-        base.py          # Source 协议 + 统一长表列约定
-        excel_source.py  # POP 单品明细 Excel 源（读固定 数据源表目录）
-        db_source.py     # PostgreSQL 源骨架（配 PG_DSN 后实现 fetch 即可）
+        base.py           # Source 协议 + 统一长表列约定
+        excel_source.py   # POP 单品明细 Excel 源（读固定 数据源表目录，写入 SQLite）
+        sqlite_source.py  # 从 SQLite 读回干净长表喂给 transforms（读取方）
+        db_source.py      # PostgreSQL 源骨架（配 PG_DSN 后实现 fetch 即可）
+      db.py               # SQLite 持久化层（daily_detail 长表 + processed_file 哈希增量追踪）
       make_thumbs.py     # SPU 图片多尺寸缩略图（AVIF+WebP）
     requirements.txt
   frontend/
@@ -56,6 +59,10 @@ project/
       stores/metrics.ts             # Pinia store：指标勾选配置（localStorage jd.metric-config.v1）
       api.ts / router.ts / App.vue / types.ts
   scripts/
+    启动服务.pyw         # 双击启动：托盘图标 + 无黑框（日常使用推荐入口）
+    tray_launcher.py     # 同进程托盘启动器（pystray 主线程 + uvicorn 子线程，单实例锁）
+    refresh_data.py      # 跨平台数据刷新入口（计划任务 / cron / Docker 通用）
+    setup_sample.py      # 把 sample_data/ 样例铺到 ResourceData/（异地克隆首次部署用）
     gen_fake_data.py     # 生成 10 万行量级假数据压测
     install_tasks.bat / uninstall_tasks.bat / _install_tasks.ps1  # Windows 计划任务（每日刷新+开机自启）
     stop_uvicorn.bat / refresh_daily.ps1                          # 停止服务 / 每日刷新脚本
@@ -76,11 +83,13 @@ JDDataDisplay/
 │       ├── transforms.py      # Polars 清洗/聚合
 │       ├── pipeline.py        # 模块管线 + 注册表
 │       ├── run_batch.py       # 批处理入口
+│       ├── db.py              # SQLite 持久化层（长表 + 源文件哈希增量追踪）
 │       └── sources/           # 数据源抽象
 │           ├── base.py        # Source 协议 + 统一长表列 LONG_COLUMNS
-│           ├── excel_source.py
+│           ├── excel_source.py  # Excel 源（写入 SQLite）
+│           ├── sqlite_source.py # 从 SQLite 读回长表（展示侧统一入口）
 │           └── db_source.py   # PostgreSQL 骨架（未启用）
-│   └── app/data/              # 批处理产物（运行时生成，非源码）
+│   └── app/data/              # 批处理产物（JSON / images / app.db，运行时生成，非源码）
 ├── frontend/
 │   ├── package.json / tsconfig.json / vite.config.ts / index.html
 │   ├── src/
@@ -122,19 +131,27 @@ uv pip install -r backend/requirements.txt   # 替代 pip install
 平时你只需要把 `pip install X` 换成 `uv pip install X`，其他习惯不变。
 </details>
 
-### 2. 跑批处理（Excel → JSON）
+### 2. 跑批处理（Excel → SQLite → JSON）
 
 ```bash
+# 异地克隆首次部署：ResourceData/ 不入 git，先铺样例数据（有真实数据源可跳过）
+.venv\Scripts\python.exe scripts/setup_sample.py
+
 .venv\Scripts\python.exe backend/jobs/run_batch.py
 ```
 
 - 读取项目内 `ResourceData/数据源表目录/` 下的固定文件夹（不再按最新日期遍历）：含各店铺 `店铺名_商品明细_*.xlsx` 与 `店铺名_推广数据_*.csv`，按 (店铺, 日期, SPU) 去重合并；
+- **先摄入 SQLite**（`backend/app/data/app.db`，按源文件 sha256 增量：源未变则跳过），再从 DB 聚合产出 JSON；
 - 清洗聚合后写入 `backend/app/data/`；
 - 同时把 `单品spu图片/*.png` 拷贝到 `backend/app/data/images/`；
 - 结果（成功/失败、耗时、尝试次数）写入 `status.json`。
-- 数据源路径可用环境变量覆盖：`POP_SOURCE_DIR`、`JD_DATA_DIR`。
+- 数据源路径可用环境变量覆盖：`POP_SOURCE_DIR`、`JD_DATA_DIR`、`JD_DB_PATH`。
 
 ### 3. 启动后端
+
+**日常使用（Windows，推荐）**：双击 `scripts/启动服务.pyw` —— 无黑框、托盘图标右键「打开面板 / 退出」、单实例防重复。
+
+**命令行（调试 / 服务器）**：
 
 ```bash
 .venv\Scripts\python.exe -m uvicorn backend.app.main:app --host 0.0.0.0 --port 8000
@@ -228,8 +245,9 @@ npm run build      # 产物在 frontend/dist
 | `GET /api/module/{id}/rows` | 分页明细。参数：`shop` `date` `keyword` `sort_by` `sort_order` `page` `page_size`(≤500) |
 | `GET /api/module/{id}/summary` | 图表聚合数据 |
 | `GET /api/module/{id}/spu/{spu}/analysis` | 单品分析（趋势 / 工作日节假日 / 洞察），支持 `start`+`end` 区间 |
+| `POST /api/module/{id}/export` | 导出当前筛选条件下全量数据为 xlsx（前端「导出数据」按钮） |
 | `GET /api/status` | 批处理状态 |
-| `POST /api/refresh` | 手动重跑批处理（前端「手动刷新」按钮） |
+| `POST /api/refresh` | 手动重跑批处理（前端「手动刷新」按钮；先摄入 SQLite 再产 JSON） |
 
 ## 如何添加一个新模块（配置驱动，不写重复页面）
 

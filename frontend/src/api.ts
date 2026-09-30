@@ -186,3 +186,72 @@ export async function postRefresh(): Promise<BatchStatus> {
   if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
   return (await res.json()) as BatchStatus;
 }
+
+/**
+ * 导出 xlsx 时单个指标的口径描述（与后端 ExportMetricSpec 对齐）。
+ */
+export interface ExportMetricAgg {
+  /** "sum" 直接求和；"ratio" 先分别累加分子分母再相除 */
+  kind: "sum" | "ratio";
+  /** ratio 类型的分子指标 key */
+  num?: string;
+  /** ratio 类型的分母指标 key */
+  den?: string;
+}
+
+/**
+ * 导出 xlsx 时单个指标的定义（key + 中文标题 + 口径）。
+ */
+export interface ExportMetricSpec {
+  /** 指标 key，需与后端 MetricRecord 字段名一致 */
+  key: string;
+  /** 中文展示名（导出表头） */
+  title: string;
+  /** 区间汇总口径 */
+  agg: ExportMetricAgg;
+}
+
+/**
+ * 导出 xlsx 的请求体：过滤条件 + 要导出的指标清单。
+ */
+export interface ExportPayload {
+  /** 店铺名过滤；留空 = 全部店铺 */
+  shop?: string;
+  /** 区间起点 YYYY-MM-DD；留空 = 不限 */
+  start?: string;
+  /** 区间终点 YYYY-MM-DD；留空 = 不限 */
+  end?: string;
+  /** SPU 号 / 商品名称模糊搜索词；留空 = 不搜索 */
+  keyword?: string;
+  /** 排序字段：指标 key 或 "spu" / "shop" */
+  sort_by?: string;
+  /** 排序方向 */
+  sort_order?: "asc" | "desc";
+  /** 有序指标清单（来自 METRICS 唯一事实来源） */
+  metrics: ExportMetricSpec[];
+}
+
+/**
+ * 触发后端导出当前筛选条件的数据为 xlsx，返回文件 Blob。
+ *
+ * 后端按「后端全量」生成（不受前端无限滚动分页影响），返回 xlsx 二进制流；
+ * 前端拿 Blob 后用 <a download> 触发下载（文件名在前端拼，见调用方）。
+ *
+ * @param {string} moduleId - 模块标识。
+ * @param {ExportPayload} body - 过滤条件 + 指标清单。
+ * @returns {Promise<Blob>} xlsx 文件 Blob。
+ * @throws {Error} 接口非 2xx（如所选范围无数据 -> 404）。
+ * @example
+ * ```ts
+ * const blob = await exportModuleXlsx("pop_spu_detail", { metrics: [...] });
+ * ```
+ */
+export async function exportModuleXlsx(moduleId: string, body: ExportPayload): Promise<Blob> {
+  const res = await fetch(`${BASE}/module/${moduleId}/export`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+  return res.blob();
+}

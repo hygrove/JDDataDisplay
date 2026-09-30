@@ -10,7 +10,8 @@ import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useModuleStore } from "../stores/module";
 import { useMetricsStore } from "../stores/metrics";
-import { getMetric, metricsOf, type MetricFormat } from "../metrics";
+import { getMetric, metricsOf, METRICS, type MetricFormat } from "../metrics";
+import { exportModuleXlsx, type ExportMetricSpec } from "../api";
 import { fmtBy } from "../modules";
 import type { MetricRecord, Row } from "../types";
 import MetricConfigPanel from "../components/MetricConfigPanel.vue";
@@ -60,6 +61,9 @@ const metricSpecs = computed(() => cardSpecs.value);
 // ---------- 搜索防抖 ----------
 const keywordInput = ref("");
 let timer: ReturnType<typeof setTimeout> | null = null;
+
+// 导出状态：导出进行中禁用按钮，避免重复点击
+const exporting = ref(false);
 watch(keywordInput, (kw) => {
   if (timer) clearTimeout(timer);
   timer = setTimeout(() => store.setKeyword(kw.trim()), 400);
@@ -363,6 +367,61 @@ async function copySpu(row: { spu: string; shop: string }) {
   if (copyTimer) clearTimeout(copyTimer);
   copyTimer = setTimeout(() => (copiedKey.value = ""), 1500);
 }
+
+/**
+ * 导出当前筛选条件下的数据为 xlsx（后端全量生成，与页面展示同口径）。
+ *
+ * @remarks
+ * 指标清单直接来自 METRICS（前端唯一事实来源），保证导出列与页面一致；
+ * 比率类口径随清单里的 agg 下发，后端据此做「总量相除」总计。
+ * 文件名形如 `pop_spu_单品数据_{起~止}_{时间戳}.xlsx`，由前端用 <a download> 触发下载。
+ *
+ * @returns {Promise<void>} 下载完成后 resolve；失败写入 store.error 展示。
+ * @throws 不抛出——接口异常写入 store.error 由页面顶部统一展示。
+ * @example
+ * ```ts
+ * await exportXlsx(); // 点击「导出数据」按钮
+ * ```
+ */
+async function exportXlsx() {
+  if (exporting.value) return;
+  exporting.value = true;
+  try {
+    // 指标清单来自 METRICS 唯一事实来源（Q3=B 即全部 15 项），agg 口径一并下发
+    const metricsPayload: ExportMetricSpec[] = METRICS.map((m) => ({
+      key: m.key as string,
+      title: m.title,
+      agg:
+        m.agg.kind === "ratio"
+          ? { kind: "ratio", num: m.agg.num as string, den: m.agg.den as string }
+          : { kind: "sum" },
+    }));
+    const blob = await exportModuleXlsx(props.moduleId, {
+      shop: store.shop || undefined,
+      start: store.start || undefined,
+      end: store.end || undefined,
+      keyword: store.keyword || undefined,
+      sort_by: store.sortBy || undefined,
+      sort_order: store.sortOrder,
+      metrics: metricsPayload,
+    });
+    // 文件名：pop_spu_单品数据_{起~止}_{导出时间}.xlsx（~ 为区间分隔符）
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[-:T]/g, "");
+    const range = `${store.start || "全"}~${store.end || "全"}`;
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `pop_spu_单品数据_${range}_${stamp}.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  } catch (e) {
+    store.error = String(e);
+  } finally {
+    exporting.value = false;
+  }
+}
 </script>
 
 <template>
@@ -398,7 +457,54 @@ async function copySpu(row: { spu: string; shop: string }) {
         </span>
         <MetricConfigPanel v-model:keys="selectedKeys" />
         <button class="btn" :disabled="store.refreshing" @click="store.refresh()">
-          {{ store.refreshing ? "刷新中…" : "手动刷新" }}
+          <!-- 刷新图标：spinning 类跟随 store.refreshing，刷新中持续旋转（纯 CSS，不改 store） -->
+          <span class="btn-ico" :class="{ spinning: store.refreshing }">
+            <svg
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2.2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <polyline points="23 4 23 10 17 10" />
+              <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+            </svg>
+          </span>
+          <span>{{ store.refreshing ? "刷新中…" : "手动刷新" }}</span>
+        </button>
+        <button
+          class="btn btn-export"
+          :class="{ 'is-exporting': exporting }"
+          :disabled="exporting"
+          @click="exportXlsx"
+        >
+          <!-- 下载图标：导出中仅禁用，不做旋转动画（与刷新图标区分） -->
+          <span class="btn-ico">
+            <svg
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2.2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+              <polyline points="7 10 12 15 17 10" />
+              <line x1="12" y1="15" x2="12" y2="3" />
+            </svg>
+          </span>
+          <!-- 导出中：横向流光（CSS ::after）+ 文字后循环三点省略；非旋转反馈 -->
+          <span v-if="exporting" class="export-label"
+            >导出中<span class="dots"><span>.</span><span>.</span><span>.</span></span></span
+          >
+          <span v-else>导出数据</span>
         </button>
       </div>
     </div>
@@ -620,9 +726,15 @@ async function copySpu(row: { spu: string; shop: string }) {
   background: linear-gradient(135deg, #e1251b, #c81e14);
   color: #fff;
   border: none;
-  border-radius: 6px;
-  padding: 8px 16px;
-  font-size: 14px;
+  border-radius: 8px;
+  /* 扩大点击区域：由 8px 16px 加到 12px 22px，并保证 44px 最小高度（移动端易点） */
+  padding: 12px 22px;
+  min-height: 44px;
+  font-size: 15px;
+  /* 图标 + 文字横向居中，间距交给 gap（不用 margin，换行时不会错位） */
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   cursor: pointer;
   box-shadow: 0 2px 6px rgba(225, 37, 27, 0.25);
   transition: box-shadow 0.15s, transform 0.15s;
@@ -632,8 +744,103 @@ async function copySpu(row: { spu: string; shop: string }) {
   transform: translateY(-1px);
 }
 .btn:disabled {
-  opacity: 0.6;
+  /* 0.75 而非 0.6：刷新中图标要持续旋转，太淡会看不清反馈 */
+  opacity: 0.75;
   cursor: default;
+}
+/* 导出按钮：深灰渐变，与刷新红按钮在视觉上区分（一个是「重算」、一个是「取数」） */
+.btn-export {
+  background: linear-gradient(135deg, #334155, #1e293b);
+  box-shadow: 0 2px 6px rgba(30, 41, 59, 0.25);
+  /* 承接「横向流光」::after 的绝对定位 + 裁剪，避免高光溢出圆角 */
+  position: relative;
+  overflow: hidden;
+}
+/* 导出中：一道高光从左滑到右循环（方案 A 横向流光）；图标与文字静止，不旋转 */
+.btn-export.is-exporting::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(
+    105deg,
+    transparent 35%,
+    rgba(255, 255, 255, 0.5) 50%,
+    transparent 65%
+  );
+  transform: translateX(-100%);
+  animation: export-sweep 1.5s linear infinite;
+  pointer-events: none;
+}
+@keyframes export-sweep {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+/* 文字后循环三点省略（方案 C 的省略号，去掉了 C 的整体呼吸缩放，避免动效过重） */
+.export-label .dots {
+  margin-left: 1px;
+}
+.export-label .dots span {
+  opacity: 0.3;
+  animation: dot-blink 1.4s infinite;
+}
+.export-label .dots span:nth-child(2) {
+  animation-delay: 0.2s;
+}
+.export-label .dots span:nth-child(3) {
+  animation-delay: 0.4s;
+}
+@keyframes dot-blink {
+  0%,
+  100% {
+    opacity: 0.3;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+.btn-export:hover:not(:disabled) {
+  box-shadow: 0 4px 12px rgba(30, 41, 59, 0.35);
+  transform: translateY(-1px);
+}
+/* 刷新图标：默认静止 → 悬停转半圈 → 刷新中整圈持续旋转（导出按钮除外，见下） */
+.btn-ico {
+  display: inline-flex;
+  /* 只动 transform（走 GPU 合成层，不触发重排），保证旋转流畅 */
+  transition: transform 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+/* 悬停旋转仅作用于「非导出」按钮（刷新按钮）；导出按钮彻底告别旋转语义 */
+.btn:not(.btn-export):hover:not(:disabled) .btn-ico {
+  transform: rotate(180deg);
+}
+/* 刷新中：由模板的 spinning 类驱动；disabled 状态下 hover 规则已被 :not(:disabled) 排除，不会打架 */
+.btn-ico.spinning {
+  animation: btn-spin 0.9s linear infinite;
+}
+@keyframes btn-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+/* 降级：系统开启「减少动效」时关闭旋转与导出流光/省略号动画，仍保留 disabled + 文字状态反馈 */
+@media (prefers-reduced-motion: reduce) {
+  .btn-ico,
+  .btn-ico.spinning {
+    transition: none;
+    animation: none;
+  }
+  .btn:hover:not(:disabled) .btn-ico {
+    transform: none;
+  }
+  .btn-export.is-exporting::after,
+  .export-label .dots span {
+    animation: none;
+  }
 }
 .error {
   background: #fef2f2;
@@ -721,18 +928,39 @@ async function copySpu(row: { spu: string; shop: string }) {
   flex: 0 0 100%;
   width: 100%;
 }
+/* 单品分析入口：胶囊按钮（全圆角），默认浅红底红字；
+   移入态换成更柔和的浅红填充（比品牌实心红 #e1251b 淡一档），箭头右滑。 */
 .spu-analysis {
   flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   color: #e1251b;
   font-size: 14px;
+  font-weight: 500;
   cursor: pointer;
   white-space: nowrap;
   text-decoration: none;
-  border-bottom: 1px solid transparent;
-  transition: border-color 0.15s, opacity 0.15s;
+  background: #fdeceb;
+  border: 1.5px solid transparent;
+  border-radius: 999px;
+  padding: 6px 16px;
+  transition: background 0.25s ease, color 0.25s ease, transform 0.25s ease;
 }
 .spu-analysis:hover {
-  border-bottom-color: #e1251b;
+  background: #ee8e89;
+  color: #fff;
+}
+/* 箭头在按钮移入时右滑（取代原先“整行 hover 摆动”的动画，反馈更聚焦） */
+.spu-analysis .spu-go-arrow {
+  display: inline-block;
+  transition: transform 0.25s ease;
+}
+.spu-analysis:hover .spu-go-arrow {
+  transform: translateX(6px);
+}
+.spu-analysis:active {
+  transform: scale(0.96);
 }
 .spu-body {
   display: flex;
@@ -850,25 +1078,12 @@ async function copySpu(row: { spu: string; shop: string }) {
 .spu-row:hover {
   box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08);
 }
-/* 鼠标移入 SPU 卡/行时，箭头左右摆动 3 次，提示「可点击进入单品分析」。
-   - iteration-count:3：只摆 3 次即停（不无限循环），避免视觉噪音；离开再移入才会重播。
-   - translateX 正向位移再回 0 = 一次「前→后」，3 次即 3 个来回。 */
-/* 箭头默认是行内元素，transform 对 display:inline 无效；改为 inline-block 才能让位移生效 */
-.spu-go-arrow {
-  display: inline-block;
-}
-@keyframes spu-go-nudge {
-  0%, 100% { transform: translateX(0); }
-  50% { transform: translateX(5px); }
-}
-.spu-card:hover .spu-go-arrow,
-.spu-row:hover .spu-go-arrow {
-  animation: spu-go-nudge 0.5s ease-in-out 3;
-}
-/* 尊重系统「减少动态效果」偏好：关闭动画，照顾前庭敏感用户 */
+/* 单品分析箭头：仅在该胶囊按钮移入时右滑（取代原先「整行 hover 摆动」，反馈更聚焦、不吵）。
+   - transform 对 display:inline 无效，故上方 .spu-analysis .spu-go-arrow 设为 inline-block。 */
+/* 尊重系统「减少动态效果」偏好：关闭滑动，照顾前庭敏感用户 */
 @media (prefers-reduced-motion: reduce) {
-  .spu-card:hover .spu-go-arrow,
-  .spu-row:hover .spu-go-arrow { animation: none; }
+  .spu-analysis .spu-go-arrow { transition: none; }
+  .spu-analysis:hover .spu-go-arrow { transform: none; }
 }
 .spu-row-head {
   flex: none;
@@ -878,7 +1093,7 @@ async function copySpu(row: { spu: string; shop: string }) {
   gap: 10px;
   align-items: stretch;
   padding-right: 16px;
-  border-right: 1px dashed #f1f5f9;
+  border-right: 1px dashed #cbd5e1;
   box-sizing: border-box;
 }
 .spu-row-head .spu-name {
@@ -902,7 +1117,7 @@ async function copySpu(row: { spu: string; shop: string }) {
   flex-direction: column;
   margin-top: 6px;
   padding-top: 8px;
-  border-top: 1px dashed #f1f5f9;
+  border-top: 1px dashed #cbd5e1;
   font-size: 13px;
 }
 .spu-row-head .spu-avg .avg-row {
@@ -911,7 +1126,7 @@ async function copySpu(row: { spu: string; shop: string }) {
   align-items: center;
   gap: 8px;
   padding: 6px 0;
-  border-bottom: 1px solid #f1f5f9;
+  border-bottom: 1px solid #d6dde8;
 }
 .spu-row-head .spu-avg .avg-row:last-child {
   border-bottom: none;
@@ -969,8 +1184,8 @@ async function copySpu(row: { spu: string; shop: string }) {
   padding: 8px 12px;
   text-align: right;
   background: #fff;
-  border-bottom: 1px solid #e6edf3;
-  border-right: 1px solid #edf1f6;
+  border-bottom: 1px solid #cdd7e2;
+  border-right: 1px solid #d6dde8;
 }
 .spu-matrix th:last-child,
 .spu-matrix td:last-child {
@@ -1067,7 +1282,7 @@ async function copySpu(row: { spu: string; shop: string }) {
   .spu-row-head {
     width: auto;
     border-right: none;
-    border-bottom: 1px dashed #f1f5f9;
+    border-bottom: 1px dashed #cbd5e1;
     padding-right: 0;
     padding-bottom: 12px;
   }
