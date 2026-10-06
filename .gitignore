@@ -10,8 +10,8 @@ __pycache__/
 node_modules/
 frontend/dist/
 frontend/tsconfig.tsbuildinfo
-# 前端构建/运行日志（*.log 已统一忽略，这里保留以醒目）
-frontend/build.log
+# 回归脚本的 esbuild 打包产物（由 npm run verify 生成，可随时重建）
+frontend/node_modules/.cache/
 
 # ========== 运行生成的数据（run_batch 重新生成，不入仓） ==========
 backend/app/data/
@@ -38,7 +38,14 @@ screenshot_*.png
 # ========== 本地工具 / 演示 / 临时探针（非项目源码） ==========
 DB.Browser.for.SQLite-v3.13.1-win64/
 preview/
-_*.txt
+# 下划线前缀的临时产物：AI 调试探针、构建退出码、截图、一次性脚本
+# （正式脚本一律用无前缀命名，避免与源码混淆；scripts/ 下不适用，
+#  因 _install_tasks.ps1 / _setup_daily_refresh.ps1 是被 install_tasks.bat 调用的真实脚本）
+/_*
+frontend/_*
+# scripts/ 下的一次性 .py 调试脚本（.ps1 不忽略：_install_tasks.ps1 /
+# _setup_daily_refresh.ps1 是被 .bat 调用的真实脚本）
+scripts/_*.py
 
 # ========== 编辑器 / 系统文件 ==========
 .vscode/
@@ -52,5 +59,5 @@ Thumbs.db
 # ========== 密钥 / 环境配置 ==========
 .env
 
-# ========== 临时脚本（scripts 下下划线前缀为临时文件） ==========
-scripts/_*.py
+# ========== 设计探索稿（一次性方案对比用，定稿后不入库） ==========
+mockups/
