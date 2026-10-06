@@ -4,7 +4,8 @@
 // 额外提供快捷按钮：当月 / 上月（与数据可用区间取交集）；
 // showLastWeek=true 时再追加「近一周」——以数据最新日为终点的 7 天（默认区间，单品分析页用）。
 import { computed, ref, nextTick } from "vue";
-import { monthBounds, recentDaysRange } from "../utils/month";
+import { monthBounds, monthBoundsOf, availableMonths, recentDaysRange, type MonthCell } from "../utils/month";
+import { claimOverlay, useOverlayLock, acquireOverlay } from "../utils/overlay";
 
 /**
  * 组件 Props。
@@ -102,6 +103,21 @@ function baseDate(): string {
 }
 
 /**
+ * 本实例的浮层唯一标识 + 全局互斥绑定。
+ *
+ * @remarks
+ * 单品分析页「月份对比」模块里并排放着两个 DateRangePicker，它们各自的
+ * 面板互不知情；同时展开会互相压盖。这里领一个全局唯一 id，
+ * 任一实例打开面板都会把其它实例的面板挤掉（见 utils/overlay.ts）。
+ */
+const overlayId = claimOverlay("drp");
+
+useOverlayLock(overlayId, () => {
+  open.value = false;
+  monthOpen.value = false;
+});
+
+/**
  * 把视图年月初始化到 baseDate() 所在的月份。
  *
  * @returns {void} 无返回值，副作用是设置 viewYear / viewMonth。
@@ -131,6 +147,10 @@ function openPanel() {
   // 载入当前已选区间，让用户在此基础上改，而不是每次从空白开始
   pending.value = { start: props.start, end: props.end };
   open.value = true;
+  // 登记自己，顺手把同页其它选择器的面板挤掉（月份面板与日历面板共用这一个 id）
+  acquireOverlay(overlayId);
+  // 与月份面板互斥（见 toggleMonthPanel 的同名注释）
+  monthOpen.value = false;
   openRight.value = true; // 先默认向右，positionPop 按可用空间校正
   // nextTick 等弹层真正渲染出来后再测量宽度，否则 offsetWidth 为 0
   nextTick(positionPop);
@@ -373,6 +393,226 @@ function applyMonth(offset: number) {
   const { start, end } = monthBounds(offset, props.min, props.max);
   emit("change", { start, end });
   closePanel();
+  closeMonthPanel();
+}
+
+/* ---------------- 月份选择器（可翻年 + 网格） ---------------- */
+
+/** 月份下拉面板是否展开 */
+const monthOpen = ref(false);
+/** 月份面板当前显示的年份（翻页用；默认定位到当前选中月所在年） */
+const monthPanelYear = ref(0);
+/** 月份面板的定位样式（由 positionMonthPop 按月份按钮实际位置算出的像素偏移） */
+const monthPopStyle = ref<{ left: string; right: string }>({ left: "0", right: "auto" });
+/** 月份面板元素（用于测量宽度决定展开方向） */
+const monthPopRef = ref<HTMLElement | null>(null);
+
+/** 由 min/max 反推的有数据月份清单（最新月在前） */
+const monthCells = computed<MonthCell[]>(() => availableMonths(props.min, props.max));
+
+/** 数据覆盖的年份区间（含首尾），供翻页按钮判断能否再翻 */
+const yearSpan = computed(() => {
+  const cells = monthCells.value;
+  if (cells.length === 0) return null;
+  // cells 已按倒序排列：末位是最早月，首位是最新月
+  return { newest: cells[0].year, oldest: cells[cells.length - 1].year };
+});
+
+/** 月份面板标题文案（如 "2026 年"） */
+const monthPanelTitle = computed(() => `${monthPanelYear.value} 年`);
+
+/**
+ * 12 个月格子：1-12月按 3 行 x 4 列排布，无数据的置灰。
+ *
+ * @remarks
+ * 这里才是「无数据月份置灰」真正生效的地方：当用户把面板翻到数据范围之外的年份，
+ * 该年 12 个月都不在 [min, max] 内，清单里查不到 -> 兜底成 hasData=false -> 置灰禁用。
+ * 翻页按钮已在年份边界禁用，所以正常操作路径下只会看到当前年 + 有数据年份。
+ */
+const monthGrid = computed<MonthCell[]>(() => {
+  const cells = monthCells.value;
+  const y = monthPanelYear.value;
+  // 把该年 12 个月映射到清单里（可能全年都没数据 -> 全部 hasData=false）
+  const byKey = new Map(cells.map((c) => [c.key, c]));
+  return Array.from({ length: 12 }, (_, m) => {
+    const key = `${y}-${pad(m + 1)}`;
+    return byKey.get(key) ?? { year: y, month0: m, key, hasData: false };
+  });
+});
+
+/**
+ * 当前**已生效**区间是否恰好等于某个整月（用于高亮该月 + 按钮文案）。
+ *
+ * @remarks
+ * 刻意读 props.start/end 而不是 pending：pending 是日历面板的临时草稿，
+ * 页面刚加载时还没开过面板就是空串，用它会导致按钮一直显示「月份」而非选中月。
+ * 按钮反映的是"已生效的区间"，与 pending 无关。
+ */
+const activeMonthKey = computed(() => {
+  const { start, end } = props;
+  if (!start || !end) return "";
+  // 起止同月且端点分别为 1 号与该月最后一天，才算「选中整月」
+  if (start.slice(8) !== "01") return "";
+  const m0 = Number(start.slice(5, 7)) - 1;
+  const lastDay = new Date(Number(start.slice(0, 4)), m0 + 1, 0).getDate();
+  if (end !== `${start.slice(0, 7)}-${pad(lastDay)}`) return "";
+  return start.slice(0, 7);
+});
+
+/**
+ * 月份按钮上显示的文案：命中整月时显示 "2026-09"，否则显示静态 "月份"。
+ *
+ * @returns {string} 按钮文案。
+ * @example
+ * ```ts
+ * monthBtnLabel.value; // "2026-09"
+ * ```
+ */
+const monthBtnLabel = computed(() => activeMonthKey.value || "月份");
+
+/**
+ * 展开/收起月份面板。
+ *
+ * @returns {void} 无返回值。
+ * @example
+ * ```ts
+ * toggleMonthPanel(); // 点「月份 ▾」按钮
+ * ```
+ */
+function toggleMonthPanel() {
+  monthOpen.value = !monthOpen.value;
+  if (!monthOpen.value) return;
+  // 登记自己，顺手把同页其它选择器的面板挤掉（含它们的日历面板）
+  acquireOverlay(overlayId);
+  // 与日历面板互斥：两个浮层同时打开会互相遮挡、且 Esc/遮罩行为混乱
+  open.value = false;
+  // 展开时把年份定位到「当前选中月」或「数据最新月」，避免默认停在无关年份
+  const anchor = activeMonthKey.value || monthCells.value[0]?.key;
+  if (anchor) monthPanelYear.value = Number(anchor.slice(0, 4));
+  // nextTick 等面板渲染出来后再量宽度与位置，否则 offsetWidth 为 0、getBoundingClientRect 全是 0
+  nextTick(positionMonthPop);
+}
+
+/**
+ * 关闭月份面板（不改变已选区间）。
+ *
+ * @returns {void} 无返回值。
+ * @example
+ * ```ts
+ * closeMonthPanel(); // 选中月份后关闭
+ * ```
+ */
+function closeMonthPanel() {
+  monthOpen.value = false;
+}
+
+/**
+ * 按「月份按钮」的实际位置对齐月份面板。
+ *
+ * @remarks
+ * 不能像日历面板那样简单用 `left: 0` / `right: 0`：
+ * 月份面板挂在 `.drp`（整行工具条，含「统计区间」触发按钮 + 快捷按钮组）下，
+ * `left: 0` 对齐的是**工具条左边缘**，而不是月份按钮 —— 视觉上会明显偏左。
+ * 因此这里量出月份按钮相对 `.drp` 的像素偏移，把面板精确挪到按钮下方。
+ *
+ * 默认**右对齐按钮右缘**（面板向左展开）：月份按钮位于工具条最右端，
+ * 向左展开天然不会顶出视口右缘，是最常见的形态。
+ * 只有当向左展开会让面板左缘跑出视口左缘（按钮贴着屏幕左边）时，才改为左对齐。
+ *
+ * ⚠️ 这里判断的是「面板**左缘**是否出视口」，**不是**「按钮右缘 + 面板宽是否出视口」——
+ *    向左展开时右侧本就不需要空间，用后者判断会把绝大多数正常情况误判成放不下。
+ *
+ * @returns {void} 无返回值。
+ * @example
+ * ```ts
+ * positionMonthPop(); // 由 toggleMonthPanel 在 nextTick 后调用
+ * ```
+ */
+function positionMonthPop() {
+  const t = monthTriggerRef.value;
+  const p = monthPopRef.value;
+  const root = drpRootRef.value;
+  if (!t || !p || !root) return;
+  const tr = t.getBoundingClientRect();
+  const rr = root.getBoundingClientRect();
+  const pw = p.offsetWidth;
+  const margin = 12;
+  // 向左展开时面板左缘的视口坐标：按钮右缘 - 面板宽
+  const leftEdgeIfRightAligned = tr.right - pw;
+  // 放得下 = 面板左缘不越出视口左缘
+  const fitsRightAligned = leftEdgeIfRightAligned >= margin;
+  monthPopStyle.value = fitsRightAligned
+    // right 是「面板右缘距 .drp 右缘的距离」= .drp右缘 - 按钮右缘
+    ? { left: "auto", right: `${Math.max(0, rr.right - tr.right)}px` }
+    // left 是「面板左缘距 .drp 左缘的距离」= 按钮左缘 - .drp左缘
+    : { left: `${tr.left - rr.left}px`, right: "auto" };
+}
+
+/** 月份按钮元素（用于计算面板可用空间） */
+const monthTriggerRef = ref<HTMLElement | null>(null);
+/** 组件根元素（.drp 整行工具条；月份面板挂在它下面，按对齐需要量它的边界） */
+const drpRootRef = ref<HTMLElement | null>(null);
+
+/**
+ * 月份面板年份上/下翻页。
+ *
+ * @param {number} delta - 年份偏移，-1 上一年，+1 下一年。
+ * @returns {void} 无返回值；被数据边界挡住时忽略。
+ * @example
+ * ```ts
+ * shiftYear(-1); // 上一年
+ * shiftYear(1);  // 下一年
+ * ```
+ */
+function shiftYear(delta: number) {
+  const span = yearSpan.value;
+  if (!span) return;
+  const next = monthPanelYear.value + delta;
+  // 翻到数据范围之外会看到一片置灰月份，无意义 -> 挡住
+  if (next > span.newest || next < span.oldest) return;
+  monthPanelYear.value = next;
+}
+
+/**
+ * 年份标题旁的「跳到最新/最早数据年」快捷跳转。
+ *
+ * @param {"newest" | "oldest"} target - 跳转目标。
+ * @returns {void} 无返回值。
+ * @example
+ * ```ts
+ * jumpToYear("oldest"); // 跳回最早有数据的年份
+ * ```
+ */
+function jumpToYear(target: "newest" | "oldest") {
+  const span = yearSpan.value;
+  if (!span) return;
+  monthPanelYear.value = target === "newest" ? span.newest : span.oldest;
+}
+
+/**
+ * 选择某个月：按该月整月区间 emit 出去，然后收起月份面板。
+ *
+ * @remarks
+ * 用monthBoundsOf（绝对年月）而非 monthBounds(offset)：
+ * 月份面板是按年翻页后精确点选某一月，若把年月换算成「相对系统月的 offset」
+ * 再算，跨年时极易偏一个月。
+ *
+ * @param {MonthCell} cell - 被点击的月份格子。
+ * @returns {void} 无返回值；emit 区间后关闭面板。
+ * @example
+ * ```ts
+ * pickMonth({ year: 2026, month0: 7, key: "2026-08", hasData: true });
+ * // -> emit { start: "2026-08-01", end: "2026-08-31" }
+ * ```
+ */
+function pickMonth(cell: MonthCell) {
+  if (!cell.hasData) return;
+  const { start, end } = monthBoundsOf(cell.year, cell.month0, props.min, props.max);
+  // 同步落到pending：月份面板与日历面板共用这份临时状态，
+  // 否则关掉月份面板再开日历会看到旧区间，与按钮显示不一致
+  pending.value = { start, end };
+  emit("change", { start, end });
+  closeMonthPanel();
 }
 
 /**
@@ -400,7 +640,8 @@ function applyLastWeek() {
 </script>
 
 <template>
-  <div class="drp">
+  <!-- ref=drpRootRef：月份面板按月份按钮对齐时需要量出本容器的边界（见 positionMonthPop） -->
+  <div class="drp" ref="drpRootRef">
     <button class="drp-trigger" type="button" @click="openPanel" ref="triggerRef">
       <span class="drp-icon">📅</span>
       <span :class="{ placeholder: !props.start && !props.end }">{{ label }}</span>
@@ -410,6 +651,70 @@ function applyLastWeek() {
       <button v-if="showLastWeek" class="qm" type="button" @click="applyLastWeek">近一周</button>
       <button class="qm" type="button" @click="applyMonth(0)">当月</button>
       <button class="qm" type="button" @click="applyMonth(-1)">上月</button>
+      <button
+        class="qm qm-month"
+        :class="{ active: monthOpen || activeMonthKey }"
+        type="button"
+        ref="monthTriggerRef"
+        @click="toggleMonthPanel"
+      >
+        {{ monthBtnLabel }}<span class="qm-caret">▾</span>
+      </button>
+    </div>
+
+    <div v-if="monthOpen" class="drp-backdrop" @click="closeMonthPanel"></div>
+
+    <div
+      v-if="monthOpen"
+      class="drp-pop drp-mpop"
+      ref="monthPopRef"
+      :style="monthPopStyle"
+    >
+      <div class="drp-head">
+        <button
+          class="nav"
+          type="button"
+          :disabled="!yearSpan || monthPanelYear >= yearSpan.newest"
+          @click="shiftYear(-1)"
+        >
+          ‹
+        </button>
+        <span class="mlabel">{{ monthPanelTitle }}</span>
+        <button
+          class="nav"
+          type="button"
+          :disabled="!yearSpan || monthPanelYear <= yearSpan.oldest"
+          @click="shiftYear(1)"
+        >
+          ›
+        </button>
+      </div>
+
+      <div class="mpop-grid">
+        <button
+          v-for="c in monthGrid"
+          :key="c.key"
+          class="mcell"
+          :class="{ nodata: !c.hasData, on: c.key === activeMonthKey }"
+          type="button"
+          :disabled="!c.hasData"
+          @click="pickMonth(c)"
+        >
+          {{ c.month0 + 1 }}月
+        </button>
+      </div>
+
+      <div class="drp-foot">
+        <button
+          class="link"
+          type="button"
+          :disabled="!yearSpan || monthPanelYear <= yearSpan.oldest"
+          @click="jumpToYear('oldest')"
+        >
+          查看 {{ yearSpan?.oldest ?? "—" }} 年 ›
+        </button>
+        <span class="tip">灰色月份无数据</span>
+      </div>
     </div>
 
     <div v-if="open" class="drp-backdrop" @click="closePanel"></div>
@@ -465,55 +770,128 @@ function applyLastWeek() {
   display: inline-flex;
   align-items: center;
   gap: 0;
-  background: #fff;
-  border: 1px solid #e2e8f0;
-  border-radius: 999px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-2);
+  border-radius: var(--radius-pill);
   padding: 3px;
+  /* 抬到 .drp-backdrop(40) 之上：否则面板打开时全屏遮罩会盖住按钮组，
+     再点「月份 ▾」会落到遮罩上（虽能关闭面板，但点击落点与视觉不符）。 */
+  position: relative;
+  z-index: 45;
 }
 .drp-quick .qm {
   border: none;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: transparent;
-  color: #475569;
+  color: var(--color-text-3);
   font-size: 12px;
   padding: 5px 12px;
   cursor: pointer;
   transition: color 0.15s, background 0.15s;
 }
 .drp-quick .qm:hover {
-  color: #e1251b;
-  background: #fef2f2;
+  color: var(--color-brand);
+  background: var(--color-brand-tint);
+}
+/* 月份按钮：与其它三个静态文案按钮区分——常态多一个下拉箭头，命中整月时显示年月并高亮 */
+.drp-quick .qm-month {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.drp-quick .qm-month .qm-caret {
+  font-size: 9px;
+  color: var(--color-text-5);
+}
+.drp-quick .qm-month.active {
+  color: var(--color-brand);
+  background: var(--color-brand-tint);
+  font-weight: 600;
+}
+.drp-quick .qm-month.active .qm-caret {
+  color: var(--color-brand);
+}
+/* 翻页按钮到数据边界时禁用（禁用态不响应 hover，避免误以为还能翻） */
+.drp-head .nav:disabled {
+  color: var(--color-text-6);
+  border-color: var(--color-bg);
+  cursor: not-allowed;
+  background: var(--color-surface-2);
+}
+.drp-head .nav:disabled:hover {
+  border-color: var(--color-bg);
+  color: var(--color-text-6);
+}
+.drp-foot .link:disabled {
+  color: var(--color-text-6);
+  cursor: not-allowed;
+}
+.drp-foot .link:disabled:hover {
+  text-decoration: none;
+}
+/* 月份面板：比日历面板窄得多，网格 3 行 x 4 列 */
+.drp-mpop {
+  width: 264px;
+}
+.mpop-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+}
+.mcell {
+  height: 34px;
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-md);
+  color: var(--color-text-2);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.mcell:hover:not(:disabled) {
+  background: var(--color-brand-tint);
+  color: var(--color-brand);
+}
+/* 无数据月份：置灰而非隐藏，让用户知道「这个月存在但没数据」 */
+.mcell.nodata {
+  color: var(--color-text-6);
+  cursor: not-allowed;
+}
+.mcell.on {
+  background: var(--color-brand);
+  color: var(--color-surface);
+  font-weight: 600;
 }
 .drp-trigger {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  border: 1px solid #e2e8f0;
-  border-radius: 6px;
+  border: 1px solid var(--color-border-2);
+  border-radius: var(--radius-md);
   padding: 7px 10px;
   font-size: 13px;
-  color: #334155;
-  background: #fff;
+  color: var(--color-text-2);
+  background: var(--color-surface);
   cursor: pointer;
   transition: border-color 0.15s, box-shadow 0.15s;
   font-variant-numeric: tabular-nums;
 }
 .drp-trigger:hover {
-  border-color: #e1251b;
+  border-color: var(--color-brand);
 }
 .drp-trigger:focus {
   outline: none;
-  border-color: #e1251b;
+  border-color: var(--color-brand);
   box-shadow: 0 0 0 3px rgba(225, 37, 27, 0.08);
 }
 .drp-trigger .placeholder {
-  color: #94a3b8;
+  color: var(--color-text-5);
 }
 .drp-icon {
   font-size: 13px;
 }
 .caret {
-  color: #94a3b8;
+  color: var(--color-text-5);
   font-size: 10px;
 }
 .drp-backdrop {
@@ -525,9 +903,9 @@ function applyLastWeek() {
   position: absolute;
   top: calc(100% + 8px);
   z-index: 50;
-  background: #fff;
-  border: 1px solid #e5e7eb;
-  border-radius: 10px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
   box-shadow: 0 10px 30px rgba(15, 23, 42, 0.12);
   padding: 12px;
   width: max-content;
@@ -543,22 +921,22 @@ function applyLastWeek() {
 .drp-head .nav {
   width: 26px;
   height: 26px;
-  border: 1px solid #e2e8f0;
-  border-radius: 6px;
-  background: #fff;
-  color: #475569;
+  border: 1px solid var(--color-border-2);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text-3);
   cursor: pointer;
   font-size: 15px;
   line-height: 1;
 }
 .drp-head .nav:hover {
-  border-color: #e1251b;
-  color: #e1251b;
+  border-color: var(--color-brand);
+  color: var(--color-brand);
 }
 .drp-head .mlabel {
   font-size: 13px;
   font-weight: 600;
-  color: #0f172a;
+  color: var(--color-text-strong);
   flex: 1;
   text-align: center;
 }
@@ -578,7 +956,7 @@ function applyLastWeek() {
 .drp-week span {
   text-align: center;
   font-size: 11px;
-  color: #94a3b8;
+  color: var(--color-text-5);
   padding: 2px 0;
 }
 .cell {
@@ -587,32 +965,32 @@ function applyLastWeek() {
   align-items: center;
   justify-content: center;
   font-size: 12px;
-  color: #334155;
-  border-radius: 6px;
+  color: var(--color-text-2);
+  border-radius: var(--radius-md);
   cursor: pointer;
   user-select: none;
   transition: background 0.12s, color 0.12s;
 }
 .cell:hover:not(.empty):not(.disabled) {
-  background: #fef2f2;
-  color: #e1251b;
+  background: var(--color-brand-tint);
+  color: var(--color-brand);
 }
 .cell.empty {
   cursor: default;
 }
 .cell.disabled {
-  color: #cbd5e1;
+  color: var(--color-text-6);
   cursor: not-allowed;
   text-decoration: line-through;
 }
 .cell.inrange {
-  background: #fef2f2;
+  background: var(--color-brand-tint);
   border-radius: 0;
 }
 .cell.start,
 .cell.end {
-  background: #e1251b;
-  color: #fff;
+  background: var(--color-brand);
+  color: var(--color-surface);
   font-weight: 600;
 }
 .cell.start {
@@ -622,7 +1000,7 @@ function applyLastWeek() {
   border-radius: 0 6px 6px 0;
 }
 .cell.start.end {
-  border-radius: 6px;
+  border-radius: var(--radius-md);
 }
 .drp-foot {
   display: flex;
@@ -634,7 +1012,7 @@ function applyLastWeek() {
 .drp-foot .link {
   background: none;
   border: none;
-  color: #e1251b;
+  color: var(--color-brand);
   font-size: 12px;
   cursor: pointer;
   padding: 4px 6px;
@@ -644,7 +1022,7 @@ function applyLastWeek() {
 }
 .drp-foot .tip {
   font-size: 11px;
-  color: #94a3b8;
+  color: var(--color-text-5);
 }
 @media (max-width: 640px) {
   .drp-body {
