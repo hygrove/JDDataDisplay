@@ -220,9 +220,9 @@ function cellValue(row: Row, col: ColumnDef): string {
 
 <style scoped>
 .gt {
-  border: 1px solid #e5e7eb;
-  border-radius: 8px;
-  background: #fff;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
   /* 唯一滚动容器：横纵都在此滚动，使表头 sticky-top 与固定列 sticky-right 共享同一上下文 */
   overflow: auto;
   height: 100%;
@@ -234,8 +234,8 @@ function cellValue(row: Row, col: ColumnDef): string {
   position: sticky;
   top: 0;
   z-index: 4;
-  background: #f8fafc;
-  border-bottom: 1px solid #e5e7eb;
+  background: var(--color-surface-2);
+  border-bottom: 1px solid var(--color-border);
 }
 .gt-th {
   flex: none;
@@ -245,13 +245,13 @@ function cellValue(row: Row, col: ColumnDef): string {
   padding: 12px 10px;
   font-size: 13px;
   font-weight: 600;
-  color: #475569;
+  color: var(--color-text-3);
   user-select: none;
   white-space: nowrap;
 }
 /* 列间竖向分隔线（表头） */
 .gt-th:not(:last-child) {
-  border-right: 1px solid #e2e8f0;
+  border-right: 1px solid var(--color-border-2);
 }
 /* 数值类表头右对齐，与下方数值一致 */
 .gt-th.t-number,
@@ -263,10 +263,10 @@ function cellValue(row: Row, col: ColumnDef): string {
   cursor: pointer;
 }
 .gt-th.sortable:hover {
-  color: #e1251b;
+  color: var(--color-brand);
 }
 .gt-th.active {
-  color: #e1251b;
+  color: var(--color-brand);
 }
 .arrow {
   font-size: 11px;
@@ -281,24 +281,24 @@ function cellValue(row: Row, col: ColumnDef): string {
   left: 0;
   display: flex;
   align-items: center;
-  border-bottom: 1px solid #f1f5f9;
+  border-bottom: 1px solid var(--color-bg);
   width: 100%;
   box-sizing: border-box;
 }
 .gt-row:hover {
-  background: #f8fafc;
+  background: var(--color-surface-2);
 }
 .gt-td {
   flex: none;
   box-sizing: border-box;
   padding: 8px 10px;
   font-size: 14px;
-  color: #1e293b;
+  color: var(--color-text);
   overflow: hidden;
 }
 /* 列间竖向分隔线（数据） */
 .gt-td:not(:last-child) {
-  border-right: 1px solid #eef2f7;
+  border-right: 1px solid var(--color-border-4);
 }
 .t-number,
 .t-currency,
@@ -309,7 +309,7 @@ function cellValue(row: Row, col: ColumnDef): string {
 .gt-foot {
   padding: 14px;
   text-align: center;
-  color: #94a3b8;
+  color: var(--color-text-5);
   font-size: 13px;
 }
 /* ---------- 右侧固定列（表头与表体共用同一套实现） ---------- */
@@ -318,20 +318,20 @@ function cellValue(row: Row, col: ColumnDef): string {
   right: 0;
   z-index: 5;
   justify-content: center;
-  background: #f8fafc;
-  border-left: 1px solid #e2e8f0;
+  background: var(--color-surface-2);
+  border-left: 1px solid var(--color-border-2);
   box-shadow: -6px 0 10px rgba(15, 23, 42, 0.06);
 }
 .gt-td.sticky {
   position: sticky;
   right: 0;
   z-index: 2;
-  background: #fff;
+  background: var(--color-surface);
   text-align: center;
-  border-left: 1px solid #eef2f7;
+  border-left: 1px solid var(--color-border-4);
   box-shadow: -6px 0 10px rgba(15, 23, 42, 0.06);
 }
 .gt-row:hover .gt-td.sticky {
-  background: #f8fafc;
+  background: var(--color-surface-2);
 }
 </style>

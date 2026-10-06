@@ -208,19 +208,19 @@ onBeforeUnmount(() => {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  background: #fff;
-  border: 1px solid #e2e8f0;
-  border-radius: 6px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-2);
+  border-radius: var(--radius-md);
   padding: 7px 12px;
   font-size: 13px;
-  color: #334155;
+  color: var(--color-text-2);
   cursor: pointer;
   transition: border-color 0.15s, color 0.15s, box-shadow 0.15s;
 }
 .mc-btn:hover,
 .mc-btn.active {
-  border-color: #e1251b;
-  color: #e1251b;
+  border-color: var(--color-brand);
+  color: var(--color-brand);
   box-shadow: 0 0 0 3px rgba(225, 37, 27, 0.08);
 }
 .mc-ico {
@@ -228,9 +228,9 @@ onBeforeUnmount(() => {
 }
 .mc-count {
   font-size: 11px;
-  color: #94a3b8;
-  background: #f1f5f9;
-  border-radius: 10px;
+  color: var(--color-text-5);
+  background: var(--color-bg);
+  border-radius: var(--radius-xl);
   padding: 1px 7px;
   font-variant-numeric: tabular-nums;
 }
@@ -240,9 +240,9 @@ onBeforeUnmount(() => {
   top: calc(100% + 8px);
   width: 460px;
   max-width: calc(100vw - 40px);
-  background: #fff;
-  border: 1px solid #e5e7eb;
-  border-radius: 10px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
   box-shadow: 0 12px 32px rgba(15, 23, 42, 0.14);
   z-index: 60;
   overflow: hidden;
@@ -253,56 +253,56 @@ onBeforeUnmount(() => {
   align-items: flex-start;
   gap: 10px;
   padding: 12px 14px;
-  border-bottom: 1px solid #f1f5f9;
+  border-bottom: 1px solid var(--color-bg);
 }
 .mc-title {
   font-size: 14px;
   font-weight: 600;
-  color: #0f172a;
+  color: var(--color-text-strong);
 }
 .mc-sub {
   margin-top: 4px;
   font-size: 11.5px;
-  color: #94a3b8;
+  color: var(--color-text-5);
   line-height: 1.6;
 }
 .mc-close {
   background: none;
   border: none;
-  color: #94a3b8;
+  color: var(--color-text-5);
   cursor: pointer;
   font-size: 13px;
   padding: 2px 4px;
 }
 .mc-close:hover {
-  color: #e1251b;
+  color: var(--color-brand);
 }
 .mc-actions {
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 10px 14px;
-  border-bottom: 1px solid #f1f5f9;
-  background: #fafbfc;
+  border-bottom: 1px solid var(--color-bg);
+  background: var(--color-surface-3);
 }
 .mc-actions-label {
   font-size: 11.5px;
-  color: #94a3b8;
+  color: var(--color-text-5);
   margin-right: 2px;
 }
 .mc-link {
   background: none;
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--color-border-2);
   border-radius: 5px;
   padding: 4px 10px;
   font-size: 12px;
-  color: #475569;
+  color: var(--color-text-3);
   cursor: pointer;
   transition: border-color 0.15s, color 0.15s;
 }
 .mc-link:hover {
-  border-color: #e1251b;
-  color: #e1251b;
+  border-color: var(--color-brand);
+  color: var(--color-brand);
 }
 .mc-body {
   max-height: 320px;
@@ -311,7 +311,7 @@ onBeforeUnmount(() => {
 }
 .mc-group {
   padding: 10px 0 4px;
-  border-bottom: 1px dashed #f1f5f9;
+  border-bottom: 1px dashed var(--color-bg);
 }
 .mc-group:last-child {
   border-bottom: none;
@@ -325,11 +325,11 @@ onBeforeUnmount(() => {
 .mc-group-title {
   font-size: 13px;
   font-weight: 600;
-  color: #334155;
+  color: var(--color-text-2);
 }
 .mc-group-hint {
   font-size: 11px;
-  color: #cbd5e1;
+  color: var(--color-text-6);
 }
 .mc-items {
   display: grid;
@@ -341,32 +341,32 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 7px;
   padding: 5px 8px;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   font-size: 12.5px;
-  color: #475569;
+  color: var(--color-text-3);
   cursor: pointer;
   user-select: none;
   transition: background 0.15s, color 0.15s;
 }
 .mc-item:hover {
-  background: #f8fafc;
+  background: var(--color-surface-2);
 }
 .mc-item.on {
-  color: #0f172a;
-  background: #fff5f4;
+  color: var(--color-text-strong);
+  background: var(--color-brand-tint-4);
 }
 .mc-item input {
-  accent-color: #e1251b;
+  accent-color: var(--color-brand);
   cursor: pointer;
 }
 .mc-ico {
   flex: none;
   width: 14px;
   height: 14px;
-  color: #94a3b8;
+  color: var(--color-text-5);
 }
 .mc-item.on .mc-ico {
-  color: #e1251b;
+  color: var(--color-brand);
 }
 .mc-foot {
   display: flex;
@@ -374,16 +374,16 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 10px;
   padding: 10px 14px;
-  border-top: 1px solid #f1f5f9;
-  background: #fafbfc;
+  border-top: 1px solid var(--color-bg);
+  background: var(--color-surface-3);
   font-size: 11.5px;
-  color: #94a3b8;
+  color: var(--color-text-5);
 }
 .mc-done {
-  background: linear-gradient(135deg, #e1251b, #c81e14);
-  color: #fff;
+  background: linear-gradient(135deg, var(--color-brand), var(--color-brand-dark));
+  color: var(--color-surface);
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   padding: 6px 14px;
   font-size: 12.5px;
   cursor: pointer;

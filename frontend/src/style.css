@@ -1,3 +1,59 @@
+/* ============================================================
+   Design Tokens（设计变量，单一事实来源）
+   组件 scoped 样式里的颜色 / 圆角统一引用这里的变量，
+   改一处即全局生效，消灭散落的魔法值。
+   命名贴近 Tailwind slate 梯度 + 语义色，便于团队对齐。
+   ============================================================ */
+:root {
+  /* 文字（中性 slate 梯度） */
+  --color-text: #1e293b;          /* 主文字 */
+  --color-text-strong: #0f172a;  /* 强调 */
+  --color-text-2: #334155;
+  --color-text-3: #475569;
+  --color-text-4: #64748b;
+  --color-text-5: #94a3b8;
+  --color-text-6: #cbd5e1;        /* 最弱 / placeholder */
+
+  /* 背景 */
+  --color-bg: #f1f5f9;            /* 页面底 */
+  --color-surface: #ffffff;       /* 卡片 / 浮层 */
+  --color-surface-2: #f8fafc;     /* 斑马 / 悬停底 */
+  --color-surface-3: #fafbfc;
+
+  /* 边框 */
+  --color-border: #e5e7eb;
+  --color-border-2: #e2e8f0;
+  --color-border-3: #cbd5e1;
+  --color-border-4: #eef2f7;
+
+  /* 品牌红 */
+  --color-brand: #e1251b;
+  --color-brand-dark: #c81e14;
+  --color-brand-darker: #b91c1c;
+  --color-brand-tint: #fef2f2;
+  --color-brand-tint-2: #fff1f0;
+  --color-brand-tint-3: #fff7f6;
+  --color-brand-tint-4: #fff5f4;
+  --color-brand-border: #fecaca;
+  --color-brand-border-2: #f6cfcc;
+
+  /* 功能色 */
+  --color-danger: #ef4444;        /* echarts 警戒线 / 通用危险红 */
+  --color-danger-2: #f87171;
+  --color-link: #2563eb;
+  --color-link-2: #60a5fa;
+  --color-success: #10b981;
+
+  /* 圆角 */
+  --radius-xs: 2px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 10px;
+  --radius-pill: 999px;
+  --radius-circle: 50%;
+}
+
 * {
   margin: 0;
   padding: 0;
@@ -8,8 +64,8 @@ body,
 #app {
   height: 100%;
   font-family: "PingFang SC", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
-  color: #1e293b;
-  background: #f1f5f9;
+  color: var(--color-text);
+  background: var(--color-bg);
 }
 a {
   -webkit-tap-highlight-color: transparent;

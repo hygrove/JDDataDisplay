@@ -158,13 +158,13 @@ function onShopClick(shop: string) {
 .layout {
   display: flex;
   height: 100vh;
-  background: #f1f5f9;
+  background: var(--color-bg);
 }
 .sider {
   width: 216px;
   flex: none;
-  background: #fff;
-  border-right: 1px solid #e5e7eb;
+  background: var(--color-surface);
+  border-right: 1px solid var(--color-border);
   display: flex;
   flex-direction: column;
   padding: 16px 12px;
@@ -204,9 +204,9 @@ function onShopClick(shop: string) {
 .nl-spinner {
   width: 44px;
   height: 44px;
-  border: 4px solid #f6cfcc;
-  border-top-color: #e1251b;
-  border-radius: 50%;
+  border: 4px solid var(--color-brand-border-2);
+  border-top-color: var(--color-brand);
+  border-radius: var(--radius-circle);
   animation: nl-spin 0.8s linear infinite;
 }
 @keyframes nl-spin {
@@ -214,7 +214,7 @@ function onShopClick(shop: string) {
 }
 .nl-text {
   font-size: 14px;
-  color: #475569;
+  color: var(--color-text-3);
   letter-spacing: 0.5px;
 }
 .logo {
@@ -223,7 +223,7 @@ function onShopClick(shop: string) {
   gap: 8px;
   font-size: 17px;
   font-weight: 700;
-  color: #e1251b;
+  color: var(--color-brand);
   padding: 4px 10px 16px;
 }
 .logo-ico {
@@ -240,35 +240,35 @@ function onShopClick(shop: string) {
 }
 .nav-title {
   font-size: 12px;
-  color: #94a3b8;
+  color: var(--color-text-5);
   padding: 0 10px 8px;
 }
 .nav-item {
   display: block;
   padding: 9px 10px;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   font-size: 14px;
-  color: #334155;
+  color: var(--color-text-2);
   text-decoration: none;
   cursor: pointer;
   margin-bottom: 2px;
 }
 .nav-item:hover {
-  background: #f8fafc;
+  background: var(--color-surface-2);
 }
 .nav-item.active {
-  background: #fef2f2;
-  color: #e1251b;
+  background: var(--color-brand-tint);
+  color: var(--color-brand);
   font-weight: 600;
-  box-shadow: inset 3px 0 0 #e1251b;
+  box-shadow: inset 3px 0 0 var(--color-brand);
 }
 .sider-foot {
-  border-top: 1px solid #f1f5f9;
+  border-top: 1px solid var(--color-bg);
   padding-top: 10px;
 }
 .meta {
   font-size: 12px;
-  color: #94a3b8;
+  color: var(--color-text-5);
   padding: 0 10px;
 }
 .main {
@@ -279,6 +279,6 @@ function onShopClick(shop: string) {
   /* 右侧主展示区背景：用前端 public 下的白底图片铺底（构建时原样拷进 dist 根目录，
      运行时以 /white-background.jpg 访问）；左侧 .sider 保持纯白不变。
      center/cover 保证图片居中且铺满整个展示区、按比例缩放不变形。 */
-  background: #fff url("/white-background.jpg") center / cover no-repeat;
+  background: var(--color-surface) url("/white-background.jpg") center / cover no-repeat;
 }
 </style>

@@ -677,9 +677,9 @@ async function exportXlsx() {
   align-items: center;
   gap: 12px;
   flex-wrap: wrap;
-  background: #fff;
-  border: 1px solid #e5e7eb;
-  border-radius: 10px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
   padding: 10px 16px;
   box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
 }
@@ -694,11 +694,11 @@ async function exportXlsx() {
   align-items: center;
   gap: 6px;
   font-size: 14px;
-  color: #475569;
+  color: var(--color-text-3);
 }
 .search {
-  border: 1px solid #e2e8f0;
-  border-radius: 6px;
+  border: 1px solid var(--color-border-2);
+  border-radius: var(--radius-md);
   padding: 8px 12px;
   width: 240px;
   font-size: 14px;
@@ -706,7 +706,7 @@ async function exportXlsx() {
 }
 .search:focus {
   outline: none;
-  border-color: #e1251b;
+  border-color: var(--color-brand);
   box-shadow: 0 0 0 3px rgba(225, 37, 27, 0.08);
 }
 .tool-right {
@@ -717,16 +717,16 @@ async function exportXlsx() {
 }
 .status {
   font-size: 13px;
-  color: #94a3b8;
+  color: var(--color-text-5);
 }
 .status.ok {
-  color: #10b981;
+  color: var(--color-success);
 }
 .btn {
-  background: linear-gradient(135deg, #e1251b, #c81e14);
-  color: #fff;
+  background: linear-gradient(135deg, var(--color-brand), var(--color-brand-dark));
+  color: var(--color-surface);
   border: none;
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   /* 扩大点击区域：由 8px 16px 加到 12px 22px，并保证 44px 最小高度（移动端易点） */
   padding: 12px 22px;
   min-height: 44px;
@@ -750,13 +750,13 @@ async function exportXlsx() {
 }
 /* 导出按钮：深灰渐变，与刷新红按钮在视觉上区分（一个是「重算」、一个是「取数」） */
 .btn-export {
-  background: linear-gradient(135deg, #334155, #1e293b);
+  background: linear-gradient(135deg, var(--color-text-2), var(--color-text));
   box-shadow: 0 2px 6px rgba(30, 41, 59, 0.25);
   /* 承接「横向流光」::after 的绝对定位 + 裁剪，避免高光溢出圆角 */
   position: relative;
   overflow: hidden;
 }
-/* 导出中：一道高光从左滑到右循环（方案 A 横向流光）；图标与文字静止，不旋转 */
+/* 导出中：一道高光从左滑到右循环；图标与文字静止，不旋转 */
 .btn-export.is-exporting::after {
   content: "";
   position: absolute;
@@ -781,7 +781,7 @@ async function exportXlsx() {
     transform: translateX(100%);
   }
 }
-/* 文字后循环三点省略（方案 C 的省略号，去掉了 C 的整体呼吸缩放，避免动效过重） */
+/* 文字后循环三点省略（不做整体呼吸缩放，避免动效过重） */
 .export-label .dots {
   margin-left: 1px;
 }
@@ -843,10 +843,10 @@ async function exportXlsx() {
   }
 }
 .error {
-  background: #fef2f2;
-  color: #b91c1c;
+  background: var(--color-brand-tint);
+  color: var(--color-brand-darker);
   padding: 10px 14px;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   font-size: 13px;
 }
 /* ---------- SPU 单元网格（单日模式） ---------- */
@@ -859,9 +859,9 @@ async function exportXlsx() {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  background: #fff;
-  border: 1px solid #e5e7eb;
-  border-radius: 10px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
   padding: 14px 16px;
   box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
   transition: box-shadow 0.18s, transform 0.18s;
@@ -876,12 +876,12 @@ async function exportXlsx() {
   align-items: flex-start;
   gap: 10px;
   padding-bottom: 10px;
-  border-bottom: 1px dashed #cbd5e1;
+  border-bottom: 1px dashed var(--color-text-6);
 }
 .spu-name {
   font-size: 16px;
   font-weight: 600;
-  color: #0f172a;
+  color: var(--color-text-strong);
   margin-bottom: 6px;
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -893,10 +893,10 @@ async function exportXlsx() {
   flex-wrap: wrap;
   gap: 10px;
   font-size: 13px;
-  color: #64748b;
+  color: var(--color-text-4);
 }
 .spu-meta .m-spu {
-  color: #2563eb;
+  color: var(--color-link);
 }
 .copy-btn {
   display: inline-flex;
@@ -908,15 +908,15 @@ async function exportXlsx() {
   padding: 0;
   border: none;
   background: transparent;
-  color: #94a3b8;
+  color: var(--color-text-5);
   cursor: pointer;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   vertical-align: -3px;
   transition: color 0.15s, background 0.15s;
 }
 .copy-btn:hover {
-  color: #e1251b;
-  background: #fff1f0;
+  color: var(--color-brand);
+  background: var(--color-brand-tint-2);
 }
 .copy-btn.copied {
   color: #16a34a;
@@ -929,13 +929,13 @@ async function exportXlsx() {
   width: 100%;
 }
 /* 单品分析入口：胶囊按钮（全圆角），默认浅红底红字；
-   移入态换成更柔和的浅红填充（比品牌实心红 #e1251b 淡一档），箭头右滑。 */
+   移入态换成更柔和的浅红填充（比品牌实心红 var(--color-brand) 淡一档），箭头右滑。 */
 .spu-analysis {
   flex: none;
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  color: #e1251b;
+  color: var(--color-brand);
   font-size: 14px;
   font-weight: 500;
   cursor: pointer;
@@ -943,15 +943,15 @@ async function exportXlsx() {
   text-decoration: none;
   background: #fdeceb;
   border: 1.5px solid transparent;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   padding: 6px 16px;
   transition: background 0.25s ease, color 0.25s ease, transform 0.25s ease;
 }
 .spu-analysis:hover {
   background: #ee8e89;
-  color: #fff;
+  color: var(--color-surface);
 }
-/* 箭头在按钮移入时右滑（取代原先“整行 hover 摆动”的动画，反馈更聚焦） */
+/* 箭头在按钮移入时右滑，反馈更聚焦 */
 .spu-analysis .spu-go-arrow {
   display: inline-block;
   transition: transform 0.25s ease;
@@ -972,16 +972,16 @@ async function exportXlsx() {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #f8fafc;
-  border: 1px solid #f1f5f9;
-  border-radius: 8px;
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-bg);
+  border-radius: var(--radius-lg);
   overflow: hidden;
 }
 .spu-img img {
   object-fit: contain;
 }
 .no-img {
-  color: #cbd5e1;
+  color: var(--color-text-6);
   font-size: 14px;
 }
 /* 网格卡图片 180×180 */
@@ -1005,24 +1005,24 @@ async function exportXlsx() {
   align-items: baseline;
   gap: 12px;
   padding: 5px 0;
-  border-bottom: 1px solid #cbd5e1;
+  border-bottom: 1px solid var(--color-text-6);
   font-size: 14px;
 }
 .metric-row:last-child {
   border-bottom: none;
 }
 .m-label {
-  color: #64748b;
+  color: var(--color-text-4);
   white-space: nowrap;
 }
 .m-value {
-  color: #0f172a;
+  color: var(--color-text-strong);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   text-align: right;
 }
 .m-value.missing {
-  color: #64748b;
+  color: var(--color-text-4);
   font-weight: 400;
 }
 /* 指标行左侧：图标 + 名称 成组，hover 时图标放大变红 */
@@ -1036,13 +1036,13 @@ async function exportXlsx() {
   flex: none;
   width: 16px;
   height: 16px;
-  color: #94a3b8;
+  color: var(--color-text-5);
   display: inline-flex;
   align-items: center;
   transition: transform 0.15s, color 0.15s;
 }
 .metric-row:hover .m-ico {
-  color: #e1251b;
+  color: var(--color-brand);
   transform: scale(1.18);
 }
 /* 矩阵表头（指标名）前的小图标 */
@@ -1051,11 +1051,11 @@ async function exportXlsx() {
   height: 14px;
   margin-right: 6px;
   vertical-align: -2px;
-  color: #94a3b8;
+  color: var(--color-text-5);
 }
 .metrics-empty {
   font-size: 13px;
-  color: #94a3b8;
+  color: var(--color-text-5);
   padding: 8px 0;
 }
 /* ---------- SPU 整行矩阵（区间模式） ---------- */
@@ -1068,9 +1068,9 @@ async function exportXlsx() {
   display: flex;
   gap: 16px;
   align-items: stretch;
-  background: #fff;
-  border: 1px solid #e5e7eb;
-  border-radius: 10px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
   padding: 14px 16px;
   box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
   transition: box-shadow 0.18s;
@@ -1078,7 +1078,7 @@ async function exportXlsx() {
 .spu-row:hover {
   box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08);
 }
-/* 单品分析箭头：仅在该胶囊按钮移入时右滑（取代原先「整行 hover 摆动」，反馈更聚焦、不吵）。
+/* 单品分析箭头：仅在该胶囊按钮移入时右滑，反馈更聚焦、不吵。
    - transform 对 display:inline 无效，故上方 .spu-analysis .spu-go-arrow 设为 inline-block。 */
 /* 尊重系统「减少动态效果」偏好：关闭滑动，照顾前庭敏感用户 */
 @media (prefers-reduced-motion: reduce) {
@@ -1093,7 +1093,7 @@ async function exportXlsx() {
   gap: 10px;
   align-items: stretch;
   padding-right: 16px;
-  border-right: 1px dashed #cbd5e1;
+  border-right: 1px dashed var(--color-text-6);
   box-sizing: border-box;
 }
 .spu-row-head .spu-name {
@@ -1117,7 +1117,7 @@ async function exportXlsx() {
   flex-direction: column;
   margin-top: 6px;
   padding-top: 8px;
-  border-top: 1px dashed #cbd5e1;
+  border-top: 1px dashed var(--color-text-6);
   font-size: 13px;
 }
 .spu-row-head .spu-avg .avg-row {
@@ -1133,11 +1133,11 @@ async function exportXlsx() {
   padding-bottom: 0;
 }
 .spu-row-head .spu-avg .avg-label {
-  color: #64748b;
+  color: var(--color-text-4);
   white-space: nowrap;
 }
 .spu-row-head .spu-avg .avg-value {
-  color: #0f172a;
+  color: var(--color-text-strong);
   font-weight: 400;
   font-size: 13px;
   font-variant-numeric: tabular-nums;
@@ -1154,7 +1154,7 @@ async function exportXlsx() {
   display: inline-flex;
   align-items: baseline;
   gap: 5px;
-  color: #0f172a;
+  color: var(--color-text-strong);
   font-weight: 400;
   font-size: 13px;
   font-variant-numeric: tabular-nums;
@@ -1162,15 +1162,15 @@ async function exportXlsx() {
 }
 .spu-row-head .spu-avg .avg-tag {
   font-size: 11px;
-  color: #94a3b8;
+  color: var(--color-text-5);
 }
 .spu-matrix-wrap {
   flex: 1;
   min-width: 0;
   overflow-x: auto;
-  border: 1px solid #e2e8f0;
-  border-radius: 10px;
-  background: #fff;
+  border: 1px solid var(--color-border-2);
+  border-radius: var(--radius-xl);
+  background: var(--color-surface);
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 6px 16px rgba(15, 23, 42, 0.05);
 }
 .spu-matrix {
@@ -1183,7 +1183,7 @@ async function exportXlsx() {
 .spu-matrix td {
   padding: 8px 12px;
   text-align: right;
-  background: #fff;
+  background: var(--color-surface);
   border-bottom: 1px solid #cdd7e2;
   border-right: 1px solid #d6dde8;
 }
@@ -1198,42 +1198,42 @@ async function exportXlsx() {
 .spu-matrix thead th {
   position: sticky;
   top: 0;
-  background: #f1f5f9;
-  color: #334155;
+  background: var(--color-bg);
+  color: var(--color-text-2);
   font-weight: 700;
   font-size: 13px;
   letter-spacing: 0.2px;
-  border-bottom: 2px solid #cbd5e1;
+  border-bottom: 2px solid var(--color-text-6);
   z-index: 1;
 }
 .spu-matrix thead th.weekend {
-  color: #e1251b;
+  color: var(--color-brand);
 }
 .spu-matrix th.corner {
   text-align: left;
   left: 0;
   z-index: 2;
   background: #eef2f6;
-  color: #e1251b;
-  border-right: 2px solid #cbd5e1;
+  color: var(--color-brand);
+  border-right: 2px solid var(--color-text-6);
 }
 /* 斑马纹：隔行浅灰，阅读更省力 */
 .spu-matrix tbody tr:nth-child(even) td {
-  background: #f8fafc;
+  background: var(--color-surface-2);
 }
 /* 首列（指标名，横向滚动时固定） */
 .spu-matrix td.m-label {
   position: sticky;
   left: 0;
-  background: #fff;
+  background: var(--color-surface);
   text-align: left;
-  color: #1e293b;
+  color: var(--color-text);
   font-weight: 600;
-  border-right: 2px solid #cbd5e1;
+  border-right: 2px solid var(--color-text-6);
   z-index: 1;
 }
 .spu-matrix tbody tr:nth-child(even) td.m-label {
-  background: #f8fafc;
+  background: var(--color-surface-2);
 }
 /* 悬停高亮：品牌红浅色 */
 .spu-matrix tbody tr:hover td {
@@ -1243,13 +1243,13 @@ async function exportXlsx() {
   background: #fdf1f0;
 }
 .spu-matrix td.missing {
-  color: #94a3b8;
+  color: var(--color-text-5);
 }
 .empty-state {
   padding: 40px;
   text-align: center;
   font-size: 15px;
-  color: #94a3b8;
+  color: var(--color-text-5);
 }
 /* 空态插画：纯装饰性元素，用低透明度弱化存在感，避免与提示文案抢视觉焦点。
    - display:block + margin:0 auto：因父级是 text-align:center（只对行内元素生效），
@@ -1271,7 +1271,7 @@ async function exportXlsx() {
 .loading-more {
   text-align: center;
   font-size: 14px;
-  color: #94a3b8;
+  color: var(--color-text-5);
   padding: 12px;
 }
 @media (max-width: 640px) {
@@ -1282,7 +1282,7 @@ async function exportXlsx() {
   .spu-row-head {
     width: auto;
     border-right: none;
-    border-bottom: 1px dashed #cbd5e1;
+    border-bottom: 1px dashed var(--color-text-6);
     padding-right: 0;
     padding-bottom: 12px;
   }
