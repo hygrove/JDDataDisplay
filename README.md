@@ -1,16 +1,20 @@
 # JD 数据平台
 
-电商多店铺经营数据的可视化看板。Python 批处理每天从 Excel/CSV（可扩展 PostgreSQL）采集清洗数据，导出 JSON；FastAPI 托管前端并提供数据 API；Vue3 前端做表格 + 图表展示。
+电商多店铺经营数据的可视化看板。Python 批处理每天从 Excel/CSV（可扩展 PostgreSQL）采集清洗数据，写入 SQLite 并导出 JSON；FastAPI 单端口托管前端与数据 API；Vue3 前端做表格 + 图表展示。
+
+> 完整使用说明（页面功能逐项、接口清单、维护注意事项、变更记录）见 **[说明文档.md](说明文档.md)**；
+> 新机器从零跑通见 `docs/异地克隆部署指南.md`，SQLite 层设计见 `docs/数据库迁移与架构教学.md`。
 
 ## 功能一览（当前模块：POP 单品明细）
 
 - 左右布局：左侧模块导航 + 店铺切换，右侧主业务区
-- 日期选择（默认最新一天）、SPU 号/商品名搜索、指标排序（点击表头）
+- 日期区间选择（近一周 / 当月 / 上月 / 月份网格四种快捷方式，默认最新一天）、SPU 号或商品名搜索
 - 可配置指标卡/表格列/趋势图（共 **15 个指标**，分 3 组，默认勾选 8 个）：商品明细表 9 项 + 推广数据表 4 项 + 退款/其他 2 项；展示项由 `frontend/src/metrics.ts` 的 `METRICS` 派生，可在 ⚙ 指标配置 中调整
-- 3 种图表：日期趋势（金额+访客双轴折线）、SPU 成交金额 TOP10（横向柱状）、店铺成交金额占比（饼图）
-- SPU 明细表格：商品图片 180×180、虚拟滚动、分页加载（300 行/页）、缺失指标展示 `--`
-- 数据导出：一键把当前筛选条件下的**全量**数据导出为 xlsx（每 SPU 一块、图片嵌入、总计列口径与页面一致、数值保留 2 位小数）
-- 手动刷新：前端按钮触发后端重跑批处理
+- 单日模式卡片网格 ↔ 区间模式「指标 × 日期」矩阵自动切换（由所选区间决定）
+- 单品分析页：指标卡、3 张趋势图（含双轴合并）、工作日 vs 节假日对比、**月份对比**（多月份横排 + 点击指标行展开时间轴）、自动洞察文案
+- SPU 明细表格：商品图片、虚拟滚动、分页加载（300 行/页）、缺失指标展示 `--`
+- 数据导出：一键把当前筛选条件下的**全量**数据导出为 xlsx（每 SPU 一块、图片嵌入纵向居中、比率类总计标橙、数值保留 2 位小数）
+- 手动刷新：前端按钮触发后端重跑批处理（服务无关，服务未启动也能跑批）
 
 > **关于推广指标**：推广费/推广成交金额/ROI/推广占比来自各店铺的 `推广数据_*.csv`（京准通报表），由批处理按 (店铺, 日期, SPU) 左连接补充到明细长表；明细表本身不含这些列。若某 SPU 在推广 csv 中无对应记录，则相关指标展示 `--`。
 
@@ -25,87 +29,64 @@
 ## 目录结构
 
 ```
-project/
-  backend/
-    app/
-      main.py            # FastAPI：静态托管 + SPA 回退 + 图片挂载
-      api.py             # /api/manifest /module/{id}/rows /summary /export /spu/{spu}/analysis /status /refresh
-      data/              # 批处理产出（manifest.json, status.json, modules/*.json, images/ + thumbs/）
-      analysis.py        # 单品分析：节假日口径、工作日/节假日对比、洞察文案
-    jobs/
-      run_batch.py       # 批处理入口（重试逻辑保留，默认关闭）
-      pipeline.py        # 模块管线 + 模块注册表（加模块改这里）
-      transforms.py      # Polars 清洗与聚合（长表 -> 层级 JSON / summary）
-      models.py          # Pydantic 模型（与前端 src/types.ts 对齐）
-      config.py          # 路径/重试等配置，全部支持环境变量覆盖
-      sources/
-        base.py           # Source 协议 + 统一长表列约定
-        excel_source.py   # POP 单品明细 Excel 源（读固定 数据源表目录，写入 SQLite）
-        sqlite_source.py  # 从 SQLite 读回干净长表喂给 transforms（读取方）
-        db_source.py      # PostgreSQL 源骨架（配 PG_DSN 后实现 fetch 即可）
-      db.py               # SQLite 持久化层（daily_detail 长表 + processed_file 哈希增量追踪）
-      make_thumbs.py     # SPU 图片多尺寸缩略图（AVIF+WebP）
-    requirements.txt
-  frontend/
-    src/
-      modules/index.ts   # 模块注册表：表格列/指标卡片全配置驱动（加模块改这里）
-      metrics.ts         # 指标清单：前端展示指标的唯一事实来源（METRICS）
-      components/GenericTable.vue   # 虚拟滚动表格（滚动到底自动加载下一页）
-      components/GenericChart.vue   # vue-echarts 封装
-      components/MetricConfigPanel.vue # ⚙ 指标配置面板（勾选展示指标，存 localStorage）
-      components/DateRangePicker.vue   # 统计区间范围选择器
-      views/ModuleView.vue          # 通用模块页（所有模块共用；单日卡片 ↔ 区间矩阵）
-      views/SpuAnalysisView.vue     # 单品分析页（趋势/工作日节假日/洞察）
-      stores/metrics.ts             # Pinia store：指标勾选配置（localStorage jd.metric-config.v1）
-      api.ts / router.ts / App.vue / types.ts
-  scripts/
-    启动服务.pyw         # 双击启动：托盘图标 + 无黑框（日常使用推荐入口）
-    tray_launcher.py     # 同进程托盘启动器（pystray 主线程 + uvicorn 子线程，单实例锁）
-    refresh_data.py      # 跨平台数据刷新入口（计划任务 / cron / Docker 通用）
-    setup_sample.py      # 把 sample_data/ 样例铺到 ResourceData/（异地克隆首次部署用）
-    gen_fake_data.py     # 生成 10 万行量级假数据压测
-    install_tasks.bat / uninstall_tasks.bat / _install_tasks.ps1  # Windows 计划任务（每日刷新+开机自启）
-    stop_uvicorn.bat / refresh_daily.ps1                          # 停止服务 / 每日刷新脚本
-```
-
-## 项目结构直观版本
 JDDataDisplay/
-├── README.md                  # 非常详尽，含快速开始/数据格式/加模块步骤/排障
-├── screenshot_module.png
 ├── backend/
 │   ├── requirements.txt
 │   ├── app/
-│   │   ├── main.py            # FastAPI：静态托管 + SPA 回退 + 图片挂载
-│   │   └── api.py             # /api 路由 + 缓存 + 分页/过滤/排序
+│   │   ├── main.py            # FastAPI：静态托管 + SPA 回退（no-store）+ 图片挂载
+│   │   ├── api.py             # /api 路由 + 缓存 + 分页/过滤/排序 + xlsx 导出
+│   │   ├── analysis.py        # 单品分析：节假日口径、工作日/节假日对比、洞察文案
+│   │   └── data/              # 批处理产物（JSON / images / app.db，运行时生成，非源码）
 │   └── jobs/                  # 批处理（ETL 层）
 │       ├── config.py          # 路径/重试/参数，全环境变量可覆盖
-│       ├── models.py          # Pydantic 模型（前后端事实来源）
-│       ├── transforms.py      # Polars 清洗/聚合
-│       ├── pipeline.py        # 模块管线 + 注册表
-│       ├── run_batch.py       # 批处理入口
+│       ├── models.py          # Pydantic 模型（前后端字段事实来源）
+│       ├── transforms.py      # Polars 清洗/聚合（比率「先求和再相除」）
+│       ├── pipeline.py        # 模块管线 + 注册表（加模块改这里）
+│       ├── run_batch.py       # 批处理入口（重试逻辑保留，默认关闭）
 │       ├── db.py              # SQLite 持久化层（长表 + 源文件哈希增量追踪）
-│       └── sources/           # 数据源抽象
+│       ├── make_thumbs.py     # SPU 图片多尺寸缩略图（AVIF + WebP）
+│       └── sources/
 │           ├── base.py        # Source 协议 + 统一长表列 LONG_COLUMNS
-│           ├── excel_source.py  # Excel 源（写入 SQLite）
+│           ├── excel_source.py  # Excel 源（清洗后写入 SQLite）
 │           ├── sqlite_source.py # 从 SQLite 读回长表（展示侧统一入口）
-│           └── db_source.py   # PostgreSQL 骨架（未启用）
-│   └── app/data/              # 批处理产物（JSON / images / app.db，运行时生成，非源码）
+│           └── db_source.py     # PostgreSQL 骨架（未启用）
 ├── frontend/
 │   ├── package.json / tsconfig.json / vite.config.ts / index.html
 │   ├── src/
-│   │   ├── main.ts / App.vue      # 入口 + 左右布局（侧边导航）
-│   │   ├── router.ts               # 模块视图懒加载
-│   │   ├── api.ts / types.ts       # fetch 封装 / 与 Pydantic 对齐的 TS 类型
-│   │   ├── modules/index.ts        # 前端模块注册表（配置驱动）
-│   │   ├── stores/metrics.ts        # Pinia store（指标勾选配置，localStorage）
+│   │   ├── main.ts / App.vue           # 入口 + 左右布局（侧边导航）
+│   │   ├── router.ts                   # 模块视图懒加载 + 路由级加载态
+│   │   ├── api.ts / types.ts           # fetch 封装 / 与 Pydantic 对齐的 TS 类型
+│   │   ├── metrics.ts                  # 展示指标的唯一事实来源（METRICS）
+│   │   ├── modules/index.ts            # 前端模块注册表（配置驱动）
+│   │   ├── stores/metrics.ts           # Pinia store（指标勾选，localStorage 按 moduleId）
+│   │   ├── utils/month.ts              # 日期区间与月份清单算法
+│   │   ├── utils/overlay.ts            # 同页浮层全局互斥
 │   │   ├── components/
-│   │   │   ├── GenericTable.vue      # 虚拟滚动表格
-│   │   │   └── GenericChart.vue      # ECharts 按需引入封装
-│   │   └── views/ModuleView.vue      # 通用模块页（所有模块共用）
-│   ├── dist/ / node_modules/
-└── scripts/
-    ├── gen_fake_data.py           # 10 万行压测假数据
-    └── _test_api.py               # 临时冒烟脚本（含硬编码店铺名）
+│   │   │   ├── GenericTable.vue        # 虚拟滚动表格（滚动到底自动加载下一页）
+│   │   │   ├── GenericChart.vue        # ECharts 按需引入封装
+│   │   │   ├── DateRangePicker.vue     # 统计区间选择器（模块页 / 单品页共用）
+│   │   │   ├── MetricConfigPanel.vue   # ⚙ 指标配置面板
+│   │   │   └── MonthCompareTable.vue   # 月份对比（多月份横排 + 点击展开时间轴）
+│   │   └── views/
+│   │       ├── ModuleView.vue          # 通用模块页（单日卡片 ↔ 区间矩阵）
+│   │       └── SpuAnalysisView.vue     # 单品分析页（趋势/工作日节假日/月份对比/洞察）
+│   ├── verify_month_compare.mjs         # 回归：月份对比纯逻辑
+│   ├── verify_agg.mjs                   # 回归：前后端聚合口径一致性
+│   └── dist/ / node_modules/            # 构建产物与依赖（不入库）
+├── scripts/
+│   ├── 启动服务.pyw         # 双击启动：托盘图标 + 无黑框（日常使用推荐入口）
+│   ├── tray_launcher.py     # 同进程托盘启动器（pystray 主线程 + uvicorn 子线程，单实例锁）
+│   ├── refresh_data.py      # 跨平台数据刷新入口（计划任务 / cron / Docker 通用）
+│   ├── setup_sample.py      # 把 sample_data/ 样例铺到 ResourceData/（异地克隆首次部署用）
+│   ├── gen_fake_data.py     # 生成 10 万行量级假数据压测
+│   ├── install_tasks.bat / uninstall_tasks.bat # Windows 计划任务（每日刷新 + 开机自启）
+│   ├── start_uvicorn.bat / stop_uvicorn.bat   # 前台启动 / 停止（调试用）
+│   └── refresh_daily.ps1    # 每日刷新脚本（薄启动器，转调 refresh_data.py）
+├── sample_data/             # 入库的演示样例数据（业务数据本身不入库）
+├── docs/                    # 专题文档（异地克隆部署 / 数据库架构 / git 笔记）
+├── requirements.txt         # 指向 backend/requirements.txt 的引用，便于根目录一条命令安装
+└── 说明文档.md              # 完整使用说明（页面功能、接口、维护注意事项、变更记录）
+```
 
 ## 快速开始
 
@@ -159,11 +140,6 @@ uv pip install -r backend/requirements.txt   # 替代 pip install
 
 API 文档（自动生成）：http://localhost:8000/docs
 
-> **端口冲突提示**：本机 8000 端口若已被一个旧的、接口结构不同的后端（模块名 `app.main`、manifest 用 `id/stores/date_range{min,max}` 结构）占用，本项目的 uvicorn 会启动失败（地址已被占用）。处理方式二选一：
-> 1. 停掉旧进程再用 8000：在 PowerShell 执行 `netstat -ano | findstr :8000` 找到 PID，`taskkill /F /PID <PID>` 后重跑上面的 uvicorn 命令；
-> 2. 或本项目直接改用其他端口（如 8100）：把上面命令的 `--port 8000` 改为 `--port 8100`，访问 `http://localhost:8100`。
-> 本项目已验证在 8100 端口端到端跑通（店铺过滤、排序、指标计算、图表、图片、虚拟滚动均正常）。
-
 ### 4. 前端
 
 开发模式（热更新，代理 /api 与 /images 到 8000）：
@@ -182,7 +158,19 @@ npm run build      # 产物在 frontend/dist
 # 然后访问 http://localhost:8000
 ```
 
-### 5. 压测（10 万行验证）
+>改了前端只需 `npm run build` 即可生效，**无需重启服务**（FastAPI 实时读 dist）。
+> 但若页面「看起来没变化」，先按 **Ctrl+F5 强刷**——`index.html` 已设 `no-store`，仍 suspect 浏览器缓存时可清缓存重试。
+
+### 5. 回归验证
+
+```bash
+cd frontend
+npm run verify            # 跑两份回归脚本
+npm run verify:month      # 月份对比纯逻辑（天数/闰年/跨月/对齐/排序），无需服务
+npm run verify:agg        # 前后端聚合口径一致性，需服务已启动在 8000
+```
+
+### 6. 压测（10 万行验证）
 
 ```bash
 .venv\Scripts\python.exe scripts/gen_fake_data.py            # 默认 10 万行
@@ -262,7 +250,7 @@ npm run build      # 产物在 frontend/dist
 
 - **Windows 计划任务**：推荐直接双击 `scripts/install_tasks.bat` 自动注册（脚本按自身位置推导路径，改名/迁移后无需改）；如需手动命令，把下面命令里的 `<项目根目录>` 替换成你的实际项目路径即可：`schtasks /create /tn "JD数据批处理" /tr "\"<项目根目录>\.venv\Scripts\python.exe\" \"<项目根目录>\backend\jobs\run_batch.py\"" /sc daily /st 06:00`
 - **Linux cron**：`0 6 * * * /path/.venv/bin/python /path/backend/jobs/run_batch.py`
-- **重试机制**：指数退避（2s → 4s → 8s），最多 3 次。按方案要求**功能保留、默认关闭**，开启方式：
+- **重试机制**：指数退避（2s → 4s → 8s），最多 3 次。**功能保留、默认关闭**（上游源数据本身出错时重试几乎必然再次失败，不如让失败立刻暴露），开启方式：
   ```
   set BATCH_RETRY_ENABLED=true
   set BATCH_RETRY_MAX_ATTEMPTS=3
@@ -317,7 +305,10 @@ server {
 | 现象 | 排查 |
 |---|---|
 | 页面提示「数据文件不存在」 | 先跑 `run_batch.py` |
-| 推广指标全是 `--` | 正常：源表无推广列，接入京准通数据源后自动有值 |
+| 改了前端但页面没变化 | 先 `npm run build`，再 **Ctrl+F5 强刷**；仍无效则确认 uvicorn 是当前这个项目的进程 |
+| 改了后端但接口没变化 | 重跑 `run_batch` 并**重启 uvicorn 8000**（旧进程返回旧字段/旧数据） |
+| 端口 8000 被占用 | uvicorn 启动失败「地址已被占用」。`netstat -ano \| findstr :8000` 取 PID → `Stop-Process -Id <PID> -Force`；或改用其他端口（`--port 8100`，同时改 `vite.config.ts` 的代理目标） |
+| 推广指标全是 `--` | 正常：明细表本身不含推广列，需店铺的 `推广数据_*.csv`（京准通报表）才会左连接补上 |
 | 图片裂 | 确认 `单品spu图片/` 下有对应 `{spu}.png`，重跑批处理会重新拷贝 |
-| 日期文件夹有多个 | 自动取最新；想指定可在 `excel_source.py` 扩展参数 |
-| 手动刷新慢 | 刷新是同步重跑批处理，数据量大时按钮会转圈几秒，属正常 |
+| 手动刷新慢 | 刷新是同步重跑批处理，数据量大时按钮转圈几秒属正常；也可用 `scripts/refresh_data.py`（不依赖服务） |
+| 页面出现新的未登记店铺/SPU | 数据范围由 `ResourceData/店铺spu登记信息.xlsx` 白名单门控，未登记的不出现；改数据源不会自动新增 |
