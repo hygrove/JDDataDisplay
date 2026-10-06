@@ -6,7 +6,7 @@
   python backend/jobs/run_batch.py          # 或直接跑脚本
 
 重试策略：
-  指数退避，最多 config.RETRY_MAX_ATTEMPTS 次。按方案要求「功能保留、默认关闭」——
+  指数退避，最多 config.RETRY_MAX_ATTEMPTS 次。功能保留、默认关闭——
   即代码支持重试，但只有设置环境变量 BATCH_RETRY_ENABLED=true 才真正启用。
   默认关闭的理由：上游源数据本身出错时，重试几乎必然再次失败，
   不如让失败立刻暴露出来由人排查，而不是静默重试几次后才知道。

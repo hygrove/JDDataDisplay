@@ -2,7 +2,7 @@
 """PostgreSQL 数据源（可扩展骨架 / 占位实现）。
 
 用途：
-方案里的京准通推广数据（推广花费 promotion_cost、推广成交金额 promotion_amount）
+京准通推广数据（推广花费 promotion_cost、推广成交金额 promotion_amount）
 如果后续能从数据库直读，就在这里实现 fetch()，产出的长表会与 Excel 源
 按 (shop, date, spu) 做 JOIN 补齐推广相关字段。
 
