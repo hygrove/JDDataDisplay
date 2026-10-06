@@ -653,6 +653,7 @@ def _build_export_workbook(
         OneCellAnchor,
         XDRPositiveSize2D,
     )
+    from openpyxl.styles import Alignment, Font
     from openpyxl.utils import get_column_letter
     from openpyxl.utils.units import pixels_to_EMU
 
@@ -667,7 +668,8 @@ def _build_export_workbook(
     ws.cell(1, 4, "店铺")
     ws.cell(1, 5, "类目")
     ws.cell(1, 6, "指标")
-    ws.cell(1, 7, "总计")
+    # 总计列表头：显式说明「橙色 = 总量平均值」，让读者不必翻文档即懂配色含义
+    ws.cell(1, 7, "总计(橙色为总量平均值）")
     for j, d in enumerate(date_list):
         ws.cell(1, 8 + j, d)
 
@@ -698,12 +700,20 @@ def _build_export_workbook(
             return int(r) if r == int(r) else r
         return v
 
+    # 比率类总计的标记色（橙）：作为单元格**字体颜色**，与求和类（默认黑）区分，
+    # 一眼看出「这是总量平均值」。不用底色填充，避免整格铺色显得沉重、压住数字。
+    RATIO_TOTAL_COLOR = "E26B0A"
+    # B-E 元信息列统一居中（水平 + 垂直）。按用户决策「只合并 A 列」，
+    # B-E 每行都保留独立单元格，因此仍可在 Excel 内排序 / 筛选。
+    META_ALIGN = Alignment(horizontal="center", vertical="center")
+
     r = 2  # 第 1 行是表头，数据从第 2 行起
     for row in rows:
         block_start = r
         n = len(specs)
         block_end = block_start + n - 1
-        # 图片列纵向合并（跨整个 SPU 指标块）
+        block_rows = n  # 本块行数（= 指标数），用于计算图片垂直居中偏移
+        # 图片列纵向合并（跨整个 SPU 指标块）；B-E 不合并，保持可排序
         ws.merge_cells(start_row=block_start, start_column=1, end_row=block_end, end_column=1)
         img_path = _resolve_thumb(row.image)
         if img_path:
@@ -722,8 +732,20 @@ def _build_export_workbook(
                 # 非零不足以证明可见，必须核对锚点 ext 尺寸字段）。
                 img.width = w
                 img.height = h
+                # 图片在合并区内「垂直居中」：Excel 的图片是浮层 drawing，锚点只认
+                # 单元格 + 偏移，没有 valign 属性，因此要自己算出往下挪多少：
+                # 块高 = 行数 × 默认行高（15pt ≈ 20px），减去图片高，再除以 2 即为
+                # 顶部偏移；负数（图片比块高）按 0 处理，避免图片溢出到上一块。
+                default_row_px = 20.0
+                block_px = block_rows * default_row_px
+                offset_px = max(0.0, (block_px - h) / 2.0)
                 img.anchor = OneCellAnchor(
-                    _from=AnchorMarker(col=0, row=block_start - 1, colOff=0, rowOff=0),
+                    _from=AnchorMarker(
+                        col=0,
+                        row=block_start - 1,
+                        colOff=0,
+                        rowOff=pixels_to_EMU(offset_px),
+                    ),
                     ext=XDRPositiveSize2D(pixels_to_EMU(w), pixels_to_EMU(h)),
                 )
                 ws.add_image(img)
@@ -733,11 +755,15 @@ def _build_export_workbook(
 
         for i, spec in enumerate(specs):
             rr = block_start + i
-            # B-E 重复该 SPU 元信息（与样本表一致）
-            ws.cell(rr, 2, row.spu_name or "")
-            ws.cell(rr, 3, row.spu)
-            ws.cell(rr, 4, row.shop)
-            ws.cell(rr, 5, row.category or "")
+            # B-E 重复该 SPU 元信息（与样本表一致），仅居中、不合并
+            for col, val in (
+                (2, row.spu_name or ""),
+                (3, row.spu),
+                (4, row.shop),
+                (5, row.category or ""),
+            ):
+                cell = ws.cell(rr, col, val)
+                cell.alignment = META_ALIGN
             ws.cell(rr, 6, spec.title)
             # 逐日值：求和类缺失日补 0，比率类缺失日留空
             for j, d in enumerate(date_list):
@@ -763,8 +789,11 @@ def _build_export_workbook(
                         num += nv
                     if dv is not None:
                         den += dv
-                # 口径A：总量相除（分母为 0 时无数据，留空而非 0）；结果保留 2 位
-                ws.cell(rr, 7, _round(num / den) if den else None)
+                # 口径A：总量相除（分母为 0 时无数据，留空而非 0）；结果保留 2 位。
+                # 比率类总计是「分子分母总量相除」得到的加权平均（非逐日算术平均），
+                # 故整格数字用橙色字体标记区分，配合表头「总计(橙色为总量平均值）」提示读者。
+                cell = ws.cell(rr, 7, _round(num / den) if den else None)
+                cell.font = Font(color=RATIO_TOTAL_COLOR)
         r = block_end + 2  # 块间留一空行分隔
 
     bio = io.BytesIO()
