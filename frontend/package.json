@@ -6,7 +6,10 @@
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc -b && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "verify": "npm run verify:month && npm run verify:agg",
+    "verify:month": "esbuild verify_month_compare.mjs --bundle --platform=node --format=esm --outfile=node_modules/.cache/verify_month.mjs --log-level=warning && node node_modules/.cache/verify_month.mjs",
+    "verify:agg": "esbuild verify_agg.mjs --bundle --platform=node --format=esm --outfile=node_modules/.cache/verify_agg.mjs --log-level=warning && node node_modules/.cache/verify_agg.mjs"
   },
   "dependencies": {
     "@tanstack/vue-virtual": "^3.10.8",
