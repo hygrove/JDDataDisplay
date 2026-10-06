@@ -67,6 +67,16 @@ app.mount("/thumbs", StaticFiles(directory=config.THUMBS_DIR), name="thumbs")
 
 # 前端静态资源与 SPA 回退：仅在 dist 存在时挂载，
 # 否则纯后端启动（如只跑 API 调试）不会因为找不到 dist 而崩
+# SPA 回退响应头：index.html 必须禁止缓存。
+# 为什么：/assets 下的 JS/CSS 文件名带内容 hash（改了内容文件名就变），可以安全长缓存；
+# 但 index.html 文件名固定，是「指向当前该用哪个 hash 资源」的入口。
+# 若让它被浏览器缓存，改完前端重新 build 后用户刷新仍会拿到旧 index.html →
+# 继续加载旧 hash 的 JS/CSS → 表现为「代码改了、dist 也更新了、页面却完全没变化」，
+# 且极难自查（看 dist 是新的、看源码也是新的）。故显式 no-store，每次回源校验。
+# 带 hash 的 /assets 由下方 StaticFiles 提供，仍走其默认缓存策略，不受影响。
+NO_STORE_HEADERS = {"Cache-Control": "no-store, no-cache, must-revalidate", "Pragma": "no-cache"}
+
+
 if FRONTEND_DIST.exists():
     app.mount("/assets", StaticFiles(directory=FRONTEND_DIST / "assets"), name="assets")
 
@@ -84,14 +94,15 @@ if FRONTEND_DIST.exists():
 
         Returns:
             FileResponse: 若该路径在 dist 下确实存在同名文件（如 favicon.ico）则直接返回该文件，
-                否则返回 index.html 交给前端路由。
+                否则返回 dist/index.html 交给前端路由。回退的 index.html 强制 no-store，
+                避免浏览器缓存旧入口导致「改了前端却看不到变化」。
 
         Example:
-            GET /module/pop_spu_detail  ->  dist/index.html（前端路由接管）
-            GET /favicon.ico            ->  dist/favicon.ico（真实文件直接返回）
+            GET /module/pop_spu_detail  ->  dist/index.html（前端路由接管，no-store）
+            GET /favicon.ico            ->  dist/favicon.ico（真实文件直接返回，走默认缓存）
         """
         target = FRONTEND_DIST / full_path
         # 真实存在的文件优先直接返回，避免把静态小文件也回退成 HTML
         if full_path and target.is_file():
             return FileResponse(target)
-        return FileResponse(FRONTEND_DIST / "index.html")
+        return FileResponse(FRONTEND_DIST / "index.html", headers=NO_STORE_HEADERS)
