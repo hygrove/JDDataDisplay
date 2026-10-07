@@ -31,7 +31,7 @@
 //   2. 顶部给出「同天数对比」开关，勾选后**所有月都对齐到全局最短的一方**再比——
 //      谁天数少就以谁为基准，截长的那一边，与哪个月最短无关（详见 trimToDays 注释）；
 //   3. 表头显示每月**实际天数**，选到不完整月时有明确提醒。
-import { computed, onBeforeUnmount, ref, watch, type VNodeRef } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch, type VNodeRef } from "vue";
 import { fetchSpuAnalysis } from "../api";
 import { aggregateMetrics, METRICS, type MetricFormat } from "../metrics";
 import { fmtBy } from "../modules";
@@ -57,14 +57,64 @@ const props = defineProps<{
 /** 面板是否展开（默认收起：单品分析页已有指标卡与趋势图，本块不抢视觉） */
 const expanded = ref(false);
 
+/* ---------------- 折叠头「可点击」提示 ---------------- */
+
+/**
+ * 是否播放折叠头的「呼吸」提示动画（三角轻微上下浮动）。
+ *
+ * @remarks
+ * 为什么要这个：折叠头本身是页面中部一个不起眼的横条，收起态又只有一行
+ * 13px 文字 + 9×15px 的淡灰三角，缩略显示时几乎看不出「这里能点」。
+ * hover 只能解决「已经注意到之后」的反馈，解决不了「压根没看到」——
+ * 所以需要一个不依赖鼠标悬停的静态标识 + 一次性的动态招徕。
+ *
+ * ⚠️ **只播一次**：常驻循环动画会变成页面噪音，反而让人不再注意它。
+ * 用 sessionStorage 记录「本次浏览器会话已提示过」，用户看过一眼就记住，
+ * 之后切到别的 SPU 不再打扰（session 级而非 localStorage 永久——
+ * 隔天回来重新看一眼提示是合理的）。
+ */
+const hintPulse = ref(false);
+
+/** sessionStorage key：记录本会话是否已播放过折叠头提示 */
+const HINT_KEY = "jd.mc-hint-shown";
+
+onMounted(() => {
+  try {
+    if (sessionStorage.getItem(HINT_KEY)) return;
+    sessionStorage.setItem(HINT_KEY, "1");
+  } catch {
+    // 隐私模式 / 存储被禁用时降级为「每次都提示」，不阻断功能
+  }
+  hintPulse.value = true;
+  // 动画只跑 2.55s（CSS 里 3 遍 × 0.85s），结束后撤下 class 复位 transform
+  window.setTimeout(() => (hintPulse.value = false), 2600);
+});
+
 /** 选中的对比月份 "YYYY-MM" 列表（按时间升序：左小 → 右大） */
 const selectedMonths = ref<string[]>([]);
 
 /** 是否勾选「同天数对比」（把所有月都对齐到天数较少的一方再比） */
 const sameDays = ref(false);
 
-/** 当前展开时间轴大图的指标 key（null = 无展开） */
-const expandedRowKey = ref<string | null>(null);
+/**
+ * 当前展开时间轴大图的指标 key 集合（空Set = 无展开）。
+ *
+ * @remarks
+ * 用 Set 而非单个 key：**允许多个指标同时展开时间轴**（用户需求）。
+ * 早前是单值语义，点开新行会自动收起旧行——用户想「保留已展开的以便横向对照」，
+ * 于是改为可多开。Set 保证同一行再点一次即取消（toggle 语义不变）。
+ * 模板里用 `expandedRowKeys.has(r.key)` 判定，比数组 includes 更直白且不需每次重建。
+ */
+const expandedRowKeys = ref<Set<string>>(new Set());
+
+/**
+ * 切换某指标行的展开状态。
+ *
+ * @param key - 指标行的唯一 key。
+ */
+function isRowExpanded(key: string): boolean {
+  return expandedRowKeys.value.has(key);
+}
 
 /** 箭头固定为方案二（渐长虚线 + 大三角头）；用户确认只保留此方案，已移除方案一及其切换。 */
 
@@ -243,10 +293,18 @@ function toggleMonth(monthKey: string): void {
 /**
  * 点击指标行：切换该行的时间轴大图展开状态。
  *
+ * @remarks
+ * **允许多行同时展开**（用户需求）：早前是「点开新行自动收起旧行」的单值语义，
+ * 用户想保留已展开的以便纵向对照，故改为 toggle 进 Set。
+ * 用新 Set 替换而非原地 add/delete，确保 Vue 的 ref 变更检测被触发。
+ *
  * @param {string} key - 指标 key。
  */
 function toggleRow(key: string): void {
-  expandedRowKey.value = expandedRowKey.value === key ? null : key;
+  const next = new Set(expandedRowKeys.value);
+  if (next.has(key)) next.delete(key);
+  else next.add(key);
+  expandedRowKeys.value = next;
 }
 
 /* ---------------- 取数 ---------------- */
@@ -500,6 +558,16 @@ const timelineBoxW = ref(620);
  */
 let tlObserver: ResizeObserver | null = null;
 /**
+ * 已绑定的展开容器集合（用于多行同时展开时统一管理观察目标）。
+ *
+ * @remarks
+ * ⚠️ 允许多行展开后，`.mc-exp` 会有多个；早前实现是「每次绑定先 disconnect 旧的」，
+ * 只跟踪单个元素——多行时会导致**只有最后绑定的那个被观察**，
+ * 先展开的行容器尺寸变化（如窗口缩放）不会更新 viewBox。
+ * 故改为 Set 累积所有容器，尺寸取**最大可用宽**（各容器同列、宽度相同，取最大最稳妥）。
+ */
+const expBoxes = new Set<HTMLElement>();
+/**
  * 绑定展开行 DOM 并测量宽度。
  *
  * @remarks
@@ -507,13 +575,18 @@ let tlObserver: ResizeObserver | null = null;
  * `.mc-exp` 位于 `v-for` 之内，若写成 `ref="expBox"`，Vue 收集到的是
  * `HTMLElement[]` 数组而非元素，取 `clientWidth` 得 undefined → viewBox 退回 620，
  * SVG 被拉伸近 2 倍（「时间轴内容太大、违和」反馈的直接原因）。
- * 函数式 ref 在每次绑定/解绑时被调用，这里直接接管测量与监听。
+ *
+ * ⚠️ **null（解绑）时不要清空集合**：多行展开时 Vue 会在每次 patch 依次传null/元素，
+ * 任何一次 null 都整体清空会把其它已展开行的容器踢出观察范围。
+ * 解绑的元素已从 DOM 移除，其 `clientWidth` 为 0，取 max 时自然被忽略；
+ * 真正的清理由 `onBeforeUnmount` 兜底。
  *
  * @param el - 元素引用；解绑时 Vue 传入 null。
  * @param refs - Vue 内部传入的 refs 集合（本组件无需使用，仅为满足 VNodeRef 签名）。
  */
 const setExpBox: VNodeRef = (el) => {
-  observeExpBox((el as HTMLElement | null) ?? null);
+  const box = (el as HTMLElement | null) ?? null;
+  if (box) observeExpBox(box);
 };
 /**
  * 容器宽度变化时同步 viewBox。
@@ -521,34 +594,41 @@ const setExpBox: VNodeRef = (el) => {
  * @remarks
  * 用 ResizeObserver 而非 window.resize —— 侧栏折叠、窗口缩放都会改容器宽度，
  * 但只关心「这个图表盒子本身多宽」，与窗口事件解耦更精确。
- * 重复调用即覆盖旧观察，先disconnect 再 observe，避免切换指标行时堆积监听。
+ * 每次绑定重建 Observer（可重复 observe 多个目标），宽度取所有容器的最大值。
  */
-function observeExpBox(el: HTMLElement | null): void {
+function observeExpBox(el: HTMLElement): void {
+  expBoxes.add(el);
   tlObserver?.disconnect();
-  tlObserver = null;
-  if (!el) return;
   const apply = () => {
-    const w = Math.round(el.clientWidth);
-    // 扣掉 .mc-exp 的左右 padding+border，得到 SVG 可用宽度
-    if (w > 0) timelineBoxW.value = Math.max(360, w - 26);
+    // 扣掉 .mc-exp 的左右 padding+border，得到 SVG 可用宽度；多行时取最大
+    let best = 0;
+    for (const box of expBoxes) best = Math.max(best, Math.round(box.clientWidth) - 26);
+    if (best > 0) timelineBoxW.value = Math.max(360, best);
   };
   apply();
   tlObserver = new ResizeObserver(apply);
-  tlObserver.observe(el);
+  for (const box of expBoxes) tlObserver.observe(box);
 }
-onBeforeUnmount(() => { tlObserver?.disconnect(); tlObserver = null; });
+onBeforeUnmount(() => { tlObserver?.disconnect(); tlObserver = null; expBoxes.clear(); });
 
 /**
- * 时间轴大图的几何（仅当某指标行展开时计算；只取**有值**的月份节点）。
+ * 时间轴大图的几何（只取该指标**有值**的月份节点）。
  *
- * @remarks 时间轴与表格不同：表格按「原序相邻对」成对（缺失段显示 "—"），
+ * @remarks 时间轴与表格不同：表格按「原序相邻对」成对（缺失段显示"—"），
  * 而时间轴是单指标走势，**跳过空月后把有值的月连成线**，更贴近「走势」语义。
  * ⚠️ 连线在**到达下一个圆点之前就停止**（留 10px 间隙），箭头 marker 落在间隙里，
  * 这样箭头不会被圆点遮住（用户明确要求）。
+ *
+ * ⚠️ **改为按 key 取的普通函数，不是 computed**：
+ * 因为允许多行同时展开（`expandedRowKeys` 是 Set），每个展开行都要一份自己的几何，
+ * 无法用「单一 computed + 依赖单key」表达。
+ * 代价是每次渲染重算，但几何计算只涉及几个月的数据、开销可忽略；
+ * 换来的是多行展开互不干扰。
+ *
+ * @param key - 要展开时间轴的指标行 key。
+ * @returns 该行的时间轴几何；未找到行返回 null；有效月份不足 2 个返回 `{ single: true }` 走退化提示。
  */
-const timeline = computed(() => {
-  const key = expandedRowKey.value;
-  if (!key) return null;
+function tlOf(key: string) {
   const row = rows.value.find((r) => r.key === key);
   if (!row) return null;
   const vals = row.monthVals.filter((v) => v.has).map((v) => ({ month: v.month, raw: v.raw as number, text: v.text }));
@@ -568,7 +648,8 @@ const timeline = computed(() => {
   const MIN_W = 460;       // 2 个月时的最小可读宽度
   const PAD_X = 62;        // 左右留白：容纳月份标签与数值标签不贴边
   const needW = PAD_X * 2 + (n - 1) * SEG;
-  const capW = Math.max(360, timelineBoxW.value); // 容器实测宽（上限）
+  // 多行同时展开时，各容器宽度相同（同一表格列），取已测量到的最大值作上限即可
+  const capW = Math.max(360, timelineBoxW.value);
   const W = Math.max(MIN_W, Math.min(needW, Math.max(capW, MIN_W)));
   const H = 200;
   const x0 = PAD_X;
@@ -620,7 +701,7 @@ const timeline = computed(() => {
     vals: vals.map((v, i) => ({ x: xs[i], y: ys[i], text: v.text, month: v.month })),
     segs,
   };
-});
+}
 
 /**
  * 表格里真正要渲染的行：把分组标题作为伪行插进指标行之间。
@@ -654,15 +735,19 @@ const hasAnyData = computed(() => Object.values(aggMap.value).some((v) => v !== 
 </script>
 
 <template>
-  <div class="mcompare">
+  <div class="mcompare" data-testid="spu-month-compare">
     <!-- 折叠头：默认收起，点击展开 -->
-    <button class="mc-head" type="button" @click="toggle">
+    <button class="mc-head" :class="{ open: expanded }" type="button" @click="toggle">
       <span class="mc-title">月份对比</span>
+      <!-- 动作召唤标签：收起时明示「这里能点」。为什么不用 hover 才出现的提示？
+           因为折叠头是页面中部一个不起眼的横条，用户的鼠标未必悬上去；
+           hover 只能反馈「已注意到」，静态标识才解决「压根没看到」。 -->
+      <span v-if="!expanded" class="mc-cta">点击展开</span>
       <span v-if="expanded && selectedMonths.length" class="mc-hint">{{ selectedMonths[0] }} ~ {{ selectedMonths[selectedMonths.length - 1] }}（{{ selectedMonths.length }} 个月）</span>
       <span v-else class="mc-hint mc-hint-dim">勾选多个月份，横向对比各项指标</span>
       <!-- 收起指示符：素材三角（右箭头.svg）。外层 span 只负责占位，内层 svg 负责旋转——
          三角宽高比非 1:1，若直接旋转 svg 元素会因宽高互换导致展开/收起时抖動 -->
-      <span class="mc-caret" :class="{ up: expanded }">
+      <span class="mc-caret" :class="{ up: expanded, pulse: hintPulse }">
         <svg viewBox="294 159 428 706" aria-hidden="true">
           <path d="M715.8 493.5L335 165.1c-14.2-12.2-35-1.2-35 18.5v656.8c0 19.7 20.8 30.7 35 18.5l380.8-328.4c10.9-9.4 10.9-27.6 0-37z" />
         </svg>
@@ -721,12 +806,13 @@ const hasAnyData = computed(() => Object.values(aggMap.value).some((v) => v !== 
             <template v-else>
               <div
                 class="mc-rowline"
-                :class="{ expanded: expandedRowKey === r.key }"
+                :class="{ expanded: isRowExpanded(r.key) }"
                 @click="toggleRow(r.key)"
               >
                 <div class="mc-metric">
-                  <!-- 展开指示符同样用 右箭头.svg 素材：收起朝右、展开旋转朝下 -->
-                  <span class="mc-caret-row" :class="{ on: expandedRowKey === r.key }">
+                  <!-- 展开指示符同样用 右箭头.svg 素材：收起朝右、展开旋转朝下。
+                       悬停变红（用户要求）：红三角是「可展开」的召唤 -->
+                  <span class="mc-caret-row" :class="{ on: isRowExpanded(r.key) }">
                     <svg viewBox="294 159 428 706" aria-hidden="true">
                       <path d="M715.8 493.5L335 165.1c-14.2-12.2-35-1.2-35 18.5v656.8c0 19.7 20.8 30.7 35 18.5l380.8-328.4c10.9-9.4 10.9-27.6 0-37z" />
                     </svg>
@@ -752,18 +838,30 @@ const hasAnyData = computed(() => Object.values(aggMap.value).some((v) => v !== 
                 </div>
               </div>
               <!-- 点击展开：该指标的时间轴大图（内联，行高扩大）
-                   用函数式 ref 而非 ref="expBox"：本元素在 v-for 内，字符串 ref 会聚成数组 -->
-              <div v-if="expandedRowKey === r.key" :ref="setExpBox" class="mc-exp">
-                <div class="mc-exp-title">{{ r.title }} · 时间轴（{{ selectedMonths[0] }} ~ {{ selectedMonths[selectedMonths.length - 1] }}）</div>
-                <!-- 宽度用 timeline.W（按月份数动态算出的目标宽）而非 100%：
+                   ⚠️ **允许多行同时展开**：条件是 isRowExpanded(r.key) 而非「等于唯一展开行」。
+                   用函数式 ref 而非 ref="expBox"：本元素在 v-for 内，字符串 ref 会聚成数组。
+                   ⚠️ 外层 template v-for 把 tlOf(r.key) 的结果绑成局部变量 `tl`：
+                   多行展开时每行要各用自己的几何，无法用一个全局 computed 承载；
+                   `[tlOf(r.key)]` 是「单元素数组」，仅为在模板里造一个局部别名，
+                   与前面 tableRows/cells 的 v-for 别名用法一致。 -->
+              <template v-if="isRowExpanded(r.key)" v-for="tl in [tlOf(r.key)]">
+              <div v-if="tl" :ref="setExpBox" class="mc-exp">
+                <div class="mc-exp-title">
+                  <!-- 只有指标名放大变绿（用户要求），后半段说明文字保持灰色小字 -->
+                  <span class="mc-exp-metric">{{ r.title }}</span>
+                  <span class="mc-exp-meta"> · 时间轴（{{ selectedMonths[0] }} ~ {{ selectedMonths[selectedMonths.length - 1] }}）</span>
+                </div>
+                <!-- 宽度用 tl.W（按月份数动态算出的目标宽）而非 100%：
                      配合 CSS `max-width:100%` 实现「月份少→窄图靠左、月份多→变宽」，
-                     且内部坐标与显示像素 1:1，字号所见即所得。 -->
+                     且内部坐标与显示像素 1:1，字号所见即所得。
+                     ⚠️ tl 必须是**当前行自己的**几何（多行展开时各行独立），
+                     所以用函数式computed 而非全局单值。 -->
                 <svg
-                  v-if="timeline && !timeline.single"
+                  v-if="tl && !tl.single"
                   class="mc-tl"
-                  :viewBox="`0 0 ${timeline.W} ${timeline.H}`"
-                  :width="timeline.W"
-                  :height="timeline.H"
+                  :viewBox="`0 0 ${tl.W} ${tl.H}`"
+                  :width="tl.W"
+                  :height="tl.H"
                   role="img"
                   :aria-label="r.title + ' 时间轴'"
                 >
@@ -771,43 +869,44 @@ const hasAnyData = computed(() => Object.values(aggMap.value).some((v) => v !== 
                   <desc>各月数值节点，相邻月之间箭头上方气泡为差额与变化，绿涨红跌</desc>
                   <defs>
                     <!-- 箭头用灰色，与表内蓝色虚线箭头区分开：这里是「走势」辅助线，不是主视觉 -->
-                    <marker id="mcArw" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                    <marker :id="`mcArw-${r.key}`" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
                       <path d="M2 1L8 5L2 9" fill="none" stroke="#94a3b8" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
                     </marker>
                   </defs>
                   <!-- 基线 -->
-                  <line :x1="timeline.baseX1" :y1="timeline.baseY" :x2="timeline.baseX2" :y2="timeline.baseY" stroke="#e2e8f0" stroke-width="0.5" />
+                  <line :x1="tl.baseX1" :y1="tl.baseY" :x2="tl.baseX2" :y2="tl.baseY" stroke="#e2e8f0" stroke-width="0.5" />
                   <!-- 连线：在到达下一个圆点前 10px 处停止，箭头落在间隙里，不被圆点遮住 -->
                   <line
-                    v-for="(s, i) in timeline.segs"
+                    v-for="(s, i) in tl.segs"
                     :key="'seg' + i"
-                    :x1="timeline.xs[i] + 10"
-                    :y1="timeline.ys[i]"
-                    :x2="timeline.xs[i + 1] - 10"
-                    :y2="timeline.ys[i + 1]"
+                    :x1="tl.xs[i] + 10"
+                    :y1="tl.ys[i]"
+                    :x2="tl.xs[i + 1] - 10"
+                    :y2="tl.ys[i + 1]"
                     stroke="#94a3b8"
                     stroke-width="1.5"
-                    marker-end="url(#mcArw)"
+                    :marker-end="`url(#mcArw-${r.key})`"
                   />
                   <!-- 节点（画在连线之上，但连线已留间隙，箭头不被遮）：蓝色空心圈 -->
-                  <circle v-for="(p, i) in timeline.vals" :key="'nd' + i" :cx="p.x" :cy="p.y" :r="timeline.r" fill="#fff" stroke="#4a9db8" stroke-width="1.6" />
+                  <circle v-for="(p, i) in tl.vals" :key="'nd' + i" :cx="p.x" :cy="p.y" :r="tl.r" fill="#fff" stroke="#4a9db8" stroke-width="1.6" />
                   <!-- 数值标签 -->
-                  <text v-for="(p, i) in timeline.vals" :key="'vt' + i" :x="p.x" :y="p.y > timeline.yMid ? p.y + 18 : p.y - 10" text-anchor="middle" :font-size="timeline.fs" fill="#334155">{{ p.text }}</text>
+                  <text v-for="(p, i) in tl.vals" :key="'vt' + i" :x="p.x" :y="p.y > tl.yMid ? p.y + 18 : p.y - 10" text-anchor="middle" :font-size="tl.fs" fill="#334155">{{ p.text }}</text>
                   <!-- 月份标签 -->
-                  <text v-for="(p, i) in timeline.vals" :key="'mt' + i" :x="p.x" :y="timeline.monthY" text-anchor="middle" :font-size="timeline.fs" fill="#64748b">{{ p.month }}</text>
+                  <text v-for="(p, i) in tl.vals" :key="'mt' + i" :x="p.x" :y="tl.monthY" text-anchor="middle" :font-size="tl.fs" fill="#64748b">{{ p.month }}</text>
                   <!-- 气泡：差额与变化**分两行**（去掉「·」分隔符，避免挤在一行读不清） -->
                   <text
-                    v-for="(s, i) in timeline.segs"
+                    v-for="(s, i) in tl.segs"
                     :key="'bb' + i"
                     :x="s.x"
                     :y="s.y"
                     text-anchor="middle"
-                    :font-size="timeline.fsBubble"
+                    :font-size="tl.fsBubble"
                     :class="dirClass(s)"
-                  >{{ s.diffText }}<tspan :x="s.x" :dy="timeline.fsBubble * 1.25">{{ s.deltaText }}</tspan></text>
+                  >{{ s.diffText }}<tspan :x="s.x" :dy="tl.fsBubble * 1.25">{{ s.deltaText }}</tspan></text>
                 </svg>
                 <p v-else class="mc-exp-empty">该指标所选月份数据不足（需至少 2 个有值月份），无法绘制时间轴。</p>
               </div>
+              </template>
             </template>
           </template>
         </div>
@@ -854,15 +953,51 @@ const hasAnyData = computed(() => Object.values(aggMap.value).some((v) => v !== 
   gap: 10px;
   width: 100%;
   padding: 13px 18px 13px var(--mc-inset);
-  background: none;
+  /* 折叠头做成「按钮」外观：给底色 + 边框 + 悬停加深。
+     为什么必须这样：收起态它就是页面中部一个不起眼的横条，若无边框无 hover，
+     视觉上和普通说明文字无异，用户根本不会意识到这里能点。 */
+  background: var(--color-surface-2);
   border: none;
+  border-bottom: 1px solid var(--color-border-4);
   cursor: pointer;
   text-align: left;
+  transition: background 0.15s, box-shadow 0.15s;
+}
+/* 悬停：底色加深 + 左侧浮出一道品牌色竖条，强化「可点」语义。
+   竖条用 box-shadow 而非 border-left，避免撑动整行布局（整行 padding 含
+   --mc-inset 缩进，加 border 会让标题横向位移1px 与下方表格对不齐）。 */
+.mc-head:hover {
+  background: var(--color-brand-tint-3);
+  box-shadow: inset 3px 0 0 var(--color-brand);
+}
+/* 展开态：还原为白底、去掉底部描边与左侧红条。
+   否则收起/展开两态除三角朝向与文案外毫无差别，用户看不出「现在能不能点」；
+   展开后这一块已是内容区，不该继续挂「可展开」的视觉暗示。 */
+.mc-head.open,
+.mc-head.open:hover {
+  background: var(--color-surface);
+  box-shadow: none;
+  border-bottom-color: var(--color-border);
+}
+.mc-head:focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: -2px;
 }
 .mc-title {
   font-size: 14px;
   font-weight: 600;
   color: var(--color-text-strong);
+}
+/* 动作召唤标签：收起时明示可点，展开后自动消失（内容已展开，再提示就冗余）。 */
+.mc-cta {
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--color-brand);
+  background: var(--color-brand-tint);
+  border: 1px solid var(--color-brand-border);
+  border-radius: var(--radius-pill);
+  padding: 2px 9px;
+  line-height: 1.4;
 }
 .mc-hint {
   font-size: 12px;
@@ -888,12 +1023,39 @@ const hasAnyData = computed(() => Object.values(aggMap.value).some((v) => v !== 
 .mc-caret svg {
   width: 9px;
   height: 15px;
-  fill: var(--color-text-5);
+  /* 收起态用品牌红：淡灰三角在缩略显示时几乎隐形，看不出「这是展开控件」。
+     展开态改回中性色（见 .mc-head.open 下）——红三角是「可展开」的召唤，
+     内容已展开后继续用红会让人误以为还有别的可展开内容。 */
+  fill: var(--color-brand);
   transform: rotate(90deg);
-  transition: transform 0.18s;
+  transition: transform 0.18s, fill 0.15s;
+}
+.mc-head.open .mc-caret svg {
+  fill: var(--color-text-5);
 }
 .mc-caret.up svg {
   transform: rotate(-90deg);
+}
+/* 悬停时三角加深：收起/展开两态都给出「点了有反应」的反馈 */
+.mc-head:hover .mc-caret svg {
+  fill: var(--color-brand-dark);
+}
+/* 首次进入的「呼吸」提示：三角轻微上下浮动 3 遍后停。
+   ⚠️ 只在 hintPulse 为 true 时播（session 内一次），并加 reduced-motion 降级——
+   常驻循环动画会变成页面噪音，反而让人不再注意它；一次性招徕才有效。 */
+@media (prefers-reduced-motion: no-preference) {
+  .mc-caret.pulse svg {
+    animation: mc-hint-pulse 0.85s ease-in-out 3;
+  }
+}
+@keyframes mc-hint-pulse {
+  0%,
+  100% {
+    translate: 0 0;
+  }
+  50% {
+    translate: 0 3px;
+  }
 }
 /* 行内文字的统一左缩进：所有「有底色/ 有分割线」的行都用它，
    这样斑马纹能铺满整个框宽，而文字又与框左边缘保持距离。 */
@@ -1057,7 +1219,13 @@ const hasAnyData = computed(() => Object.values(aggMap.value).some((v) => v !== 
   width: 8px;
   height: 13px;
   fill: var(--color-text-5);
-  transition: transform 0.15s;
+  /* transform 用于旋转、fill 用于变色，分开写避免 hover 时把 90deg 旋转覆盖掉 */
+  transition: transform 0.15s, fill 0.15s;
+}
+/* 悬停变红（用户要求）：灰三角太弱，「这里能点」不可见。
+   收起与展开态都变—— 展开态的三角是「点此收起」，同样需要点击暗示。 */
+.mc-rowline:hover .mc-caret-row svg {
+  fill: var(--color-brand);
 }
 .mc-caret-row.on svg {
   transform: rotate(90deg);
@@ -1145,10 +1313,10 @@ const hasAnyData = computed(() => Object.values(aggMap.value).some((v) => v !== 
 /* 绿涨红跌（国内习惯）：气泡必须带 .mc-arrow .bubble 前缀，
    否则会被通用文本色覆盖（特异性坑）。值列本身不着色，只有气泡着色。 */
 .mc-arrow .bubble.up {
-  color: #16a34a;
+  color: var(--color-up);
 }
 .mc-arrow .bubble.down {
-  color: #dc2626;
+  color: var(--color-down);
 }
 .mc-arrow .bubble.flat {
   color: var(--color-text-4);
@@ -1180,11 +1348,24 @@ const hasAnyData = computed(() => Object.values(aggMap.value).some((v) => v !== 
   max-width: 100%;
   height: auto;
 }
+/* 时间轴标题：指标名放大变绿 + 后半段说明保持灰色小字（用户要求）。
+   之所以拆成两个 span 而不是整行统一字号：整行一起放大后，
+   「· 时间轴（2026-08 ~ 2026-10）」这类辅助信息会喧宾夺主。 */
 .mc-exp-title {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--color-text-2);
   margin-bottom: 4px;
+  line-height: 1.5;
+}
+.mc-exp-metric {
+  font-size: 16px;
+  font-weight: 600;
+  /* 用 --color-up（涨的语义绿）而非 --color-success：后者 #10b981 偏青绿，
+     与页面里表示「涨」的绿不是同一个色，同一屏出现两种绿会像两套语义。 */
+  color: var(--color-up);
+}
+.mc-exp-meta {
+  font-size: 12.5px;
+  font-weight: 400;
+  color: var(--color-text-3);
 }
 .mc-exp-empty {
   font-size: 12px;
@@ -1193,10 +1374,10 @@ const hasAnyData = computed(() => Object.values(aggMap.value).some((v) => v !== 
 }
 /* 时间轴 SVG 内文本绿涨红跌（SVG 用 fill 而非 color） */
 .mc-exp text.up {
-  fill: #16a34a;
+  fill: var(--color-up);
 }
 .mc-exp text.down {
-  fill: #dc2626;
+  fill: var(--color-down);
 }
 .mc-exp text.flat {
   fill: var(--color-text-4);

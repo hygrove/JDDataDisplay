@@ -92,14 +92,14 @@ function onShopClick(shop: string) {
 </script>
 
 <template>
-  <div class="layout">
-    <aside class="sider">
+  <div class="layout" data-testid="app-shell">
+    <aside class="sider" data-testid="app-sider">
       <div class="logo">
         <svg class="logo-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 14l3-3 3 3 4-5"/></svg>
         <span>JD 数据平台</span>
       </div>
 
-      <div class="nav-section">
+      <div class="nav-section" data-testid="app-nav-modules">
         <div class="nav-title">业务模块</div>
         <router-link
           v-for="m in store.manifest?.modules ?? []"
@@ -112,7 +112,7 @@ function onShopClick(shop: string) {
         </router-link>
       </div>
 
-      <div v-if="route.params.moduleId" class="nav-section grow">
+      <div v-if="route.params.moduleId" class="nav-section grow" data-testid="app-nav-shops">
         <div class="nav-title">店铺</div>
         <a
           class="nav-item"
@@ -141,14 +141,14 @@ function onShopClick(shop: string) {
       <img class="sider-watermark" src="/navbar-background.svg" alt="" />
     </aside>
 
-    <main class="main">
+    <main class="main" data-testid="app-main">
       <router-view />
     </main>
   </div>
 
   <!-- 路由级加载遮罩：跳转到单品分析页（懒加载大 chunk）时，路由一开始即亮起，
        覆盖 chunk 下载+解析的等待；组件挂载后由 SpuAnalysisView 复位（交棒页面自身遮罩）。 -->
-  <div v-if="ui.navigating" class="nav-loading">
+  <div v-if="ui.navigating" class="nav-loading" data-testid="app-loading-overlay">
     <div class="nl-spinner"></div>
     <div class="nl-text">{{ ui.loadingText }}</div>
   </div>

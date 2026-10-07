@@ -633,8 +633,8 @@ function goBack() {
 <template>
   <div class="page">
     <!-- 顶部：返回 + 日期范围 + 指标配置 -->
-    <div class="topbar">
-      <button class="back-btn" @click="goBack">← 返回列表</button>
+    <div class="topbar" data-testid="spu-topbar">
+      <button class="back-btn" data-testid="spu-back-btn" @click="goBack">← 返回列表</button>
       <div class="topbar-right">
         <div class="range">
           <span class="range-label">统计区间</span>
@@ -664,7 +664,7 @@ function goBack() {
 
     <template v-if="data">
       <!-- 商品信息头 + 月份对比（对比块占 hero 右侧空位，展开的表格另起一块全宽） -->
-      <div class="hero">
+      <div class="hero" data-testid="spu-hero">
         <picture v-if="data.image">
           <source :srcset="thumb(data.image, 96, 'avif')" type="image/avif" />
           <source :srcset="thumb(data.image, 96, 'webp')" type="image/webp" />
@@ -686,7 +686,7 @@ function goBack() {
       <MonthCompareTable :module-id="props.moduleId" :spu="props.spu" :shop="shop" :data-range="fullRange" />
 
       <!-- 指标卡（与明细页同一份勾选）：单日=单值，范围=求和+平均值两块 -->
-      <div class="cards">
+      <div class="cards" data-testid="spu-cards">
         <template v-if="cards.length">
           <div v-for="c in cards" :key="c.key" class="card">
             <div class="ctitle"><span>{{ c.title }}</span><span v-if="c.groupTag" class="tag">{{ c.groupTag }}</span></div>
@@ -721,13 +721,13 @@ function goBack() {
       </div>
 
       <!-- 综合分析（上移至卡片下方，先给结论再给趋势） -->
-      <div class="insight">
+      <div class="insight" data-testid="spu-insight">
         <h3>综合分析</h3>
         <p>{{ data.insight }}</p>
       </div>
 
       <!-- 趋势图：3 张（成交转化率&访客数 双轴 / 成交金额&搜索点击率 双轴 / 推广占比） -->
-      <div class="charts" v-if="trendCharts.length">
+      <div class="charts" data-testid="spu-charts" v-if="trendCharts.length">
         <div v-for="ch in trendCharts" :key="ch.key" class="chart-box">
           <h3>
             <span>{{ ch.title }}</span>
@@ -747,7 +747,7 @@ function goBack() {
       </div>
 
       <!-- 工作日 vs 节假日（纵向条形图） -->
-      <div class="compare-box" v-if="compareRows.length">
+      <div class="compare-box" data-testid="spu-compare-box" v-if="compareRows.length">
         <h3>
           工作日 vs 节假日
           <span class="hint">

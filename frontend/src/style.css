@@ -43,6 +43,11 @@
   --color-link: #2563eb;
   --color-link-2: #60a5fa;
   --color-success: #10b981;
+  /* 「涨」的语义绿（国内习惯绿涨红跌）：与 --color-success 刻意不同——
+     后者偏青绿、用于「操作成功」类反馈；本色用于数值上涨，与红 #dc2626 配对。
+     改动前该色散落 3 处硬编码（MonthCompareTable 气泡/标题、ModuleView 日均）。 */
+  --color-up: #16a34a;
+  --color-down: #dc2626;
 
   /* 圆角 */
   --radius-xs: 2px;

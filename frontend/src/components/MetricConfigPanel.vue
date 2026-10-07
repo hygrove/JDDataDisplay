@@ -145,14 +145,14 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="mc" ref="rootRef">
-    <button class="mc-btn" :class="{ active: open }" @click="open = !open">
+  <div class="mc" data-testid="metric-config" ref="rootRef">
+    <button class="mc-btn" data-testid="metric-config-btn" :class="{ active: open }" @click="open = !open">
       <svg class="mc-ico" viewBox="0 0 1024 1024" width="16" height="16" xmlns="http://www.w3.org/2000/svg"><path d="M199.978667 488.021333H416c38.4 0 71.978667-33.621333 71.978667-72.021333V199.978667c0-38.4-33.578667-71.978667-71.978667-71.978667H199.978667C161.578667 128 128 161.621333 128 200.021333V416c0 38.4 33.578667 72.021333 71.978667 72.021333zM535.978667 718.378667c0 96 81.621333 177.621333 182.4 177.621333 96 0 177.621333-81.621333 172.8-177.621333 0-96-76.8-177.578667-177.621334-177.578667-96 0-177.578667 76.8-177.578666 177.578667z" fill="#fa4f39" opacity=".4"/><path d="M608 488.021333h215.978667c38.4 0 72.021333-33.621333 72.021333-72.021333V199.978667C896 161.621333 862.378667 128 819.2 128h-211.2c-38.4 0-72.021333 33.621333-72.021333 72.021333V416c0 38.4 33.621333 72.021333 72.021333 72.021333zM199.978667 896H416c38.4 0 71.978667-33.621333 71.978667-76.8v-211.2c0-38.4-33.578667-72.021333-71.978667-72.021333H199.978667c-38.4 0-71.978667 33.621333-71.978667 72.021333v216.021333c0 38.4 33.578667 71.978667 71.978667 71.978667z" fill="#fa4f39"/></svg>
       <span>指标配置</span>
       <span class="mc-count">{{ props.keys.length }}/{{ METRICS.length }}</span>
     </button>
 
-    <div v-if="open" class="mc-panel">
+    <div v-if="open" class="mc-panel" data-testid="metric-config-panel">
       <div class="mc-head">
         <div>
           <div class="mc-title">选择要展示的指标</div>
@@ -169,7 +169,7 @@ onBeforeUnmount(() => {
       </div>
 
       <div class="mc-body">
-        <div v-for="g in groups" :key="g.key" class="mc-group">
+        <div v-for="g in groups" :key="g.key" class="mc-group" data-testid="metric-config-group">
           <div class="mc-group-head">
             <span class="mc-group-title">{{ g.title }}</span>
             <span class="mc-group-hint">{{ g.hint }}</span>
@@ -178,7 +178,7 @@ onBeforeUnmount(() => {
             <label
               v-for="m in g.items"
               :key="m.key"
-              class="mc-item"
+              class="mc-item" data-testid="metric-config-item"
               :class="{ on: selected.has(m.key as string) }"
             >
               <input

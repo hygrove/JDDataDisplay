@@ -427,7 +427,7 @@ async function exportXlsx() {
 <template>
   <div class="page" v-if="!bare">
     <!-- 工具条（保持不变：日期范围 → 搜索 → 状态 → 指标配置 → 手动刷新） -->
-    <div class="toolbar">
+    <div class="toolbar" data-testid="module-toolbar">
       <div class="tool-left">
         <div class="tool-item">
           <span>统计区间</span>
@@ -442,7 +442,7 @@ async function exportXlsx() {
         </div>
         <input
           v-model="keywordInput"
-          class="search"
+          class="search" data-testid="module-search"
           type="search"
           placeholder="搜索 SPU 号 / 商品名称…"
         />
@@ -456,7 +456,7 @@ async function exportXlsx() {
           · {{ store.status.message }}
         </span>
         <MetricConfigPanel v-model:keys="selectedKeys" />
-        <button class="btn" :disabled="store.refreshing" @click="store.refresh()">
+        <button class="btn" data-testid="module-refresh-btn" :disabled="store.refreshing" @click="store.refresh()">
           <!-- 刷新图标：spinning 类跟随 store.refreshing，刷新中持续旋转（纯 CSS，不改 store） -->
           <span class="btn-ico" :class="{ spinning: store.refreshing }">
             <svg
@@ -478,6 +478,7 @@ async function exportXlsx() {
         </button>
         <button
           class="btn btn-export"
+          data-testid="module-export-btn"
           :class="{ 'is-exporting': exporting }"
           :disabled="exporting"
           @click="exportXlsx"
@@ -512,11 +513,11 @@ async function exportXlsx() {
     <div v-if="store.error" class="error">{{ store.error }}</div>
 
     <!-- 单日模式：SPU 单元网格（一个 SPU 一张卡） -->
-    <div class="spu-grid" v-if="store.rows.length && !isRange">
+    <div class="spu-grid" data-testid="module-spu-grid" v-if="store.rows.length && !isRange">
       <div
         v-for="row in store.rows"
         :key="row.spu + '|' + row.shop"
-        class="spu-card"
+        class="spu-card" data-testid="module-spu-card"
       >
         <div class="spu-head">
           <div class="spu-info">
@@ -547,7 +548,7 @@ async function exportXlsx() {
 
           <div class="spu-metrics">
             <template v-if="metricSpecs.length">
-              <div v-for="s in metricSpecs" :key="s.key as string" class="metric-row">
+              <div v-for="s in metricSpecs" :key="s.key as string" class="metric-row" data-testid="module-metric-row">
                 <span class="m-label">{{ s.title }}</span>
                 <span
                   class="m-value"
@@ -563,11 +564,11 @@ async function exportXlsx() {
     </div>
 
     <!-- 区间模式：每个 SPU 占一整行，右侧铺「指标 × 日期」矩阵 -->
-    <div class="spu-rows" v-else-if="store.rows.length && isRange">
+    <div class="spu-rows" data-testid="module-spu-rows" v-else-if="store.rows.length && isRange">
       <div
         v-for="row in store.rows"
         :key="row.spu + '|' + row.shop"
-        class="spu-row"
+        class="spu-row" data-testid="module-spu-row"
       >
         <div class="spu-row-head">
           <div class="spu-name" :title="row.spu_name ?? ''">{{ row.spu_name ?? "--" }}</div>
@@ -618,7 +619,7 @@ async function exportXlsx() {
         </div>
 
         <div class="spu-matrix-wrap">
-          <table class="spu-matrix" v-if="metricSpecs.length">
+          <table class="spu-matrix" data-testid="module-spu-matrix" v-if="metricSpecs.length">
             <thead>
               <tr>
                 <th class="corner">指标 \ 日期</th>
@@ -646,8 +647,8 @@ async function exportXlsx() {
     </div>
 
     <!-- 空态 / 加载态 -->
-    <div v-if="!store.rows.length && store.loadingRows" class="empty-state">加载中…</div>
-    <div v-else-if="!store.rows.length" class="empty-state">
+    <div v-if="!store.rows.length && store.loadingRows" class="empty-state" data-testid="module-empty-state">加载中…</div>
+    <div v-else-if="!store.rows.length" class="empty-state" data-testid="module-empty-state">
       <!-- 空态插画（纯装饰，低透明度弱化）：src 以 / 开头 → 取自前端 public/ 目录，
            构建时被原样拷进 dist 根目录，运行时以 /empty-alien.svg 访问。
            放在「无数据」分支内、不放进「加载中」分支，避免加载时误显该插画。 -->
@@ -919,7 +920,7 @@ async function exportXlsx() {
   background: var(--color-brand-tint-2);
 }
 .copy-btn.copied {
-  color: #16a34a;
+  color: var(--color-up);
 }
 /* 在 flex 换行容器里「独占一行」：flex-basis:100% 才会把它挤到下一行。
    注意 flex 子项上的 display:block 无效（会被 blockify 成 block 但不影响排布），

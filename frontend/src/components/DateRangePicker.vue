@@ -641,13 +641,13 @@ function applyLastWeek() {
 
 <template>
   <!-- ref=drpRootRef：月份面板按月份按钮对齐时需要量出本容器的边界（见 positionMonthPop） -->
-  <div class="drp" ref="drpRootRef">
-    <button class="drp-trigger" type="button" @click="openPanel" ref="triggerRef">
+  <div class="drp" data-testid="date-range" ref="drpRootRef">
+    <button class="drp-trigger" data-testid="date-range-trigger" type="button" @click="openPanel" ref="triggerRef">
       <span class="drp-icon">📅</span>
       <span :class="{ placeholder: !props.start && !props.end }">{{ label }}</span>
       <span class="caret">▾</span>
     </button>
-    <div class="drp-quick">
+    <div class="drp-quick" data-testid="date-range-quick">
       <button v-if="showLastWeek" class="qm" type="button" @click="applyLastWeek">近一周</button>
       <button class="qm" type="button" @click="applyMonth(0)">当月</button>
       <button class="qm" type="button" @click="applyMonth(-1)">上月</button>
@@ -666,7 +666,7 @@ function applyLastWeek() {
 
     <div
       v-if="monthOpen"
-      class="drp-pop drp-mpop"
+      class="drp-pop drp-mpop" data-testid="date-range-month-panel"
       ref="monthPopRef"
       :style="monthPopStyle"
     >
@@ -719,7 +719,7 @@ function applyLastWeek() {
 
     <div v-if="open" class="drp-backdrop" @click="closePanel"></div>
 
-    <div v-if="open" class="drp-pop" ref="popRef" :style="openRight ? { left: '0', right: 'auto' } : { right: '0', left: 'auto' }">
+    <div v-if="open" class="drp-pop" data-testid="date-range-calendar" ref="popRef" :style="openRight ? { left: '0', right: 'auto' } : { right: '0', left: 'auto' }">
       <div class="drp-head">
         <button class="nav" type="button" @click="prevMonth">‹</button>
         <span class="mlabel">{{ monthLabel1 }}</span>
