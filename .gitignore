@@ -12,6 +12,13 @@ frontend/dist/
 frontend/tsconfig.tsbuildinfo
 # 回归脚本的 esbuild 打包产物（由 npm run verify 生成，可随时重建）
 frontend/node_modules/.cache/
+# Vite 启动时把 vite.config.ts 转译成同目录的临时 .mjs（Node 不能直接跑 TS），
+# 正常流程是「写入 → 加载配置 → 立刻删掉」。⚠️ 进程被强杀（build 中途打断、
+# 任务管理器结束进程、Ctrl+C 收尾不干净）时清理逻辑跑不到，临时文件就留在盘上，
+# 内容全是同一份 vite.config.ts 的转译副本，纯垃圾。
+# 曾一次攒了 7 个且被 git add 进暂存区 —— 所以必须提前忽略，别等它进仓库再清。
+vite.config.ts.timestamp-*
+vite.config.js.timestamp-*
 
 # ========== 运行生成的数据（run_batch 重新生成，不入仓） ==========
 backend/app/data/
@@ -25,6 +32,10 @@ ResourceData/
 
 # ========== 助手工作记忆（非项目源码） ==========
 .workbuddy/
+
+# 本地工单追踪器（.scratch/<feature>/issues/ 存实现细节、随开发反复改写，
+# 状态变化频繁且不进版本库；spec 与 ADR 已单独落在 docs/ 下，是持久的纸面轨迹）
+.scratch/
 
 # ========== 版本控制工具元数据 ==========
 # jj（Jujutsu）本地仓库元数据；colocated 模式下 git 会把它当未跟踪文件，必须忽略，勿提交进仓库
