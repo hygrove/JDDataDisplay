@@ -40,6 +40,7 @@ class MetricRecord(BaseModel):
         search_click_rate: 搜索点击率 = 搜索点击次数 / 搜索曝光次数
         promotion_cost: 推广花费（推广数据表「花费」列）
         promotion_amount: 推广成交金额（推广数据表「总订单金额」列）
+        promo_profit: 推广净收益 = 推广成交金额 − 推广花费
         conversion_rate: 成交转化率 = 成交客户数 / 商品访客数
         roi: ROI = 推广成交金额 / 推广花费
         promotion_ratio: 推广占比 = 推广花费 / 成交金额
@@ -66,6 +67,7 @@ class MetricRecord(BaseModel):
     search_click_rate: Optional[float] = None   # 搜索点击率 = 搜索点击次数 / 搜索曝光次数
     promotion_cost: Optional[float] = None      # 推广花费（推广数据表「花费」）
     promotion_amount: Optional[float] = None    # 推广成交金额（推广数据表「总订单金额」）
+    promo_profit: Optional[float] = None      # 推广净收益 = 推广成交金额 − 推广花费
     conversion_rate: Optional[float] = None     # 成交转化率 = 成交客户数 / 商品访客数
     roi: Optional[float] = None                 # ROI = 推广成交金额 / 推广花费
     promotion_ratio: Optional[float] = None     # 推广占比 = 推广花费 / 成交金额

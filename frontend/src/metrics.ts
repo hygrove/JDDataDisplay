@@ -110,6 +110,7 @@ export const METRICS: MetricSpec[] = [
   { key: "promotion_amount", title: "推广成交金额", format: "currency", group: "promo", width: 130, color: "#9333ea", icon: "wallet", defaultOn: true, agg: { kind: "sum" }, compare: "promotion_amount_avg", compareLabel: "日均推广成交金额" },
   { key: "roi", title: "ROI", format: "decimal", group: "promo", width: 90, color: "#ea580c", icon: "trend", defaultOn: true, agg: { kind: "ratio", num: "promotion_amount", den: "promotion_cost" }, compare: "roi" },
   { key: "promotion_ratio", title: "推广占比", format: "percent", group: "promo", width: 110, color: "#7c3aed", icon: "pie", defaultOn: true, agg: { kind: "ratio", num: "promotion_cost", den: "amount" }, compare: "promotion_ratio" },
+  { key: "promo_profit", title: "推广净收益", format: "currency", group: "promo", width: 120, color: "#059669", icon: "yen", defaultOn: false, agg: { kind: "sum" }, compare: null },
 
   // ---------- 退款 / 其他 ----------
   { key: "refund_amount", title: "取消及售后退款金额", format: "currency", group: "extra", width: 160, color: "#dc2626", icon: "refund", defaultOn: false, agg: { kind: "sum" }, compare: "refund_amount_avg", compareLabel: "日均退款金额" },

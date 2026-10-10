@@ -15,7 +15,7 @@
 import { onBeforeUnmount, onMounted, ref } from "vue";
 import { use } from "echarts/core";
 import { SVGRenderer } from "echarts/renderers";
-import { LineChart, BarChart, PieChart } from "echarts/charts";
+import { LineChart, BarChart, PieChart, ScatterChart } from "echarts/charts";
 import {
   GridComponent,
   TooltipComponent,
@@ -40,6 +40,7 @@ use([
   LineChart,
   BarChart,
   PieChart,
+  ScatterChart,
   GridComponent,
   TooltipComponent,
   LegendComponent,

@@ -7,9 +7,10 @@
     "dev": "vite",
     "build": "vue-tsc -b && vite build",
     "preview": "vite preview",
-    "verify": "npm run verify:month && npm run verify:agg",
+    "verify": "npm run verify:month && npm run verify:agg && npm run verify:promo",
     "verify:month": "esbuild verify_month_compare.mjs --bundle --platform=node --format=esm --outfile=node_modules/.cache/verify_month.mjs --log-level=warning && node node_modules/.cache/verify_month.mjs",
-    "verify:agg": "esbuild verify_agg.mjs --bundle --platform=node --format=esm --outfile=node_modules/.cache/verify_agg.mjs --log-level=warning && node node_modules/.cache/verify_agg.mjs"
+    "verify:agg": "esbuild verify_agg.mjs --bundle --platform=node --format=esm --outfile=node_modules/.cache/verify_agg.mjs --log-level=warning && node node_modules/.cache/verify_agg.mjs",
+    "verify:promo": "esbuild verify_promo.mjs --bundle --platform=node --format=esm --outfile=node_modules/.cache/verify_promo.mjs --log-level=warning && node node_modules/.cache/verify_promo.mjs"
   },
   "dependencies": {
     "@tanstack/vue-virtual": "^3.10.8",

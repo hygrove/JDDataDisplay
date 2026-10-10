@@ -48,6 +48,10 @@
      改动前该色散落 3 处硬编码（MonthCompareTable 气泡/标题、ModuleView 日均）。 */
   --color-up: #16a34a;
   --color-down: #dc2626;
+  /* 琥珀/橙：四象限图「观察新品」档专用。此前该色硬编码在
+     PromoQuadrantChart 的 .q-trial 里，抽token 时漏掉——因为它是四档配色里
+     唯一没有现成语义色对应的一档（红=核心/危险、绿=链接、黄≈无既有语义）。 */
+  --color-amber: #f59e0b;
 
   /* 圆角 */
   --radius-xs: 2px;

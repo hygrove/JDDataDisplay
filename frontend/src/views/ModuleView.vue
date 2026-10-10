@@ -383,6 +383,24 @@ async function copySpu(row: { spu: string; shop: string }) {
  * await exportXlsx(); // 点击「导出数据」按钮
  * ```
  */
+/**
+ * 跳转到推广预算优化页。
+ *
+ * @remarks
+ * 目标页自己会拉 manifest、按自己的默认区间（最近 30 天）取数，
+ * 这里刻意**不传**当前店铺与区间 —— 沿用上一页的选择反而会让人困惑
+ * （以为看到的是刚才那个筛选下的优化方案）。要沿用的话在目标页上切换即可。
+ *
+ * @returns {void} 无返回值。
+ * @example
+ * ```ts
+ * goPromo(); // 点工具条「推广分析测试」
+ * ```
+ */
+function goPromo() {
+  void router.push({ name: "promo" });
+}
+
 async function exportXlsx() {
   if (exporting.value) return;
   exporting.value = true;
@@ -456,6 +474,19 @@ async function exportXlsx() {
           · {{ store.status.message }}
         </span>
         <MetricConfigPanel v-model:keys="selectedKeys" />
+        <!-- 推广分析入口：⛔ 不进侧边栏（侧边栏由 manifest 数据驱动，功能页塞不进去，
+             ADR-0004），改在工具条给一个显式按钮。只在推广明细模块显示——
+             其他模块没有推广数据，点了也是空态。
+             ⚠️ 按钮文案带「测试」二字：功能仍在验证阶段（BACKTEST_DISCOUNT 是经验值，
+             尚无回测支撑），先标明试用性质，避免运营当成已验收的正式结论去调预算。 -->
+        <button
+          v-if="store.currentModule?.module_id === 'pop_spu_detail'"
+          class="btn btn-testing"
+          data-testid="module-promo-btn"
+          @click="goPromo"
+        >
+          <span>推广分析测试</span>
+        </button>
         <button class="btn" data-testid="module-refresh-btn" :disabled="store.refreshing" @click="store.refresh()">
           <!-- 刷新图标：spinning 类跟随 store.refreshing，刷新中持续旋转（纯 CSS，不改 store） -->
           <span class="btn-ico" :class="{ spinning: store.refreshing }">
@@ -748,6 +779,25 @@ async function exportXlsx() {
   /* 0.75 而非 0.6：刷新中图标要持续旋转，太淡会看不清反馈 */
   opacity: 0.75;
   cursor: default;
+}
+/* 推广分析入口（测试中）：同色系但改为**虚线边**，底色用品牌色 + 半透明。
+   ⚠️ 为什么要视觉区分而不只是文案带「测试」二字：文案会被忽略（尤其在工具条一排按钮里），
+    而运营按「已投预算要照这个方案调」是要担责任的 —— 测试阶段的入口必须一眼看得出
+    试用性质，不能只靠读文字。正式上线后去掉 .btn-testing 这个类即可。
+   ⚠️ 用 color-mix 而非写死 hex：本项目无 CSS 框架、换肤全靠 design token，
+    写死 rgba(225,37,27,.8) 会在换肤后变成另一种红（与 style.css 的约定冲突）。 */
+.btn-testing {
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--color-brand) 85%, var(--color-surface)),
+    color-mix(in srgb, var(--color-brand-dark) 85%, var(--color-surface))
+  );
+  border: 1px dashed color-mix(in srgb, var(--color-brand-dark) 65%, transparent);
+  box-shadow: none;
+  font-size: 14px;
+}
+.btn-testing:hover:not(:disabled) {
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08);
 }
 /* 导出按钮：深灰渐变，与刷新红按钮在视觉上区分（一个是「重算」、一个是「取数」） */
 .btn-export {

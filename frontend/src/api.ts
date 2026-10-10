@@ -8,6 +8,7 @@ import type {
   Manifest,
   ModuleSummary,
   PagedRows,
+  PromoAnalysis,
   SpuAnalysis,
 } from "./types";
 
@@ -167,6 +168,47 @@ export function fetchSpuAnalysis(moduleId: string, spu: string, q: SpuAnalysisQu
   const qs = params.toString();
   // 无查询参数时不要留下多余的 "?"，避免后端路由匹配出意外
   return get<SpuAnalysis>(`/module/${moduleId}/spu/${spu}/analysis${qs ? "?" + qs : ""}`);
+}
+
+/**
+ * 推广分析的查询参数（均可选）。
+ */
+export interface PromoQuery {
+  /** 店铺名；留空 = 数据中第一家店（后端不返回 400，页面上总有店可看） */
+  shop?: string;
+  /** 起始日期 YYYY-MM-DD；留空 = 数据最早日 */
+  start?: string;
+  /** 截止日期 YYYY-MM-DD；留空 = 数据最新日 */
+  end?: string;
+  /** 模块标识，默认唯一的推广明细模块 */
+  module_id?: string;
+}
+
+/**
+ * 拉取推广预算优化分析（贪心分配方案 + 三数字 + 四象限分档 + 建议文案）。
+ *
+ * @param {PromoQuery} [q={}] - 可选的店铺与日期区间。
+ * @returns {Promise<PromoAnalysis>} 分析结果。
+ * @throws {Error} 接口非 2xx（常见于模块数据文件不存在 → 404）。
+ * @remarks
+ * ⚠️ **空态是正常业务状态，不是错误**：无数据时后端仍返回 200 + `empty_reason`，
+ *    由本函数正常 resolve，页面据此渲染空态，⛔ 不要在页面里 throw。
+ * @example
+ * ```ts
+ * const a = await fetchPromoAnalysis({ shop: "钻芯旗舰店", start: "2026-09-01" });
+ * a.empty_reason;       // null | "no_data" | "too_few_spus" | "all_zero"
+ * a.ideal_total_amount; // 理论上限总成交
+ * ```
+ */
+export function fetchPromoAnalysis(q: PromoQuery = {}) {
+  const params = new URLSearchParams();
+  if (q.shop) params.set("shop", q.shop);
+  if (q.start) params.set("start", q.start);
+  if (q.end) params.set("end", q.end);
+  if (q.module_id) params.set("module_id", q.module_id);
+  const qs = params.toString();
+  // 无查询参数时不要留下多余的 "?"，避免后端路由匹配出意外
+  return get<PromoAnalysis>(`/promo/analysis${qs ? "?" + qs : ""}`);
 }
 
 /**

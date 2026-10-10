@@ -50,6 +50,8 @@ export interface MetricRecord {
   roi: number | null;
   /** 推广占比 = 推广花费 / 成交金额 */
   promotion_ratio: number | null;
+  /** 推广净收益 = 推广成交金额 − 推广花费 */
+  promo_profit: number | null;
   /** 取消及售后退款单量 */
   refund_orders: number | null;
   /** 取消及售后退款金额 */
@@ -325,4 +327,125 @@ export interface SpuAnalysis {
   holiday: CompareGroup;
   /** 自动生成的综合分析文案 */
   insight: string;
+}
+
+/**
+ * 推广分析里的单个 SPU 条目（`/api/promo/analysis` 响应，字段与后端 `PromoSpu` 一一对应）。
+ *
+ * ⚠️ 术语：一律「投产比」，⛔ 不出现「边际ROI」——边际 ROI 需要反事实数据
+ *    （关掉某 SPU 的推广会怎样），平台不提供，本项目算不出来。
+ */
+export interface PromoSpu {
+  /** SPU 编号 */
+  spu: string;
+  /** 商品名称，可为空 */
+  spu_name: string | null;
+  /** 图片访问路径，可为空 */
+  image: string | null;
+  /** 区间内 Σ推广花费（元） */
+  current_cost: number;
+  /** 区间内 Σ推广成交金额（元） */
+  current_amount: number;
+  /** 投产比 = Σ成交 ÷ Σ花费（先求和再相除）；分母 0 时为 null */
+  roi: number | null;
+  /** 推广净收益 = Σ成交 − Σ花费（未计毛利，不代表利润） */
+  profit: number;
+  /** 日均推广花费占比 ∈ [0,1]；= Σ(该品当日花费 ÷ 该店当日总花费) ÷ 天数 */
+  cost_share: number | null;
+  /** 日均推广成交占比，计算方式同上 */
+  amount_share: number | null;
+  /** 逐日投产比的变异系数；无法计算时 null */
+  roi_cv: number | null;
+  /** 波动过大（由后端两级规则判定：绝对兜底 1.0 + 店内 P70 分位） */
+  unstable: boolean;
+  /** 贪心算法给出的建议分配额（元） */
+  suggested_cost: number;
+  /** 建议 − 当前 = suggested_cost − current_cost（正=加投、负=减投） */
+  delta: number;
+  /** 四象限分档；roi 不可算时为 null */
+  quadrant: "core" | "potential" | "loser" | "trial" | null;
+  /** 后端生成的一句话建议，前端直接展示，勿在前端另写一份 */
+  advice: string;
+  /** True 表示未参与分配（无推广花费 / 投产比无法计算） */
+  skipped: boolean;
+  /** 未参与分配的原因文案 */
+  skip_reason: string | null;
+}
+
+/**
+ * 空态原因（后端判定，前端只渲染、不重复判断）。
+ *
+ * ⚠️ 三种空态的**处置方式不同**，不能用「有数据 / 没数据」的布尔表达：
+ *   - `no_data`：提示换区间即可；
+ *   - `too_few_spus`：**弱化展示而非报错** —— 贪心分配仍可执行（1 个 SPU 时结果就是它自己，
+ *     只是填不满预算），只是四象限分位数不可信；
+ *   - `all_zero`：投产比算不出来，提示换有花费的区间。
+ * 把 `too_few_spus` 误当成错误处理掉是最容易犯的错。
+ */
+export type PromoEmptyReason = "no_data" | "too_few_spus" | "all_zero";
+
+/**
+ * 推广预算优化分析的完整返回体（`/api/promo/analysis`）。
+ */
+export interface PromoAnalysis {
+  /** 本次分析使用的店铺 */
+  shop: string;
+  /** 实际统计区间起点 */
+  start: string;
+  /** 实际统计区间终点 */
+  end: string;
+  /** 数据中实际命中的日期区间（可能窄于请求区间） */
+  date_range: string[];
+  /** 区间内该店 Σ推广花费 */
+  total_cost: number;
+  /** 区间内该店 Σ推广成交金额 */
+  total_amount: number;
+  /** 当前分配下的推广成交总额 */
+  current_total_amount: number;
+  /** 贪心理论上限总成交（线性假设下的数学最优，**不可达成**） */
+  ideal_total_amount: number;
+  /** 保守估计 = ideal × BACKTEST_DISCOUNT(0.7) */
+  conservative_total: number;
+  /** 单品预算上限 = total_cost × CAP_RATIO(0.3) */
+  cap: number;
+  /** 因单品上限封顶而分不出去的预算（SPU 数少时 > 0） */
+  unallocated: number;
+  /** 可优化空间 = ideal − current */
+  gap: number;
+  /** 达成率 = current ÷ ideal；分母 0 时 null */
+  achievement_rate: number | null;
+  /** False 表示 SPU 数不足 4 个，分档不可信，前端应弱化四象限 */
+  quadrant_reliable: boolean;
+  /**
+   * 四象限两条分割线的位置（投产比阈值、花费阈值，均为店内分位数 P50）。
+   *
+   * ⚠️ **必须直接用后端给的值，⛔ 不要在前端从 `spus` 重算分位数**：
+   *    分割线是「分档结论的图示」。前端若自己实现一遍（哪怕公式看起来一样），
+   *    插值约定或样本筛选一旦有差，就会出现「点被染成高效档却在分割线下方」
+   *    的自相矛盾画面，且只在特定数据下偶发，极难排查。
+   *    与 `aggregateMetrics` 同一纪律：口径单一事实来源在后端，前端只渲染。
+   *    无可分档样本时为 null，此时图上不画分割线。
+   */
+  roi_threshold: number | null;
+  cost_threshold: number | null;
+  /**
+   * 现状已超单品集中度上限（30%）的 SPU 标识（多个用「、」连接）；null = 现状本身可行。
+   *
+   * ⚠️ **非 null 时 `gap` 必然为负、`achievement_rate` 必然 > 1** —— 这不是算法出错，
+   *    而是「现状把大部分预算压在少数品上，30% 上限要求把钱挪走」的必然结果。
+   *    页面此时**必须改文案与配色**（说清「重新分配会让总成交下降」），
+   *    ⛔ 不要照字面渲染成「可优化空间 −1,735 元」「达成率 208%」。
+   */
+  over_concentrated: string | null;
+  /** 各 SPU 明细（按建议分配额降序） */
+  spus: PromoSpu[];
+  /** 空态原因；数据完整时为 null */
+  empty_reason: PromoEmptyReason | null;
+  /**
+   * 免责文案（spec §8 三处硬要求），前端必须**逐条**展示。
+   *
+   * ⚠️ 是数组不是单串：单串拼接后无法断言「三处缺一不可」（删掉中间一条仍能grep 到首尾关键词）。
+   * ⛔ 不要在前端补第四段免责 —— 那是第二个事实来源，改一处忘另一处必然漂移。
+   */
+  disclaimers: string[];
 }

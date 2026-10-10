@@ -5,6 +5,8 @@ import { useUiStore } from "./stores/ui";
 // 尤其 SpuAnalysisView 依赖 echarts（体积大），必须懒加载，否则会拖慢首屏。
 const ModuleView = () => import("./views/ModuleView.vue");
 const SpuAnalysisView = () => import("./views/SpuAnalysisView.vue");
+// 推广预算优化页：首屏不加载（它的图表/表在 06/07 才接 echarts，现阶段只是卡片 + 占位）
+const PromoView = () => import("./views/PromoView.vue");
 
 // 首页空白占位（App.vue 会在拉到 manifest 后自动跳转到第一个模块）。
 // ⚠️ 必须用 render 函数而不是 template 字符串：生产构建用的是 runtime-only 版本 Vue，
@@ -16,15 +18,17 @@ const HomeBlank = { render: () => null };
  * 全局路由实例（history 模式）。
  *
  * @remarks
- * 三条路由：
+ * 四条路由：
  * - `/` 首页空白占位，由 App.vue 拉到 manifest 后自动跳转到第一个模块；
  * - `/module/:moduleId` 模块页（SPU 明细）；
- * - `/module/:moduleId/spu/:spu` 单品分析页，可带 `?shop=xxx` 指定店铺。
+ * - `/module/:moduleId/spu/:spu` 单品分析页，可带 `?shop=xxx` 指定店铺；
+ * - `/promo` 推广预算优化页。
  *
  * @example
  * ```ts
  * router.push({ name: "module", params: { moduleId: "pop_spu_detail" } });
  * router.push({ name: "spu-analysis", params: { moduleId: "pop_spu_detail", spu: "100123" } });
+ * router.push({ name: "promo" });
  * ```
  */
 export const router = createRouter({
@@ -44,6 +48,15 @@ export const router = createRouter({
       name: "spu-analysis",
       component: SpuAnalysisView,
       props: true,
+    },
+    {
+      // 推广预算优化页：/promo
+      // ⚠️ 不带参数（模块 id 已在页面内固定为 pop_spu_detail），故无 props。
+      //    ⛔ 不进侧边栏——侧边栏是 manifest 数据驱动的，功能页塞不进去（ADR-0004），
+      //    入口放在模块页工具条。
+      path: "/promo",
+      name: "promo",
+      component: PromoView,
     },
   ],
 });

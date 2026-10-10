@@ -52,7 +52,7 @@ def safe_div(a: pl.Expr, b: pl.Expr) -> pl.Expr:
 
 
 def compute_metrics(df: pl.DataFrame) -> pl.DataFrame:
-    """基于原始可累加指标，补全部派生比率指标（新增 5 列）。
+    """基于原始可累加指标，补全部派生指标（新增 6 列）。
 
     设计要点——「先求和再相除」：
       本函数只做「本行的分子 / 本行的分母」。因为上游 aggregate() 是**先对分子分母各自求和**
@@ -64,6 +64,12 @@ def compute_metrics(df: pl.DataFrame) -> pl.DataFrame:
       搜索点击率 = 搜索点击次数 / 搜索曝光次数
       ROI        = 推广成交金额 / 推广花费
       推广占比   = 推广花费 / 成交金额
+      推广净收益 = 推广成交金额 − 推广花费（差额，非比率，同样须在本层算）
+
+    ⚠️ **不要在这里加「分母随分组维度变化」的指标**（如「占同店当日总花费的比例」）：
+      本函数的复用前提是「本行 A / 本行 B」。而这类指标的分母依赖 `date`，
+      在 aggregate(df, ["shop"]) 这类不含 date 的分组里分母根本算不出来。
+      这类分析指标应在其所属端点内按所需分组单独计算。
 
     Args:
         df: 至少含 buyers / visitors / amount / promotion_cost / promotion_amount /
@@ -71,7 +77,7 @@ def compute_metrics(df: pl.DataFrame) -> pl.DataFrame:
 
     Returns:
         pl.DataFrame: 原表基础上新增 conversion_rate / roi / promotion_ratio /
-            avg_price / search_click_rate 五列的新表（原表不被修改）。
+            avg_price / search_click_rate / promo_profit 六列的新表（原表不被修改）。
 
     Raises:
         polars.exceptions.ColumnNotFoundError: 缺少上述必需列时抛出。
@@ -95,6 +101,10 @@ def compute_metrics(df: pl.DataFrame) -> pl.DataFrame:
         safe_div(pl.col("amount"), pl.col("buyers")).alias("avg_price"),
         # 搜索点击率：搜索曝光里被点开的比例，反映主图/标题吸引力
         safe_div(pl.col("search_clicks"), pl.col("search_impressions")).alias("search_click_rate"),
+        # 推广净收益：推广成交金额 − 推广花费。
+        # ⚠️ 是减法不是除法，故不用 safe_div（无除零风险）。
+        # ⚠️ 任一为 None 时结果随之为 None（polars 的算术语义），与 safe_div 的空值处理一致。
+        (pl.col("promotion_amount") - pl.col("promotion_cost")).alias("promo_profit"),
     )
 
 
@@ -125,7 +135,9 @@ def aggregate(df: pl.DataFrame, keys: list[str]) -> pl.DataFrame:
         >>> aggregate(df, ["shop", "date"])["amount"][0]
         300.0
     """
-    # 只累加「可累加」的原始指标；比率不在 agg 之列（理由见函数 docstring）
+    # 只累加「可累加」的原始指标；派生列（比率与差额）一律不在 agg 之列，
+    # 由下方 compute_metrics(out) 在**聚合后的表**上重算（理由见函数 docstring）。
+    # ⚠️ 派生列不可加进这里：加了会被两次处理（先按行求和再重算），口径反而错。
     out = df.group_by(keys).agg(
         pl.col("visitors").sum(),
         pl.col("buyers").sum(),

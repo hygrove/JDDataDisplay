@@ -15,6 +15,9 @@
 - SPU 明细表格：商品图片、虚拟滚动、分页加载（300 行/页）、缺失指标展示 `--`
 - 数据导出：一键把当前筛选条件下的**全量**数据导出为 xlsx（每 SPU 一块、图片嵌入纵向居中、比率类总计标橙、数值保留 2 位小数）
 - 手动刷新：前端按钮触发后端重跑批处理（服务无关，服务未启动也能跑批）
+- **推广分析测试页**（`/promo`，入口在推广明细模块工具条）：按**投产比**（成交 ÷ 花费）给出预算重分配建议——理论上限、保守估计、达成率、四象限分档、SPU 决策表（可排序 / 分档过滤 / 点商品列跳单品分析）。
+  ⚠️ **仍在测试阶段**：保守估计的回测折扣 `BACKTEST_DISCOUNT = 0.70` 是经验值，尚无回测数据支撑。
+  ⚠️ 项目内不使用「边际 ROI」与「亏损」两词（否则见 `docs/project-prompt-kit/02-口径铁律.md`）。
 
 > **关于推广指标**：推广费/推广成交金额/ROI/推广占比来自各店铺的 `推广数据_*.csv`（京准通报表），由批处理按 (店铺, 日期, SPU) 左连接补充到明细长表；明细表本身不含这些列。若某 SPU 在推广 csv 中无对应记录，则相关指标展示 `--`。
 
@@ -33,9 +36,10 @@ JDDataDisplay/
 ├── backend/
 │   ├── requirements.txt
 │   ├── app/
-│   │   ├── main.py            # FastAPI：静态托管 + SPA 回退（no-store）+ 图片挂载
+│   │   ├── main.py            # FastAPI：静态托管+ SPA 回退（no-store）+ 图片挂载
 │   │   ├── api.py             # /api 路由 + 缓存 + 分页/过滤/排序 + xlsx 导出
 │   │   ├── analysis.py        # 单品分析：节假日口径、工作日/节假日对比、洞察文案
+│   │   ├── promo.py           # 推广分析纯函数（贪心分配/波动标记/四象限/文案）——无 IO、无全局状态
 │   │   └── data/              # 批处理产物（JSON / images / app.db，运行时生成，非源码）
 │   └── jobs/                  # 批处理（ETL 层）
 │       ├── config.py          # 路径/重试/参数，全环境变量可覆盖
@@ -50,6 +54,8 @@ JDDataDisplay/
 │           ├── excel_source.py  # Excel 源（清洗后写入 SQLite）
 │           ├── sqlite_source.py # 从 SQLite 读回长表（展示侧统一入口）
 │           └── db_source.py     # PostgreSQL 骨架（未启用）
+│   ├── verify_promo_greedy.py     # 回归：推广算法（贪心/波动/分档/阈值/文案）
+│   └── verify_promo_api.py        # 回归：推广端点
 ├── frontend/
 │   ├── package.json / tsconfig.json / vite.config.ts / index.html
 │   ├── src/
@@ -58,24 +64,28 @@ JDDataDisplay/
 │   │   ├── api.ts / types.ts           # fetch 封装 / 与 Pydantic 对齐的 TS 类型
 │   │   ├── metrics.ts                  # 展示指标的唯一事实来源（METRICS）
 │   │   ├── modules/index.ts            # 前端模块注册表（配置驱动）
+│   │   ├── modules/promoTable.ts       # 推广决策表接缝（判定与格式化纯函数）
 │   │   ├── stores/metrics.ts           # Pinia store（指标勾选，localStorage 按 moduleId）
 │   │   ├── utils/month.ts              # 日期区间与月份清单算法
 │   │   ├── utils/overlay.ts            # 同页浮层全局互斥
+│   │   ├── utils/cssVar.ts             # 运行时从 :root 读真实色值（echarts 看不到 CSS 变量）
 │   │   ├── components/
-│   │   │   ├── GenericTable.vue        # 虚拟滚动表格（滚动到底自动加载下一页）
+│   │   │   ├── GenericTable.vue        # 虚拟滚动表格（滚到底自动加载下一页）
 │   │   │   ├── GenericChart.vue        # ECharts 按需引入封装
-│   │   │   ├── DateRangePicker.vue     # 统计区间选择器（模块页 / 单品页共用）
-│   │   │   ├── MetricConfigPanel.vue   # ⚙ 指标配置面板
-│   │   │   └── MonthCompareTable.vue   # 月份对比（多月份横排 + 点击展开时间轴）
+│   │   │   ├── DateRangePicker.vue  # 统计区间选择器（模块页 / 单品页共用）
+│   │   │   ├── MetricConfigPanel.vue   # ⚙️ 指标配置面板
+│   │   │   ├── MonthCompareTable.vue   # 月份对比（多月份横排 + 点击展开时间轴）
+│   │   │   ├── PromoSpuTable.vue       # 推广 SPU 决策表（8 列 + 分档 chip 过滤）
+│   │   │   └── PromoQuadrantChart.vue # 推广四象限散点图（P50 分割线由后端透传）
 │   │   └── views/
 │   │       ├── ModuleView.vue          # 通用模块页（单日卡片 ↔ 区间矩阵）
-│   │       └── SpuAnalysisView.vue     # 单品分析页（趋势/工作日节假日/月份对比/洞察）
+│   │       ├── SpuAnalysisView.vue     # 单品分析页（趋势/工作日节假日/月份对比/洞察）
+│   │       └── PromoView.vue            # 推广分析页（看板/优化双模式）
 │   ├── verify_month_compare.mjs         # 回归：月份对比纯逻辑
 │   ├── verify_agg.mjs                   # 回归：前后端聚合口径一致性
+│   ├── verify_promo.mjs                 # 回归：推广前端接缝
 │   └── dist/ / node_modules/            # 构建产物与依赖（不入库）
 ├── scripts/
-│   ├── 启动服务.pyw         # 双击启动：托盘图标 + 无黑框（日常使用推荐入口）
-│   ├── tray_launcher.py     # 同进程托盘启动器（pystray 主线程 + uvicorn 子线程，单实例锁）
 │   ├── refresh_data.py      # 跨平台数据刷新入口（计划任务 / cron / Docker 通用）
 │   ├── setup_sample.py      # 把 sample_data/ 样例铺到 ResourceData/（异地克隆首次部署用）
 │   ├── gen_fake_data.py     # 生成 10 万行量级假数据压测
@@ -83,7 +93,13 @@ JDDataDisplay/
 │   ├── start_uvicorn.bat / stop_uvicorn.bat   # 前台启动 / 停止（调试用）
 │   └── refresh_daily.ps1    # 每日刷新脚本（薄启动器，转调 refresh_data.py）
 ├── sample_data/             # 入库的演示样例数据（业务数据本身不入库）
-├── docs/                    # 专题文档（异地克隆部署 / 数据库架构 / git 笔记）
+├── docs/                    # 文档
+│   ├── spec/                # 功能规格（推广预算分析）——先定边界再写代码
+│   ├── adr/                 # 架构决策记录（0001～0004）
+│   ├── project-prompt-kit/  # 项目搭建提示词包（6 份，从本项目逆向提炼）
+│   ├── 异地克隆部署指南.md / 数据库迁移与架构教学.md / 容器化指南.md
+│   └── ui-map.md              # UI 元素地图（data-testid 锚点）
+
 ├── requirements.txt         # 指向 backend/requirements.txt 的引用，便于根目录一条命令安装
 └── 说明文档.md              # 完整使用说明（页面功能、接口、维护注意事项、变更记录）
 ```
@@ -163,11 +179,31 @@ npm run build      # 产物在 frontend/dist
 
 ### 5. 回归验证
 
+**总闸入口（推荐）**：项目根目录执行，依次跑全部 5 套（共 **551 项断言**）。
+
+```bash
+.venv\Scripts\python.exe verify_all.py            # 全部 5 套
+.venv\Scripts\python.exe verify_all.py --backend  # 跳过需前端构建的两套
+```
+
+| 脚本 | 断言 | 依赖 |
+|---|---|---|
+| `backend/verify_promo_greedy.py` | 186 | 无（纯算法） |
+| `backend/verify_promo_api.py` | 125 | 无（用 `TestClient`，不占端口） |
+| `frontend/verify_month_compare.mjs` | 99 | 无 |
+| `frontend/verify_agg.mjs` | 31 | 需服务在 8000 |
+| `frontend/verify_promo.mjs` | 110 | 无 |
+
+⚠️ 不引入 pytest：`requirements.txt` 是完整 freeze（为异地复现），加测试框架破坏该前提。
+沿用「独立脚本 + 自制断言计数器 + `sys.exit(1)`」。
+
+单套运行：
+
 ```bash
 cd frontend
-npm run verify            # 跑两份回归脚本
 npm run verify:month      # 月份对比纯逻辑（天数/闰年/跨月/对齐/排序），无需服务
 npm run verify:agg        # 前后端聚合口径一致性，需服务已启动在 8000
+npm run verify:promo      # 推广前端接缝（排序/过滤/差额语义/免责校验），无需服务
 ```
 
 ### 6. 压测（10 万行验证）

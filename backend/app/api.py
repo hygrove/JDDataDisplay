@@ -32,7 +32,7 @@ router = APIRouter(prefix="/api")
 METRIC_KEYS = [
     "visitors", "buyers", "orders", "items", "amount", "avg_price",
     "search_impressions", "search_clicks", "search_click_rate",
-    "promotion_cost", "promotion_amount",
+    "promotion_cost", "promotion_amount", "promo_profit",
     "conversion_rate", "roi", "promotion_ratio",
     "refund_orders", "refund_amount",
 ]
@@ -935,6 +935,367 @@ def get_spu_analysis(
         workday=CompareGroupOut(**workday.to_dict()),
         holiday=CompareGroupOut(**holiday.to_dict()),
         insight=build_insight(dates[0], dates[-1], workday, holiday),
+    )
+
+
+# ---------------- 推广预算优化（/promo） ----------------
+# ⚠️ 本节术语纪律（见 CONTEXT.md）：一律「投产比」，⛔ 不出现「边际ROI」。
+#    边际 ROI 需反事实数据（关掉某 SPU 推广会怎样），平台不提供，本项目算不出来。
+
+# 空态原因枚举。前端按这些值渲染，不要用「有数据/没数据」的布尔表达——
+# 三种空态的**处置方式不同**（提示换区间 / 弱化展示 / 提示无法计算），
+# 一个布尔会把「部分可用」误判成「不可用」。
+EMPTY_NO_DATA = "no_data"
+EMPTY_TOO_FEW_SPU = "too_few_spus"
+EMPTY_ALL_ZERO = "all_zero"
+
+# 免责文案（spec §8）。⛔ 不得出现「边际」「亏损」「预测」等词——
+# 投产比 = 成交金额 ÷ 花费，分子是收入不是利润；数据源不含毛利字段，无法判断盈亏；
+# 「理论上限」是线性假设下的数学最优，不是可达目标（更不是预测）。
+#
+# ⚠️ **必须是恰好 3 条的序列，不是单串**：spec §8 把三处列为硬要求且「缺一不可」，
+#   而单串拼接后无法逐条断言（前两处挤在一起时，删掉第2 条仍能 grep 到第 1、3 条的
+#   关键词，断言照样绿）。结构化成 list 后，「恰好 3 条」本身就可断言。
+#   ⚛️ 相应地⛔ 不保留单串兼容字段 —— 那会让同一组文案有两个事实来源，
+#   改一边忘另一边必然漂移（同 metrics.ts / compute_metrics 纪律）。
+PROMO_DISCLAIMERS: tuple[str, ...] = (
+    # ① 线性假设：理论上限不是可达目标，更不是预测
+    "理论上限基于「加预算成交按同比例放大」的线性假设，是数学最优而非可达目标。",
+    # ② 保本线说明：投产比 1 的分界未计商品毛利
+    "投产比 1 是保本线，但该判断未计入商品毛利 —— 投产比 1.2 的品在毛利只有 20% 时，"
+    "实际仍可能不赚钱。",
+    # ③ 大促风险：流量结构会变，方案不可照搬
+    "大促期流量结构会变，请勿直接照搬本方案。",
+)
+
+# 各条文案的稳定标识，供前端定位与测试断言（⛔ 不要用文案内容当 key）。
+DISCLAIMER_KINDS: tuple[str, ...] = ("linearity", "breakeven", "campaign")
+
+
+class PromoSpu(BaseModel):
+    """推广分析里的单个 SPU 条目。
+
+    ⚠️ `roi` / `cost_share` / `amount_share` / `roi_cv` 的分母为 0 时都是 None
+       （前端显示 `--`），**不返回 0**：0 会被误当成「投产比为 0 的真实值」，
+       让该品被误判成吞金兽。
+
+    Fields:
+        spu: SPU 编号。
+        spu_name: 商品名称，可为空。
+        image: 图片访问路径，可为空。
+        current_cost: 区间内 Σ推广花费（元）。
+        current_amount: 区间内 Σ推广成交金额（元）。
+        roi: 投产比 = Σ成交 ÷ Σ花费（先求和再相除）；分母 0 时 None。
+        profit: 推广净收益 = Σ成交 − Σ花费。
+        cost_share: **日均**推广花费占比 = Σ(该品当日花费 ÷ 该店当日总花费) ÷ 天数，∈ [0,1]。
+        amount_share: 同上，按推广成交金额计。
+        ⚠️ 这两个是 spec §9「按店+日分组求和后再跨日累加」那一步的**收尾**：
+           裸累加的量纲是「天数倍」（67 天区间会得到 14.75 = 1475%），
+           必须再除以天数才是可展示的占比。
+        roi_cv: 逐日投产比的变异系数；无法计算时 None（详见 promo.compute_roi_cv）。
+        unstable: 波动过大（由 promo.mark_unstable 的两级规则判定）。
+        suggested_cost: 贪心算法给出的建议分配额。
+        delta: 建议 − 当前 = suggested_cost − current_cost（正=加投、负=减投）。
+        quadrant: 四象限分档枚举（core/potential/loser/trial）；roi 不可算时 None。
+        advice: 一句话建议（后端生成，前端直接展示，勿在前端另写一份）。
+        skipped: True 表示未参与分配（无推广花费 / 投产比无法计算）。
+        skip_reason: 未参与分配的原因文案。
+    """
+
+    spu: str
+    spu_name: Optional[str] = None
+    image: Optional[str] = None
+    current_cost: float
+    current_amount: float
+    roi: Optional[float] = None
+    profit: float
+    cost_share: Optional[float] = None
+    amount_share: Optional[float] = None
+    roi_cv: Optional[float] = None
+    unstable: bool = False
+    suggested_cost: float
+    delta: float
+    quadrant: Optional[str] = None
+    advice: str
+    skipped: bool = False
+    skip_reason: Optional[str] = None
+
+
+class PromoAnalysisOut(BaseModel):
+    """推广预算优化分析的完整返回体。
+
+    ⚠️ `empty_reason` 是**后端判定的空态原因**，前端只负责渲染、不重复判断：
+       | 值 | 含义 | 前端表现 |
+       |---|---|---|
+       | no_data | 该店区间无推广数据 | 提示换区间 |
+       | too_few_spus | 有推广数据的 SPU < 4 个 | **弱化展示**（非报错）：贪心仍可执行，仅四象限不可信 |
+       | all_zero | 有 SPU 但全部花费为 0 | 提示投产比无法计算 |
+       | None | 数据完整 | 正常展示 |
+
+       ⚠️ `too_few_spus` 最容易被误当成错误处理掉——它其实是「部分可用」：
+         贪心分配在只有 1 个 SPU 时照常工作（结果就是它自己，只是填不满预算），
+         所以响应照常返回全部数字，只由前端弱化四象限。
+
+    Fields:
+        shop / start / end: 本次分析实际使用的店铺与区间。
+        date_range: 数据中实际命中的日期区间 [最早日, 最晚日]（可能窄于请求区间）。
+        total_cost / total_amount: 区间内该店的 Σ推广花费 / Σ推广成交金额。
+        current_total_amount: 当前分配下的推广成交总额（= total_amount）。
+        ideal_total_amount: 贪心理论上限总成交（线性假设下的数学最优，不可达成）。
+        conservative_total: 保守估计 = ideal × BACKTEST_DISCOUNT。
+        cap: 单品预算上限 = total_cost × CAP_RATIO。
+        unallocated: 因单品上限封顶而分不出去的预算（SPU 数少时 > 0）。
+        gap: 可优化空间 = ideal − current。
+        achievement_rate: 达成率 = current ÷ ideal；分母 0 时 None。
+        quadrant_reliable: False 表示 SPU 数不足，分档不可信，前端应弱化四象限。
+        over_concentrated: 现状已超单品集中度上限（30%）的 SPU 标识；None = 现状可行。
+            非 None 时 gap < 0 且 achievement_rate > 1 —— 含义是「重新分配会让总成交下降」。
+        spus: 各 SPU 明细（按建议分配额降序，便于前端直接渲染决策表）。
+        empty_reason: 空态原因；数据完整时为 None。
+        disclaimers: 免责文案（spec §8 三处硬要求），前端必须**逐条**展示；
+            单串版本已删除（两处文案二选一必然漂移）。
+    """
+
+    shop: str
+    start: str
+    end: str
+    date_range: list[str] = Field(default_factory=list)
+    total_cost: float = 0.0
+    total_amount: float = 0.0
+    current_total_amount: float = 0.0
+    ideal_total_amount: float = 0.0
+    conservative_total: float = 0.0
+    cap: float = 0.0
+    unallocated: float = 0.0
+    gap: float = 0.0
+    achievement_rate: Optional[float] = None
+    quadrant_reliable: bool = True
+    # 四象限两条分割线的位置（投产比阈值、花费阈值，均为店内分位数 P50）。
+    # 必须由后端给出：前端要在图上画线，若自己从 spus 重算分位数，
+    # 插值约定一旦有差就会出现「点被染成高效档却在分割线下方」的自相矛盾。
+    # 无可分档样本时为 None，前端不画线。
+    roi_threshold: Optional[float] = None
+    cost_threshold: Optional[float] = None
+    # ⚠️ 现状违反单品集中度上限的 SPU 标识（多个用「、」连接）；None = 现状本身可行。
+    # 非 None 时 gap 必然为负、achievement_rate 必然 > 1（见 promo.compute_gap 的 docstring），
+    # 前端据此改文案与配色——⛔ 不要照字面渲染成「可优化空间 −1,735 元」。
+    over_concentrated: Optional[str] = None
+    spus: list[PromoSpu] = Field(default_factory=list)
+    empty_reason: Optional[str] = None
+    disclaimers: list[str] = Field(default_factory=lambda: list(PROMO_DISCLAIMERS))
+
+
+@router.get("/promo/analysis", response_model=PromoAnalysisOut)
+def get_promo_analysis(
+    shop: Optional[str] = Query(None, description="店铺名；空=数据中第一家店"),
+    start: Optional[str] = Query(None, description="起始日期 YYYY-MM-DD；空=数据最早日"),
+    end: Optional[str] = Query(None, description="截止日期 YYYY-MM-DD；空=数据最新日"),
+    module_id: str = Query("pop_spu_detail", description="模块标识（推广数据所在模块）"),
+) -> PromoAnalysisOut:
+    """推广预算优化：贪心分配方案 + 三数字 + 分档 + 建议。
+
+    实现的分层（每层职责单一，可分别验证）：
+      1. 从已缓存的扁平行（_flat_cache）过滤出「该店 + 区间」的行 —— 不重跑批处理；
+      2. 汇总到 SPU 粒度，算派生指标 —— 比率一律「先求和再相除」，与
+         transforms.compute_metrics / metrics.ts:aggregateMetrics 口径一致；
+      3. 逐日 CV + 店内分位 → 稳定性标记（promo.compute_roi_cv / mark_unstable）；
+      4. 贪心分配（promo.greedy_allocate）—— 零和：总预算不变；
+      5. 四象限分档（promo.classify_quadrant）+ 文案（promo.build_advice）；
+      6. 空态判定在本函数内完成，前端只渲染。
+
+    Args:
+        shop: 店铺名；None 表示取数据中第一家（页面上总有店可看，不返回 400）。
+        start: 起始日期；None 表示不限（取数据最早日）。
+        end: 截止日期；None 表示不限（取数据最新日）。
+        module_id: 模块标识，默认唯一的推广明细模块。
+
+    Returns:
+        PromoAnalysisOut: 完整分析结果；无数据时返回带 empty_reason 的空壳
+            （HTTP 仍为 200 —— 空态是正常业务状态，不是错误）。
+
+    Raises:
+        HTTPException: 404 —— 模块数据文件不存在（由 flatten_module 抛出）。
+
+    Example:
+        GET /api/promo/analysis?shop=钻芯旗舰店
+    """
+    from .promo import (
+        build_advice,
+        classify_quadrant,
+        compute_quadrant_thresholds,
+        compute_gap,
+        compute_roi_cv,
+        greedy_allocate,
+        mark_unstable,
+        detect_over_concentrated,
+        DailyRoi,
+        PromoInput,
+        MIN_SPU_FOR_QUADRANT,
+    )
+
+    all_rows = flatten_module(module_id)
+    if shop:
+        rows = [r for r in all_rows if r.shop == shop]
+    else:
+        # 不指定店铺时取第一家：页面首屏不该因为没选店就空白或报错
+        shops = sorted({r.shop for r in all_rows})
+        if not shops:
+            return PromoAnalysisOut(shop="", start=start or "", end=end or "",
+                                    empty_reason=EMPTY_NO_DATA)
+        shop = shops[0]
+        rows = [r for r in all_rows if r.shop == shop]
+
+    # 日期过滤（YYYY-MM-DD 字符串字典序即时间序，可直接比较）
+    if start:
+        rows = [r for r in rows if r.date >= start]
+    if end:
+        rows = [r for r in rows if r.date <= end]
+    dates = sorted({r.date for r in rows})
+    if not dates:
+        return PromoAnalysisOut(shop=shop, start=start or "", end=end or "",
+                                empty_reason=EMPTY_NO_DATA)
+
+    # ---- 2. 汇总到 SPU 粒度 ----
+    # 按 (spu) 分组累加**原始可累加指标**；比率随后统一重算，
+    # 不可对逐日比率求平均（项目铁律，见 transforms.compute_metrics 的 docstring）。
+    acc: dict[str, dict] = {}
+    for r in rows:
+        g = acc.setdefault(r.spu, {
+            "cost": 0.0, "amount": 0.0,
+            "name": None, "image": None,
+            "daily": [],  # (cost, roi) —— 供 CV 用
+            "share_num": 0.0, "share_den": 0.0,
+        })
+        c = r.metrics.promotion_cost or 0.0
+        a = r.metrics.promotion_amount or 0.0
+        g["cost"] += c
+        g["amount"] += a
+        if r.spu_name:
+            g["name"] = r.spu_name
+        if r.image:
+            g["image"] = r.image
+        # 逐日投产比：分母为 0 的日子无意义，交给 compute_roi_cv 内部跳过
+        g["daily"].append(DailyRoi(cost=c, roi=r.metrics.roi))
+
+    # ---- 占比指标：分母是该店「当日」全部 SPU 的花费和 ----
+    # ⚠️ 必须先按日聚合，不能用区间总花费做分母：
+    #    那会把「9 月 1 日占全季 20%」算成「每天都占全季 20%」。
+    # ⚠️⚠️ 按日算完还要**除以天数**再对外，否则量纲是「天数倍」：
+    #    67 天的区间裸累加会得到 14.75 = 1475%，前端没法当占比展示。
+    #    除完是「日均占比」（约等于区间总占比，但不受单日异常值放大）。
+    day_total: dict[str, dict[str, float]] = {}
+    for r in rows:
+        d = day_total.setdefault(r.date, {"cost": 0.0, "amount": 0.0})
+        d["cost"] += r.metrics.promotion_cost or 0.0
+        d["amount"] += r.metrics.promotion_amount or 0.0
+    for r in rows:
+        g = acc[r.spu]
+        dc = day_total[r.date]["cost"]
+        da = day_total[r.date]["amount"]
+        # 分母为 0 时该日无占比（跳过，不记 0 —— 0 会被当成「占比真的为 0」）
+        if dc > 0:
+            g["share_num"] += (r.metrics.promotion_cost or 0.0) / dc
+        if da > 0:
+            g["share_den"] += (r.metrics.promotion_amount or 0.0) / da
+    n_days = len(dates) or 1
+
+    # ---- 3. 构造算法输入 ----
+    items = [
+        PromoInput(spu=s, cost=g["cost"], roi=(g["amount"] / g["cost"]) if g["cost"] > 0 else None)
+        for s, g in acc.items()
+    ]
+    spus_in_order = [it.spu for it in items]
+
+    # ---- 3b. 波动校验：先算全部 CV，再统一判定 ----
+    # ⚠️ 必须分两步：店内的 CV 分位线要看完全部 SPU 的 CV 才能确定，
+    #    边算边判会让先算的品与后算的品用不同的阈值线。
+    cvs = [compute_roi_cv(acc[s]["daily"]) for s in spus_in_order]
+    flags = mark_unstable(cvs)
+    cv_by_spu = dict(zip(spus_in_order, cvs))
+    unstable_by_spu = dict(zip(spus_in_order, flags))
+
+    # ---- 4. 贪心分配 ----
+    result = greedy_allocate(items)
+    alloc_by_spu = {a.spu: a for a in result.allocations}
+
+    # ---- 5. 分档 + 文案 ----
+    quadrants = classify_quadrant(items)
+    # 分割线位置与分档同源（同一个 compute_quadrant_thresholds，见 promo.py 的说明）
+    roi_thr, cost_thr = compute_quadrant_thresholds(items)
+
+    out_spus: list[PromoSpu] = []
+    for it in items:
+        g = acc[it.spu]
+        a = alloc_by_spu[it.spu]
+        quad = quadrants.get(it.spu)
+        unstable = unstable_by_spu[it.spu]
+        out_spus.append(PromoSpu(
+            spu=it.spu,
+            spu_name=g["name"],
+            image=g["image"],
+            current_cost=it.cost,
+            current_amount=g["amount"],
+            roi=it.roi,
+            profit=g["amount"] - it.cost,
+            # 日均占比 = Σ(该品当日花费 / 该店当日总花费) ÷ 天数 ∈ [0,1]
+            cost_share=g["share_num"] / n_days,
+            amount_share=g["share_den"] / n_days,
+            roi_cv=cv_by_spu[it.spu],
+            unstable=unstable,
+            suggested_cost=a.suggested_cost,
+            delta=a.suggested_cost - it.cost,
+            quadrant=quad,
+            advice=build_advice(quad, it.roi, unstable=unstable,
+                                delta=a.suggested_cost - it.cost),
+            skipped=a.skipped,
+            skip_reason=a.skip_reason,
+        ))
+
+    # 按建议分配额降序：运营最关心「谁该多给钱」，且与贪心分配顺序一致
+    out_spus.sort(key=lambda x: (-x.suggested_cost, -x.current_cost))
+
+    # ---- 6. 空态判定 ----
+    # ⚠️ 顺序有讲究：先判「完全无推广数据」，再判「全部花费为 0」，
+    #    最后判「SPU 数不足」。三者可同时成立时，应报**最致命**的那个
+    #    （无任何行→ all_zero → too_few_spus）。
+    empty_reason: Optional[str] = None
+    has_promo = any(s.current_cost > 0 or s.current_amount > 0 for s in out_spus)
+    if not has_promo:
+        empty_reason = EMPTY_ALL_ZERO
+    elif len(out_spus) < MIN_SPU_FOR_QUADRANT:
+        # ⚠️ 不是致命错误：贪心仍可执行（1 个 SPU 时结果就是它自己，只是填不满预算），
+        #    仅四象限与分位数不可信。响应照常返回全部数字。
+        empty_reason = EMPTY_TOO_FEW_SPU
+
+    # 当前实际总成交 = 参与分配的那些品的成交之和
+    # ⚠️ 必须与 ideal 同口径：ideal 只累加了非跳过品，若这里用全部品的成交，
+    #    跳过品（无推广花费，成交额通常也不来自推广）会把达成率压到 100% 以下，
+    #    页面显示「可优化空间 > 0」却「达成率 < 1」之外还暗示有未计入的收益。
+    current_total = sum(s.current_amount for s in out_spus if not s.skipped)
+    gap, rate = compute_gap(current_total, result.ideal_total_amount)
+    over_conc = detect_over_concentrated(result.allocations, result.cap)
+
+    return PromoAnalysisOut(
+        shop=shop,
+        start=dates[0],
+        end=dates[-1],
+        date_range=[dates[0], dates[-1]],
+        total_cost=result.total_budget,
+        total_amount=sum(s.current_amount for s in out_spus),
+        current_total_amount=sum(s.current_amount for s in out_spus),
+        ideal_total_amount=result.ideal_total_amount,
+        conservative_total=result.conservative_total,
+        cap=result.cap,
+        unallocated=result.unallocated,
+        gap=gap,
+        achievement_rate=rate,
+        # SPU 数不足时分档由个别样本决定，明确告诉前端不可信
+        quadrant_reliable=(len(out_spus) >= MIN_SPU_FOR_QUADRANT),
+        roi_threshold=roi_thr,
+        cost_threshold=cost_thr,
+        over_concentrated=over_conc,
+        spus=out_spus,
+        empty_reason=empty_reason,
     )
 
 
