@@ -748,15 +748,16 @@ function goBack() {
 
       <!-- 工作日 vs 节假日（纵向条形图） -->
       <div class="compare-box" data-testid="spu-compare-box" v-if="compareRows.length">
-        <h3>
-          工作日 vs 节假日
+        <!-- 标题区：标题 / 天数说明 / 图例全部左上角纵向堆叠，下方主体才是图表 -->
+        <div class="cmp-head">
+          <h3>工作日 vs 节假日</h3>
           <span class="hint">
             工作日 {{ data.workday.days }} 天 · 节假日 {{ data.holiday.days }} 天（周末 + 法定节假日）
           </span>
-        </h3>
-        <div class="cmp-legend">
-          <span class="lg w">工作日</span>
-          <span class="lg h">节假日</span>
+          <div class="cmp-legend">
+            <span class="lg w">工作日</span>
+            <span class="lg h">节假日</span>
+          </div>
         </div>
         <div class="cmp-grid">
           <div v-for="row in compareRows" :key="row.key" class="cmp-card">
@@ -1121,21 +1122,22 @@ function goBack() {
   padding: 16px 20px;
   box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
 }
+.cmp-head {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  margin-bottom: 14px;
+}
 .compare-box h3 {
-  margin: 0 0 14px;
+  margin: 0;
   font-size: 14px;
   color: var(--color-text-2);
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 6px;
 }
 .cmp-legend {
   display: flex;
   align-items: center;
   gap: 18px;
-  margin-bottom: 12px;
   font-size: 12px;
   color: var(--color-text-3);
 }
