@@ -46,6 +46,8 @@ frontend/_*
 # scripts/ 下的一次性 .py 调试脚本（.ps1 不忽略：_install_tasks.ps1 /
 # _setup_daily_refresh.ps1 是被 .bat 调用的真实脚本）
 scripts/_*.py
+# CDP / 临时调试产物：测试日志、截图、一次性脚本（可再生，不入库）
+.scratch/
 
 # ========== 编辑器 / 系统文件 ==========
 .vscode/

@@ -150,6 +150,8 @@ npm install
 npm run dev        # http://localhost:5173
 ```
 
+> ⚠️ `vite.config.ts` 的代理目标固定为 `127.0.0.1`（**不要改回 `localhost`**）：本机 `localhost` 会被 Node 20+ 解析成 IPv6 `::1`，而 uvicorn 只监听 IPv4，导致 dev 下 `/api` 与 `/images` 整站 502；`curl localhost` 正常会误导。
+
 生产模式（构建后由 FastAPI 直接托管，单端口交付）：
 
 ```bash
@@ -310,5 +312,6 @@ server {
 | 端口 8000 被占用 | uvicorn 启动失败「地址已被占用」。`netstat -ano \| findstr :8000` 取 PID → `Stop-Process -Id <PID> -Force`；或改用其他端口（`--port 8100`，同时改 `vite.config.ts` 的代理目标） |
 | 推广指标全是 `--` | 正常：明细表本身不含推广列，需店铺的 `推广数据_*.csv`（京准通报表）才会左连接补上 |
 | 图片裂 | 确认 `单品spu图片/` 下有对应 `{spu}.png`，重跑批处理会重新拷贝 |
+| `npm run dev` 整站 502（`/api` 与图片全挂，但生产模式正常） | 代理目标 `localhost` 被 Node 20+ 解析成 IPv6 `::1`，连不上只听 IPv4 的 uvicorn → ECONNREFUSED。`vite.config.ts` 代理目标已固定为 `127.0.0.1`；若仍 502 需**重启 `npm run dev`** 让新配置生效（仅改配置不重启无效），并 Ctrl+F5 强刷 |
 | 手动刷新慢 | 刷新是同步重跑批处理，数据量大时按钮转圈几秒属正常；也可用 `scripts/refresh_data.py`（不依赖服务） |
 | 页面出现新的未登记店铺/SPU | 数据范围由 `ResourceData/店铺spu登记信息.xlsx` 白名单门控，未登记的不出现；改数据源不会自动新增 |
