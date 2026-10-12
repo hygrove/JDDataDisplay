@@ -617,6 +617,18 @@ function barPct(v: number, row: CompareRow): string {
 }
 
 /**
+ * 柱状图的两档固定尺寸（像素）。
+ *
+ * @remarks
+ * 轨道高度是柱体百分比填充的「锚点」：一旦它退化为 auto，
+ * 子元素的 `height: xx%` 会失去参照而撑成通天柱（曾在个别浏览器上出现）。
+ * 因此这两个值同时写进内联样式，随 DOM 下发、不依赖样式表是否命中，
+ * CSS 里的同名声明只作为语义化备份。
+ */
+const TRACK_H = "140px";
+const BARS_H = "180px";
+
+/**
  * 返回模块列表页。
  *
  * @returns {void} 无返回值。
@@ -762,17 +774,17 @@ function goBack() {
         <div class="cmp-grid">
           <div v-for="row in compareRows" :key="row.key" class="cmp-card">
             <div class="cmp-label">{{ row.label }}</div>
-            <div class="cmp-bars">
+            <div class="cmp-bars" :style="{ height: BARS_H }">
               <div class="vbar">
                 <span class="bar-val">{{ row.workday }}</span>
-                <div class="vbar-track">
+                <div class="vbar-track" :style="{ height: TRACK_H }">
                   <div class="vbar-fill w" :style="{ height: barPct(row.w, row) }"></div>
                 </div>
                 <span class="bar-cap">工作日</span>
               </div>
               <div class="vbar">
                 <span class="bar-val">{{ row.holiday }}</span>
-                <div class="vbar-track">
+                <div class="vbar-track" :style="{ height: TRACK_H }">
                   <div class="vbar-fill h" :style="{ height: barPct(row.h, row) }"></div>
                 </div>
                 <span class="bar-cap">节假日</span>
@@ -1128,6 +1140,8 @@ function goBack() {
   align-items: flex-start;
   gap: 6px;
   margin-bottom: 14px;
+  /* 标题区是固定内容高度，不参与父级纵向分配 */
+  flex: none;
 }
 .compare-box h3 {
   margin: 0;
@@ -1140,6 +1154,7 @@ function goBack() {
   gap: 18px;
   font-size: 12px;
   color: var(--color-text-3);
+  flex: none;
 }
 .lg::before {
   content: "";
@@ -1160,6 +1175,8 @@ function goBack() {
   display: flex;
   flex-wrap: wrap;
   gap: 18px;
+  /* 卡片按内容高度排列，不被拉伸成等高 */
+  align-items: flex-start;
 }
 .cmp-card {
   display: flex;
@@ -1167,6 +1184,8 @@ function goBack() {
   align-items: center;
   gap: 10px;
   min-width: 130px;
+  /* 卡片高度由内容决定；与 .cmp-bars 的 flex:none 一起切断 stretch 链 */
+  flex: none;
 }
 .cmp-label {
   font-size: 12.5px;
@@ -1177,7 +1196,9 @@ function goBack() {
   display: flex;
   align-items: flex-end;
   gap: 18px;
+  /* 高度同时由内联样式给出；此处为语义化备份，flex:none 防止被父级拉伸 */
   height: 180px;
+  flex: none;
 }
 .vbar {
   display: flex;
@@ -1185,10 +1206,16 @@ function goBack() {
   align-items: center;
   gap: 5px;
   width: 52px;
+  /* 关键：禁止 flex 布局重新分配轨道高度 */
+  flex: none;
+  height: auto;
 }
 .vbar-track {
   width: 30px;
   height: 140px;
+  /* 百分比填充的锚点：显式 box-sizing + flex:none，杜绝被撑高/被压缩 */
+  flex: none;
+  box-sizing: border-box;
   background: var(--color-bg);
   border-radius: var(--radius-sm);
   display: flex;
@@ -1200,6 +1227,8 @@ function goBack() {
   border-radius: 4px 4px 0 0;
   transition: height 0.4s ease;
   min-height: 2px;
+  /* 填充块不参与 flex 尺寸计算，高度完全由内联百分比决定 */
+  flex: none;
 }
 .vbar-fill.w {
   background: linear-gradient(180deg, var(--color-danger-2), var(--color-brand));
