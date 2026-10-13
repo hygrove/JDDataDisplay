@@ -10,6 +10,7 @@
   PG_DSN                 PostgreSQL 连接串，留空则跳过数据库源
   BATCH_RETRY_ENABLED    是否启用重试（默认关闭）
   BATCH_RETRY_MAX_ATTEMPTS / BATCH_RETRY_BASE_DELAY  重试次数与退避基数
+  JD_ORGANIZE            源表整理器执行模式 off | dry-run（默认）| on
 
 示例：
     >>> from backend.jobs import config
@@ -73,3 +74,9 @@ RETRY_BASE_DELAY = float(os.getenv("BATCH_RETRY_BASE_DELAY", "2.0"))
 # ---- 批处理参数 ----
 # SUMMARY_TOP_N：模块汇总 summary 里「TOP SPU」榜单保留的条数
 SUMMARY_TOP_N = 10
+
+# ORGANIZE_MODE：源表整理器的执行模式，取值 off | dry-run | on。
+# ⚠️ 默认 **dry-run**：真实目录上「什么都不搬」必须是默认行为——首次归档是整个设计里
+#    规模最大的一次不可逆动作，必须先由人工过目再转全自动（ADR-0002 / Q13）。
+#    只有显式设成 on 才会真搬文件。语义与校验见 organize.resolve_mode。
+ORGANIZE_MODE = os.getenv("JD_ORGANIZE", "dry-run")

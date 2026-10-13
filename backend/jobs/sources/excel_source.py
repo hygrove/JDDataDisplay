@@ -85,6 +85,10 @@ def load_spu_name_map(root: Path | None = None) -> dict[str, str]:
         wb = openpyxl.load_workbook(src, read_only=True, data_only=True)
         ws = wb.active
         rows = list(ws.iter_rows(values_only=True))
+        # rows 已是物化列表（与 wb 无引用关系），此处立即关闭以释放文件句柄：
+        # read_only 模式不显式 close 时，openpyxl 的引用环只能等循环 GC 回收，
+        # 在 Windows 上表现为「文件仍被占用」——整理器「先读 key 再搬同一文件」会因此搬不动。
+        wb.close()
         if not rows:
             return {}
         header = [str(c).strip() if c is not None else "" for c in rows[0]]
@@ -164,6 +168,8 @@ def load_spu_whitelist(root: Path | None = None) -> dict[str, set[str]]:
         wb = openpyxl.load_workbook(src, read_only=True, data_only=True)
         ws = wb.active
         rows = list(ws.iter_rows(values_only=True))
+        # 同 load_spu_name_map：rows 已物化，立即关闭释放句柄（否则 Windows 上文件被占用）
+        wb.close()
         if not rows:
             return {}
         header = [str(c).strip() if c is not None else "" for c in rows[0]]
