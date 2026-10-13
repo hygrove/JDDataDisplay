@@ -235,6 +235,8 @@ function fmtAvg(format: MetricFormat, v: number | null | undefined): string {
 interface CardVM {
   key: string;
   title: string;
+  icon: string;
+  group: string;
   groupTag: string;
   single: boolean;
   missing: boolean;
@@ -259,7 +261,7 @@ const cards = computed<CardVM[]>(() => {
     const groupTag = GROUP_LABEL[s.group] ?? "";
     // 单日模式：维持原单值卡片
     if (days <= 1) {
-      return { key: s.key as string, title: s.title, groupTag, single: true, missing, text: fmtBy(s.format, val) };
+      return { key: s.key as string, title: s.title, icon: s.icon, group: s.group, groupTag, single: true, missing, text: fmtBy(s.format, val) };
     }
     // 范围模式：求和块 + 平均值块
     if (s.agg.kind === "ratio") {
@@ -270,6 +272,8 @@ const cards = computed<CardVM[]>(() => {
       return {
         key: s.key as string,
         title: s.title,
+        icon: s.icon,
+        group: s.group,
         groupTag,
         single: false,
         kind: "ratio",
@@ -287,11 +291,13 @@ const cards = computed<CardVM[]>(() => {
     // 求和类：平均值 = 日均
     const avg = typeof val === "number" ? val / days : null;
     return {
-      key: s.key as string,
-      title: s.title,
-      groupTag,
-      single: false,
-      kind: "sum",
+        key: s.key as string,
+        title: s.title,
+        icon: s.icon,
+        group: s.group,
+        groupTag,
+        single: false,
+        kind: "sum",
       missing,
       sumMain: fmtBy(s.format, val),
       sumSub: `日均 ${fmtAvg(s.format, avg)} · ${days} 天`,
@@ -617,16 +623,20 @@ function barPct(v: number, row: CompareRow): string {
 }
 
 /**
- * 柱状图的两档固定尺寸（像素）。
+ * 柱状图的轨道高度（像素）。
  *
  * @remarks
  * 轨道高度是柱体百分比填充的「锚点」：一旦它退化为 auto，
  * 子元素的 `height: xx%` 会失去参照而撑成通天柱（曾在个别浏览器上出现）。
- * 因此这两个值同时写进内联样式，随 DOM 下发、不依赖样式表是否命中，
+ * 因此该值同时写进内联样式，随 DOM 下发、不依赖样式表是否命中，
  * CSS 里的同名声明只作为语义化备份。
+ *
+ * ⚠️ 外层容器 .cmp-bars 刻意**不设固定高度**：曾用 height:180px +
+ * align-items:flex-end 反推位置，而内容实际高 183px，溢出向上会让
+ * 「文字行高一变、整根柱子就跟着漂」，同一份代码在 Chrome 正常、Edge 错位。
+ * 现在改为内容自然撑开，各段高度互不影响。详见 .cmp-bars 的 CSS 注释。
  */
 const TRACK_H = "140px";
-const BARS_H = "180px";
 
 /**
  * 返回模块列表页。
@@ -694,49 +704,49 @@ function goBack() {
         </div>
       </div>
 
-      <!-- 月份对比：默认收起（点击展开）。取数走 /spu/:spu/analysis 的区间参数，后端零改动 -->
-      <MonthCompareTable :module-id="props.moduleId" :spu="props.spu" :shop="shop" :data-range="fullRange" />
-
       <!-- 指标卡（与明细页同一份勾选）：单日=单值，范围=求和+平均值两块 -->
       <div class="cards" data-testid="spu-cards">
         <template v-if="cards.length">
-          <div v-for="c in cards" :key="c.key" class="card">
-            <div class="ctitle"><span>{{ c.title }}</span><span v-if="c.groupTag" class="tag">{{ c.groupTag }}</span></div>
+          <div v-for="c in cards" :key="c.key" class="card" :class="'g-' + c.group">
+            <div class="chead">
+              <span class="cico"><MetricIcon :name="c.icon" :size="17" /></span>
+              <div class="cheadtxt">
+                <div class="ctitle2">{{ c.title }}</div>
+                <div class="ctag" v-if="c.groupTag">{{ c.groupTag }}</div>
+              </div>
+            </div>
 
             <template v-if="c.single">
-              <div class="card-value" :class="{ missing: c.missing }">{{ c.text }}</div>
+              <div class="csumlab">当日数值</div>
+              <div class="cval" :class="{ missing: c.missing }">{{ c.text }}</div>
             </template>
             <template v-else>
-              <div class="part sum">
-                <div class="plabel"><span class="dot"></span>求和 · 区间累计</div>
-                <template v-if="c.sumPairs">
-                  <div v-for="(p, i) in c.sumPairs" :key="i" class="prow">
-                    <span class="plab">{{ p.label }}</span>
-                    <span class="pnum">{{ p.value }}</span>
-                  </div>
-                </template>
-                <template v-else>
-                  <div class="pval" :class="{ missing: c.missing }">{{ c.sumMain }}</div>
-                  <div class="psub">{{ c.sumSub }}</div>
-                </template>
+              <div class="csumlab">求和 · 区间累计</div>
+              <template v-if="c.sumPairs">
+                <div v-for="(p, i) in c.sumPairs" :key="i" class="cpair">
+                  <span class="cplab">{{ p.label }}</span>
+                  <span class="cpnum">{{ p.value }}</span>
+                </div>
+              </template>
+              <template v-else>
+                <div class="cval" :class="{ missing: c.missing }">{{ c.sumMain }}</div>
+                <div class="csub">{{ c.sumSub }}</div>
+              </template>
+              <div class="cavgrow">
+                <span class="cavglab">{{ c.avgLabel }}</span>
+                <span class="cavgval" :class="{ missing: c.missing }">{{ c.avgMain }}</span>
               </div>
-              <div class="pdiv"></div>
-              <div class="part avg">
-                <div class="plabel"><span class="dot"></span>{{ c.avgLabel }}</div>
-                <div class="pval avgv" :class="{ missing: c.missing }">{{ c.avgMain }}</div>
-                <div class="psub">{{ c.avgSub }}</div>
-              </div>
+              <div class="cavgsub">{{ c.avgSub }}</div>
             </template>
           </div>
         </template>
         <div v-else class="empty-cards">未勾选任何指标，点击右上角「指标配置」选择要展示的指标</div>
       </div>
 
-      <!-- 综合分析（上移至卡片下方，先给结论再给趋势） -->
-      <div class="insight" data-testid="spu-insight">
-        <h3>综合分析</h3>
-        <p>{{ data.insight }}</p>
-      </div>
+      <!-- 月份对比：已上移到指标卡正下方，并改为默认展开（2026-10-13）。
+           取数走 /spu/:spu/analysis 的区间参数，后端零改动。
+           原先位于卡片**上方**且默认收起；现作为主线内容直接呈现。 -->
+      <MonthCompareTable :module-id="props.moduleId" :spu="props.spu" :shop="shop" :data-range="fullRange" />
 
       <!-- 趋势图：3 张（成交转化率&访客数 双轴 / 成交金额&搜索点击率 双轴 / 推广占比） -->
       <div class="charts" data-testid="spu-charts" v-if="trendCharts.length">
@@ -774,7 +784,7 @@ function goBack() {
         <div class="cmp-grid">
           <div v-for="row in compareRows" :key="row.key" class="cmp-card">
             <div class="cmp-label">{{ row.label }}</div>
-            <div class="cmp-bars" :style="{ height: BARS_H }">
+            <div class="cmp-bars">
               <div class="vbar">
                 <span class="bar-val">{{ row.workday }}</span>
                 <div class="vbar-track" :style="{ height: TRACK_H }">
@@ -918,7 +928,7 @@ function goBack() {
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-xl);
-  padding: 14px 16px;
+  padding: 14px 16px 14px 18px;
   overflow: hidden;
   transition: box-shadow 0.18s, transform 0.18s;
 }
@@ -948,126 +958,142 @@ function goBack() {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.card-value {
-  font-size: 20px;
-  font-weight: 700;
-  color: var(--color-text-strong);
-  font-variant-numeric: tabular-nums;
+/* ---------- 方案 C：色徽身份 ----------
+   设计要点：拆掉卡片内嵌套的「小盒子」，层级全靠间距与字号；
+   左侧渐变竖条常驻（按组着色，不再只在 hover 闪现）；
+   标题旁配 iOS 风图标徽章；比率卡与求和卡共用同一套骨架。
+   组色：明细=品牌红 / 推广=蓝 / 退款=琥珀。 */
+.card::before {
+  opacity: 1;
 }
-.card-value.missing {
-  color: var(--color-text-5);
+.card.g-detail::before {
+  background: linear-gradient(180deg, var(--color-brand), #fca5a5);
 }
-/* ---------- 指标卡：范围模式 求和/平均值 两块 ---------- */
-.ctitle {
+.card.g-promo::before {
+  background: linear-gradient(180deg, var(--color-link), #93c5fd);
+}
+.card.g-extra::before {
+  background: linear-gradient(180deg, #f59e0b, #fcd34d);
+}
+/* 标题区：图标徽章 + 标题 + 组标签 */
+.chead {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--color-text-2);
-  margin-bottom: 10px;
+  gap: 10px;
+  margin-bottom: 13px;
 }
-.ctitle .tag {
-  font-size: 10.5px;
-  font-weight: 500;
-  color: var(--color-text-3);
-  border: 1px solid var(--color-text-6);
-  border-radius: var(--radius-sm);
-  padding: 1px 6px;
-}
-/* 指标卡标题前的小图标，hover 卡片时放大变红 */
-.ctitle-left {
-  display: inline-flex;
+.cico {
+  width: 34px;
+  height: 34px;
+  flex: none;
+  border-radius: var(--radius-lg);
+  display: flex;
   align-items: center;
-  gap: 6px;
+  justify-content: center;
+  background: var(--color-brand-tint);
+  color: var(--color-brand);
+  transition: transform 0.18s, box-shadow 0.18s;
+}
+.card:hover .cico {
+  transform: scale(1.08);
+  box-shadow: 0 2px 6px rgba(225, 37, 27, 0.18);
+}
+.card.g-detail .cico { background: var(--color-brand-tint); color: var(--color-brand); }
+.card.g-promo .cico { background: #eff6ff; color: var(--color-link); }
+.card.g-extra .cico { background: #fff7ed; color: #f59e0b; }
+.card.g-promo:hover .cico { box-shadow: 0 2px 6px rgba(37, 99, 235, 0.18); }
+.card.g-extra:hover .cico { box-shadow: 0 2px 6px rgba(245, 158, 11, 0.18); }
+.cheadtxt {
+  flex: 1;
   min-width: 0;
 }
-.m-ico {
-  flex: none;
-  width: 16px;
-  height: 16px;
-  color: var(--color-text-4);
-  display: inline-flex;
-  align-items: center;
-  transition: transform 0.15s, color 0.15s;
+.ctitle2 {
+  font-size: 13.5px;
+  color: var(--color-text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.card:hover .m-ico {
-  color: var(--color-brand);
-  transform: scale(1.15);
+.ctag {
+  font-size: 10.5px;
+  color: var(--color-text-5);
+  margin-top: 1px;
 }
-.part {
-  border-radius: var(--radius-lg);
-  padding: 9px 11px;
-}
-.part.sum {
-  background: var(--color-surface-2);
-  border: 1px solid var(--color-border-2);
-}
-.part.avg {
-  background: var(--color-brand-tint-3);
-  border: 1px solid var(--color-brand-border);
-}
-.plabel {
-  display: flex;
-  align-items: center;
-  gap: 6px;
+.csumlab {
   font-size: 11px;
-  color: var(--color-text-3);
-  margin-bottom: 6px;
+  color: var(--color-text-5);
+  letter-spacing: 0.5px;
+  margin-bottom: 4px;
 }
-.plabel .dot {
-  width: 7px;
-  height: 7px;
-  border-radius: var(--radius-xs);
-  background: var(--color-text-3);
-}
-.part.avg .plabel .dot {
-  background: var(--color-brand);
-}
-.pval {
-  font-size: 18px;
-  font-weight: 700;
+.cval {
+  font-size: 26px;
+  font-weight: 400;
   color: var(--color-text-strong);
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.3px;
+  line-height: 1.2;
 }
-.pval.missing {
+.cval.missing {
   color: var(--color-text-5);
 }
-.pval.avgv {
-  color: var(--color-brand);
+.csub {
+  font-size: 11px;
+  color: var(--color-text-4);
+  margin-top: 5px;
+  font-variant-numeric: tabular-nums;
 }
-/* 比率类求和块：小灰标签 + 数据 并排；右对齐，空间不足时整行换行，避免溢出卡片 */
-.prow {
+/* 比率类求和块：标签 + 数值 轻行并排 */
+.cpair {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 3px 6px;
-  margin-top: 3px;
+  gap: 6px;
+  margin-top: 5px;
 }
-.plab {
-  font-size: 11px;
+.cplab {
+  font-size: 11.5px;
   color: var(--color-text-4);
   white-space: nowrap;
 }
-.pnum {
-  font-size: 15px;
-  font-weight: 600;
+.cpnum {
+  font-size: 16px;
+  font-weight: 400;
   color: var(--color-text-strong);
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.2px;
   margin-left: auto;
   overflow-wrap: anywhere;
 }
-.psub {
-  font-size: 11px;
-  color: var(--color-text-4);
-  margin-top: 4px;
-  font-variant-numeric: tabular-nums;
+/* 平均值：与求和区以细分隔线划分，仅以品牌红点睛 */
+.cavgrow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--color-border-4);
 }
-.pdiv {
-  height: 8px;
+.cavglab {
+  font-size: 11.5px;
+  color: var(--color-text-4);
+  white-space: nowrap;
+}
+.cavgval {
+  font-size: 20px;
+  font-weight: 400;
+  color: var(--color-brand);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.2px;
+}
+.cavgval.missing {
+  color: var(--color-text-5);
+}
+.cavgsub {
+  font-size: 11px;
+  color: var(--color-text-5);
+  margin-top: 2px;
+  font-variant-numeric: tabular-nums;
 }
 .empty-cards {
   grid-column: 1 / -1;
@@ -1186,41 +1212,66 @@ function goBack() {
   min-width: 130px;
   /* 卡片高度由内容决定；与 .cmp-bars 的 flex:none 一起切断 stretch 链 */
   flex: none;
+  /* 宽度显式兜底，防止 flex item 的 min-width:auto 被内容撑大 */
+  max-width: 100%;
 }
 .cmp-label {
   font-size: 12.5px;
+  /* 行高归一：与 .bar-val 同样处理，标签高度不再受字体度量影响 */
+  line-height: 1.4;
   color: var(--color-text-3);
   text-align: center;
 }
 .cmp-bars {
   display: flex;
-  align-items: flex-end;
+  align-items: flex-start;
+  justify-content: center;
   gap: 18px;
-  /* 高度同时由内联样式给出；此处为语义化备份，flex:none 防止被父级拉伸 */
-  height: 180px;
+  /* ⚠️ 刻意**不定高**：高度交给 .vbar 自然撑开。
+   *
+   * 跨浏览器兼容性的关键（Edge 曾与 Chrome 布局不一致）：
+   *   早期这里是 height:180px + align-items:flex-end，靠「内容撑开 .vbar、
+   *   再由底部对齐反推轨道位置」。但 .vbar 内容实际高 183px（数值17+间距5+
+   *   轨道140+间距5+文字16），比容器高 3px，溢出**全部向上**——
+   *   于是文字行高一变，整根柱子就跟着漂。而行高取决于字体度量
+   *   （字体回退结果、系统字号设置、浏览器默认行距），同一份代码
+   *   在 Chrome 正常、Edge 错位。
+   *
+   * 改为不定高后：溢出不可能发生，轨道位置只由 .vbar 内部的
+   * 「块级流顺序」决定，不再有「从底部反推」这一步 → 与字体度量解耦。
+   */
   flex: none;
 }
 .vbar {
+  /* 普通块级流：数值 / 轨道 / 文字三段依次排布，各段高度互不影响 */
   display: flex;
   flex-direction: column;
   align-items: center;
+  /* 数值↔轨道、轨道↔文字的间距由 gap 统一提供（flex gap 在各浏览器一致） */
   gap: 5px;
   width: 52px;
-  /* 关键：禁止 flex 布局重新分配轨道高度 */
   flex: none;
-  height: auto;
+}
+.bar-val {
+  font-size: 12px;
+  /* 显式行高而非 normal：normal 会随字体回退变化，导致上方间距漂移 */
+  line-height: 16px;
+  color: var(--color-text-2);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 .vbar-track {
+  /* 上下间距由 .vbar 的 gap 提供，这里不再自带 margin */
   width: 30px;
-  height: 140px;
-  /* 百分比填充的锚点：显式 box-sizing + flex:none，杜绝被撑高/被压缩 */
-  flex: none;
   box-sizing: border-box;
   background: var(--color-bg);
   border-radius: var(--radius-sm);
   display: flex;
   align-items: flex-end;
   overflow: hidden;
+  /* 百分比填充的锚点：内联 height 随 DOM 下发，此处仅作语义化备份 */
+  height: 140px;
+  flex: none;
 }
 .vbar-fill {
   width: 100%;
@@ -1236,35 +1287,14 @@ function goBack() {
 .vbar-fill.h {
   background: linear-gradient(180deg, var(--color-link-2), var(--color-link));
 }
-.bar-val {
-  font-size: 12px;
-  color: var(--color-text-2);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
 .bar-cap {
   font-size: 11px;
+  line-height: 16px;
   color: var(--color-text-4);
 }
-/* ---------- 综合分析 ---------- */
-.insight {
-  background: linear-gradient(135deg, var(--color-brand-tint-3), var(--color-surface));
-  border: 1px solid var(--color-brand-border);
-  border-left: 4px solid var(--color-brand);
-  border-radius: var(--radius-xl);
-  padding: 16px 20px;
-}
-.insight h3 {
-  margin: 0 0 10px;
-  font-size: 16px;
-  color: var(--color-brand);
-}
-.insight p {
-  margin: 0;
-  font-size: 15px;
-  line-height: 2;
-  color: var(--color-text-2);
-}
+/* ⚠️ 「综合分析」块（原 .insight）已于 2026-10-13 从页面移除，相关样式一并删除。
+   ⚠️ 后端 analysis.py 仍在生成 insight 文案、types.ts 仍保留该字段，
+      若将来要恢复展示，需同时补回这里的样式。 */
 @media (max-width: 900px) {
   .charts {
     grid-template-columns: 1fr;

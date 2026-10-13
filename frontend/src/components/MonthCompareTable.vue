@@ -54,8 +54,18 @@ const props = defineProps<{
 
 /* ---------------- 月份选择（多选） ---------------- */
 
-/** 面板是否展开（默认收起：单品分析页已有指标卡与趋势图，本块不抢视觉） */
-const expanded = ref(false);
+/**
+ * 面板是否展开。
+ *
+ * @remarks
+ * **默认展开**（2026-10-13 改）：本块已上移到指标卡正下方、成为单品分析页的
+ * 主线内容之一，不再是「收起的可选附属块」，故默认即展开、用户可直接看到对比。
+ *
+ * ⚠️ 默认展开时必须在 `onMounted` 里补一次「初始化月份 + 取数」：
+ * 原本这段逻辑挂在 `toggle()` 里（首次点开才触发），默认展开后用户不会点击，
+ * 若不补调用则面板展开但内容为空。
+ */
+const expanded = ref(true);
 
 /* ---------------- 折叠头「可点击」提示 ---------------- */
 
@@ -79,6 +89,11 @@ const hintPulse = ref(false);
 const HINT_KEY = "jd.mc-hint-shown";
 
 onMounted(() => {
+  // ⚠️ 默认展开：补上原本只在「首次点击展开」时才做的初始化与取数，
+  // 否则面板是开的却没有月份数据（表现为「空白表格 + 没有任何月份 chip」）
+  if (expanded.value && selectedMonths.value.length === 0) initDefaults();
+  if (expanded.value) void load();
+
   try {
     if (sessionStorage.getItem(HINT_KEY)) return;
     sessionStorage.setItem(HINT_KEY, "1");
@@ -116,28 +131,15 @@ function isRowExpanded(key: string): boolean {
   return expandedRowKeys.value.has(key);
 }
 
-/** 箭头固定为方案二（渐长虚线 + 大三角头）；用户确认只保留此方案，已移除方案一及其切换。 */
+/** 表内箭头：方案 A（圆点串 + 细 chevron + 呼吸），时间轴与之风格统一。 */
 
 
 /**
- * 方案二（虚线）的渐长虚线段几何：线宽从 3px 逐段加宽到 ~14px、间距恒定 4px，
- * 模拟「越靠近箭头越粗」的透视感（用户提供的图片2）；终点 101px 处衔接三角箭头。
- * 与样式无关的静态几何，只需算一次，无需响应式。
- *
- * @returns {{ x: number; w: number }[]} 虚线段列表（x = 起点、w = 段宽，viewBox 坐标）。
+ * 表内箭头本体（方案 A）：内联 SVG 画「圆点串 + 细 chevron」，
+ * 颜色由 .mc-arrow 的 .up/.down/.flat 类提供（红涨绿跌，颜色经 dirClass 反转）。
+ * 圆点串用一条 <line> + stroke-dasharray 画，chevron 为独立 <path> 以便做呼吸动画。
+ * 几何（viewBox 0 0 116 12）写死在模板里，无需 JS。
  */
-const arrowDashes = (() => {
-  const out: { x: number; w: number }[] = [];
-  let x = 0;
-  let w = 3;
-  // 逐段推进：段宽递增、留 4px 间隙；超出箭头主体（101px）即停，剩余留给三角头
-  while (x + w < 100) {
-    out.push({ x, w });
-    x += w + 4;
-    w += 1.6;
-  }
-  return out;
-})();
 
 /**
  * 某月对应的日期区间（与数据可用区间取交集）。
@@ -665,7 +667,14 @@ function tlOf(key: string) {
   const yBot = 150;
   const ys = nums.map((num) => yBot - ((num - lo) / (hi - lo)) * (yBot - yTop));
   // 仅在有值相邻月之间算 diff（跳过空月）
-  const segs: { x: number; y: number; diffText: string; deltaText: string; dir: number }[] = [];
+  const segs: {
+    x: number; y: number; diffText: string; deltaText: string; dir: number;
+    dot1: { x: number; y: number }; dot2: { x: number; y: number }; chevD: string;
+  }[] = [];
+  // 箭头几何间距常量（适配节点半径 R = tl.r = 4）：
+  // 圆点起点距上一圆点边缘 6px；圆点终点 → chevron 尾部 4px（提前消失）；chevron 尖端 → 目标圆点边缘 4px。
+  // ⚠️ ux 指向 S→T，chevron 的 back = tip - ux·CHEV_LEN 离 T 更远，故 chevron 与圆点串自然都在节点之外，不会相交。
+  const GAP_SRC = 6, GAP_DC = 4, GAP_TIP = 4, CHEV_LEN = 4, CHEV_HALF = 3.2;
   for (let i = 0; i < n - 1; i++) {
     const diff = vals[i + 1].raw - vals[i].raw;
     const dir = diff === 0 ? 0 : diff > 0 ? 1 : -1;
@@ -680,7 +689,26 @@ function tlOf(key: string) {
       deltaText = `${r > 0 ? "+" : r < 0 ? "−" : ""}${(Math.abs(r) * 100).toFixed(1)}%`;
     }
     // 气泡整体上移：两行文本需要更高的净空，避免压到节点/连线
-    segs.push({ x: (xs[i] + xs[i + 1]) / 2, y: Math.min(ys[i], ys[i + 1]) - 26, diffText, deltaText, dir });
+    const bx = (xs[i] + xs[i + 1]) / 2;
+    const by = Math.min(ys[i], ys[i + 1]) - 26;
+    // 圆点串起点/终点 + chevron 路径：按线段角度（atan2）算出，方向着色在模板里按 dir 取色
+    const R = 4; // 节点半径（= 下文返回的 r: 4）
+    const dx = xs[i + 1] - xs[i], dy = ys[i + 1] - ys[i];
+    const L = Math.sqrt(dx * dx + dy * dy) || 1;
+    const ux = dx / L, uy = dy / L;     // 沿线单位向量
+    const px = -uy, py = ux;            // 垂直向量
+    const s1x = xs[i] + ux * (R + GAP_SRC), s1y = ys[i] + uy * (R + GAP_SRC);
+    const tipX = xs[i + 1] - ux * (R + GAP_TIP), tipY = ys[i + 1] - uy * (R + GAP_TIP);
+    const bakX = tipX - ux * CHEV_LEN, bakY = tipY - uy * CHEV_LEN;
+    const e1x = bakX - ux * GAP_DC, e1y = bakY - uy * GAP_DC;
+    const p1x = bakX + px * CHEV_HALF, p1y = bakY + py * CHEV_HALF;
+    const p2x = bakX - px * CHEV_HALF, p2y = bakY - py * CHEV_HALF;
+    const f = (v: number) => v.toFixed(2);
+    segs.push({
+      x: bx, y: by, diffText, deltaText, dir,
+      dot1: { x: s1x, y: s1y }, dot2: { x: e1x, y: e1y },
+      chevD: `M${f(p1x)} ${f(p1y)} L${f(tipX)} ${f(tipY)} L${f(p2x)} ${f(p2y)}`,
+    });
   }
   return {
     n,
@@ -748,6 +776,11 @@ const hasAnyData = computed(() => Object.values(aggMap.value).some((v) => v !== 
       <!-- 收起指示符：素材三角（右箭头.svg）。外层 span 只负责占位，内层 svg 负责旋转——
          三角宽高比非 1:1，若直接旋转 svg 元素会因宽高互换导致展开/收起时抖動 -->
       <span class="mc-caret" :class="{ up: expanded, pulse: hintPulse }">
+        <!-- 展开态收起召唤：内容已展开，在三角**左侧**明示「再点这里可收起」，
+            与收起态的「点击展开」对称。
+            ⚠️ 刻意放在 .mc-caret 内、<svg> 之前：既贴着三角、又保持三角的
+            xpath（.../button/span[3]/svg/path）不变，便于既有选择器继续命中三角。 -->
+        <span v-if="expanded" class="mc-collapse-hint">点击收起</span>
         <svg viewBox="294 159 428 706" aria-hidden="true">
           <path d="M715.8 493.5L335 165.1c-14.2-12.2-35-1.2-35 18.5v656.8c0 19.7 20.8 30.7 35 18.5l380.8-328.4c10.9-9.4 10.9-27.6 0-37z" />
         </svg>
@@ -822,16 +855,17 @@ const hasAnyData = computed(() => Object.values(aggMap.value).some((v) => v !== 
                 <div class="mc-seq">
                   <template v-for="(c, ci) in cells" :key="'r' + r.key + ci">
                     <div v-if="c.type === 'val'" class="mc-val">{{ r.row!.monthVals[c.idx!].text }}</div>
-                    <div v-else class="mc-arrow">
+                    <div v-else class="mc-arrow" :class="dirClass(r.row!.segments[c.sidx!])">
                       <span class="bubble" :class="dirClass(r.row!.segments[c.sidx!])">
                         <span class="bubble-diff">{{ r.row!.segments[c.sidx!].diffText }}</span>
                         <span class="bubble-delta">{{ r.row!.segments[c.sidx!].deltaText }}</span>
                       </span>
-                      <!-- 箭头本体：内联 SVG，渐长虚线段 + 三角头。⚠️ 这里的三角头属于「月份连线箭头」，
-                           与指标行的展开三角是两回事，不要混用素材 -->
-                      <svg class="line" viewBox="0 0 116 12" aria-hidden="true">
-                        <rect v-for="(d, di) in arrowDashes" :key="'d' + di" :x="d.x" y="4.5" :width="d.w" height="3" rx="1" fill="currentColor" />
-                        <polygon points="103,1 115,6 103,11" fill="currentColor" />
+                      <!-- 箭头本体：内联 SVG，圆点串（flow）+ 细 chevron（breathe）。
+                           ⚠️ 这里的 chevron 属于「月份连线箭头」，与指标行的展开三角是两回事，不要混用素材。
+                           颜色由 .mc-arrow 的 .up/.down/.flat 决定（红涨绿跌经 dirClass 反转）。 -->
+                      <svg class="line" viewBox="0 0 116 12" preserveAspectRatio="none" aria-hidden="true">
+                        <line x1="4" y1="6" x2="104" y2="6" stroke="currentColor" stroke-width="2.6" stroke-dasharray="0.1 7" stroke-linecap="round" class="mc-dot-flow" />
+                        <path class="mc-chev-breathe" d="M108 2 L114 6 L108 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
                       </svg>
                     </div>
                   </template>
@@ -866,29 +900,38 @@ const hasAnyData = computed(() => Object.values(aggMap.value).some((v) => v !== 
                   :aria-label="r.title + ' 时间轴'"
                 >
                   <title>{{ r.title }} 时间轴</title>
-                  <desc>各月数值节点，相邻月之间箭头上方气泡为差额与变化，绿涨红跌</desc>
-                  <defs>
-                    <!-- 箭头用灰色，与表内蓝色虚线箭头区分开：这里是「走势」辅助线，不是主视觉 -->
-                    <marker :id="`mcArw-${r.key}`" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-                      <path d="M2 1L8 5L2 9" fill="none" stroke="#94a3b8" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
-                    </marker>
-                  </defs>
+                  <desc>各月数值节点，相邻月之间箭头上方气泡为差额与变化，红涨绿跌</desc>
                   <!-- 基线 -->
                   <line :x1="tl.baseX1" :y1="tl.baseY" :x2="tl.baseX2" :y2="tl.baseY" stroke="#e2e8f0" stroke-width="0.5" />
-                  <!-- 连线：在到达下一个圆点前 10px 处停止，箭头落在间隙里，不被圆点遮住 -->
+                  <!-- 连线：圆点串（按涨跌着色、缓慢流动）+ 显式 chevron path。
+                       ⚠️ 弃用 SVG marker（默认按线宽缩放致箭头粗、且虚线铺到终点与 marker 同点相交）；
+                       几何在 tlOf() 内按线段角度算出（chevD），间距恒定为 6/4/3px。 -->
                   <line
                     v-for="(s, i) in tl.segs"
                     :key="'seg' + i"
-                    :x1="tl.xs[i] + 10"
-                    :y1="tl.ys[i]"
-                    :x2="tl.xs[i + 1] - 10"
-                    :y2="tl.ys[i + 1]"
-                    stroke="#94a3b8"
-                    stroke-width="1.5"
-                    :marker-end="`url(#mcArw-${r.key})`"
+                    :x1="s.dot1.x" :y1="s.dot1.y"
+                    :x2="s.dot2.x" :y2="s.dot2.y"
+                    :stroke="s.dir > 0 ? 'var(--color-down)' : s.dir < 0 ? 'var(--color-up)' : 'var(--color-text-5)'"
+                    stroke-width="2.4"
+                    stroke-dasharray="0.1 7"
+                    stroke-linecap="round"
+                    class="mc-tl-dot"
                   />
-                  <!-- 节点（画在连线之上，但连线已留间隙，箭头不被遮）：蓝色空心圈 -->
-                  <circle v-for="(p, i) in tl.vals" :key="'nd' + i" :cx="p.x" :cy="p.y" :r="tl.r" fill="#fff" stroke="#4a9db8" stroke-width="1.6" />
+                  <path
+                    v-for="(s, i) in tl.segs"
+                    :key="'arw' + i"
+                    :d="s.chevD"
+                    fill="none"
+                    :stroke="s.dir > 0 ? 'var(--color-down)' : s.dir < 0 ? 'var(--color-up)' : 'var(--color-text-5)'"
+                    stroke-width="1.8"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
+                  <!-- 节点（画在连线之上）：蓝圈 + 中心实心点 -->
+                  <g v-for="(p, i) in tl.vals" :key="'nd' + i">
+                    <circle :cx="p.x" :cy="p.y" :r="tl.r" fill="#fff" stroke="#4a9db8" stroke-width="1.6" />
+                    <circle :cx="p.x" :cy="p.y" :r="2" fill="#4a9db8" />
+                  </g>
                   <!-- 数值标签 -->
                   <text v-for="(p, i) in tl.vals" :key="'vt' + i" :x="p.x" :y="p.y > tl.yMid ? p.y + 18 : p.y - 10" text-anchor="middle" :font-size="tl.fs" fill="#334155">{{ p.text }}</text>
                   <!-- 月份标签 -->
@@ -1012,8 +1055,10 @@ const hasAnyData = computed(() => Object.values(aggMap.value).some((v) => v !== 
    ⚠️ 外层 span 尺寸要略大于旋转后的三角（9x15 转 90° 后占15x9），否则展开时会被挤压抖动。
    素材本体朝右：收起=朝下（90deg）、展开=朝上（-90deg）。 */
 .mc-caret {
-  width: 15px;
-  height: 15px;
+  /* 宽高改为自适应：内部现在可能含「点击收起」文字 + 三角，固定 15px 会把文字裁掉。
+     收起态只有三角时，flex 居中 + svg 9x15 自然撑成合适尺寸，与原视觉一致。 */
+  width: auto;
+  height: auto;
   margin-left: auto;
   flex: 0 0 auto;
   display: flex;
@@ -1035,6 +1080,22 @@ const hasAnyData = computed(() => Object.values(aggMap.value).some((v) => v !== 
 }
 .mc-caret.up svg {
   transform: rotate(-90deg);
+}
+/* 展开态收起召唤：三角**左侧**的「点击收起」。它位于 .mc-caret 内、svg 之前，
+   .mc-caret 自身的 margin-left:auto 会把"提示 + 三角"整体推到最右（与收起态三角位置一致），
+   故这里只负责文字样式：中性灰、缩小字号、与三角留 6px 间距，避免和品牌色"点击展开"抢视觉
+   （展开后它只是提醒，不是主行动点）。 */
+.mc-collapse-hint {
+  flex: 0 0 auto;
+  margin-right: 6px;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--color-text-4);
+  user-select: none;
+}
+/* 悬停折叠头时，收起提示与三角一起加深，强化"点了会收起"的反馈 */
+.mc-head:hover .mc-collapse-hint {
+  color: var(--color-text-3);
 }
 /* 悬停时三角加深：收起/展开两态都给出「点了有反应」的反馈 */
 .mc-head:hover .mc-caret svg {
@@ -1070,13 +1131,19 @@ const hasAnyData = computed(() => Object.values(aggMap.value).some((v) => v !== 
 .mc-body {
   padding: 0 0 16px 0;
 }
-/* 月份多选 chips + 同天数开关（无底色，用左右 padding 保持与表格文字的缩进一致） */
+/* 月份多选 chips + 同天数开关（无底色，用左右 padding 保持与表格文字的缩进一致）
+   垂直居中：align-items:center 让单行内的「对比月份」标签 / 月份 chip / 同天数开关
+   纵向对齐居中；align-content:center 在月份很多、chips 折成多行时，让多行整体纵向居中。
+   ⚠️ 上下 padding 必须对称（12/12）：此前顶部为 0、底部 12px，月份按钮整排贴着
+   上边框、下方却留一截空隙，视觉上像「没垂直居中」（用户截图反馈）——
+   真正的元凶是 padding 不对称，不是 align-items 失效。 */
 .mc-pickers {
   display: flex;
   align-items: center;
+  align-content: center;
   gap: 8px;
   flex-wrap: wrap;
-  padding: 0 18px 12px var(--mc-inset);
+  padding: 12px 18px 12px var(--mc-inset);
   border-bottom: 1px solid var(--color-bg);
 }
 .mc-plabel {
@@ -1299,8 +1366,9 @@ const hasAnyData = computed(() => Object.values(aggMap.value).some((v) => v !== 
   display: block;
   white-space: nowrap;
 }
-/* 箭头本体：内联 SVG 容器（实线 / 渐长虚线两种方案由模板切换），
-   延长至接近列两端、纵向贴数据底部；颜色统一由 color 控制，SVG 用 currentColor */
+/* 箭头本体：内联 SVG 容器（表内 = 圆点串 + 细 chevron）。
+   延长至接近列两端、纵向贴数据底部；颜色统一由 color 控制，SVG 用 currentColor。
+   ⚠️ 方向色不在 .line 这里写死：由 .mc-arrow.up/.down/.flat .line 覆盖（红涨绿跌）。 */
 .mc-arrow .line {
   position: absolute;
   left: 8px;
@@ -1308,18 +1376,30 @@ const hasAnyData = computed(() => Object.values(aggMap.value).some((v) => v !== 
   bottom: 12px;
   height: 12px;
   display: block;
-  color: #4a9db8; /* 箭头主色（取自用户提供的示意图），改这里即可整体换色 */
+  color: #4a9db8; /* base 兜底色（无方向时）；方向色见 .mc-arrow.up/.down/.flat .line */
 }
-/* 绿涨红跌（国内习惯）：气泡必须带 .mc-arrow .bubble 前缀，
-   否则会被通用文本色覆盖（特异性坑）。值列本身不着色，只有气泡着色。 */
+/* 红涨绿跌（国内习惯）：气泡必须带 .mc-arrow .bubble 前缀，
+   否则会被通用文本色覆盖（特异性坑）。值列本身不着色，只有气泡着色。
+   ⚠️ dirClass 的 'up' 表示「涨」，但本项目配色按红涨绿跌，故 up→红(--color-down)、down→绿(--color-up)。 */
 .mc-arrow .bubble.up {
-  color: var(--color-up);
+  color: var(--color-down);
 }
 .mc-arrow .bubble.down {
-  color: var(--color-down);
+  color: var(--color-up);
 }
 .mc-arrow .bubble.flat {
   color: var(--color-text-4);
+}
+/* 表内箭头主色跟随方向（与气泡同源）：up→红、down→绿、flat→中性灰。
+   .mc-arrow .line 的 base 色 #4a9db8 仅作无方向时的兜底。 */
+.mc-arrow.up .line {
+  color: var(--color-down);
+}
+.mc-arrow.down .line {
+  color: var(--color-up);
+}
+.mc-arrow.flat .line {
+  color: var(--color-text-5);
 }
 /* 分组标题行（「商品明细表」等）：同样底色铺满、文字缩进 */
 .mc-grouprow {
@@ -1372,14 +1452,37 @@ const hasAnyData = computed(() => Object.values(aggMap.value).some((v) => v !== 
   color: var(--color-text-5);
   margin: 0;
 }
-/* 时间轴 SVG 内文本绿涨红跌（SVG 用 fill 而非 color） */
+/* 时间轴 SVG 内文本红涨绿跌（SVG 用 fill 而非 color）；与时间轴箭头、表内气泡同源 */
 .mc-exp text.up {
-  fill: var(--color-up);
+  fill: var(--color-down);
 }
 .mc-exp text.down {
-  fill: var(--color-down);
+  fill: var(--color-up);
 }
 .mc-exp text.flat {
   fill: var(--color-text-4);
+}
+
+/* ===== 月份对比箭头动画 ===== */
+/* 圆点串流动：dasharray 周期 7.1px，offset 走两个周期 = 匀速爬行，循环无跳变。
+   ⚠️ 与项目既有 reduced-motion 降级约定一致：系统开启「减少动态效果」时全部静止。 */
+@media (prefers-reduced-motion: no-preference) {
+  .mc-arrow .mc-dot-flow {
+    animation: mc-dot-flow 2.6s linear infinite;
+  }
+  .mc-arrow .mc-chev-breathe {
+    animation: mc-chev-breathe 2.6s ease-in-out infinite;
+  }
+  .mc-tl-dot {
+    animation: mc-dot-flow 4s linear infinite;
+  }
+}
+@keyframes mc-dot-flow {
+  to { stroke-dashoffset: -14.2; }
+}
+/* 表内 chevron 呼吸：透明度轻微起伏，与附近圆点流动同节律 */
+@keyframes mc-chev-breathe {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
 }
 </style>
