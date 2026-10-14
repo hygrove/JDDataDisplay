@@ -260,16 +260,6 @@ npm run verify:agg        # 前后端聚合口径一致性，需服务已启动�
   ```
 - 失败详情可在前端状态栏、`/api/status` 或 `status.json` 查看，前端「手动刷新」可随时补跑。
 
-## 源表整理器（可选，默认 dry-run）
-
-源表目录按 30 天滚动窗反复下载，文件持续膨胀。整理器在每次批处理**入库之前**先判定每个源文件的「保留 / 归档 / 隔离 / 跳过」，按 **key 覆盖**（该文件贡献的每个 `(店铺, 日期, SPU)` 都仍被保留集里的其他文件供着）搬走冗余文件——收缩目录而不丢任何数据行。
-
-- 模式由环境变量 `JD_ORGANIZE` 控制：`off` / `dry-run`（**代码默认**，真实目录上什么都不搬，只打印计划）/ `on`（真搬）。
-- **生产开关在调度链路**：每晚 20:15 的 SYSTEM 计划任务经 `scripts/refresh_daily.ps1` 拉起批处理，该启动器在未显式设 `JD_ORGANIZE` 时置为 `on`——即生产环境实际在跑整理。改完当晚即生效，无需重启服务；手动跑 `run_batch` / 前端「手动刷新」仍走代码默认 `dry-run`。
-- 归档进 `ResourceData/归档/`、异常文件进 `ResourceData/隔离/`，两份清单均可回滚（`--rollback`）。
-- 设计约束（归档判据 / 无人值守容错 / 隔离哨兵 / 回收站清理等）见 `docs/adr/`（ADR-0001~0007）与 `docs/organize-go-live.md`。
-- 验收：`backend/jobs/verify_organize_acceptance.py accept ResourceData`（逐格比对「全量」与「只留保留集」的指标一致性，当前 11/11 通过）。
-
 ## 部署（生产）
 
 ```

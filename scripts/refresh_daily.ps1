@@ -54,19 +54,7 @@ if (-not $py) {
     exit 1
 }
 
-# --- Source-table organizer mode -------------------------------------------------
-# This scheduled task runs as SYSTEM. SYSTEM has its own environment, separate from
-# the interactive user's, so a User-level JD_ORGANIZE would be invisible here - and a
-# Machine-level one needs admin rights. Declaring it in the launcher IS "persisting it
-# in the scheduling environment" (docs/organize-go-live.md section 2, step 3), and it
-# keeps the switch versioned with the task on any machine.
-# Precedence: if JD_ORGANIZE already exists (machine/user env), it wins; we only fill in.
-# Safety: the code default in backend/jobs/config.py stays "dry-run"; this opts ONLY the
-# scheduled run in. Use "off" to skip organizing entirely, "dry-run" to preview only.
-if (-not $env:JD_ORGANIZE) { $env:JD_ORGANIZE = "on" }
-
 Write-Log "launcher python=$py"
-Write-Log "launcher JD_ORGANIZE=$($env:JD_ORGANIZE)"
 & $py $script
 $code = $LASTEXITCODE
 Write-Log "launcher exit=$code"

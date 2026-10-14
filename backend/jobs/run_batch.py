@@ -54,44 +54,14 @@ def _write_status(status: BatchStatus) -> None:
     )
 
 
-def _run_organize() -> tuple[dict | None, float, str]:
-    """在入库步骤**之前**跑一次源表整理；⛔ 任何异常都只记录、不向外抛。
-
-    为什么整理失败不能拖垮批处理（ADR-0002）：批处理侧本身有行级去重与唯一约束兜底，
-    少归档几个文件只是浪费磁盘，不会污染指标；而无人值守的调度只看 status.json，
-    整理的小毛病不该让整天的数据更新失败。容错粒度是**单个文件**，见 `organize.organize_files`。
-
-    默认模式是 `dry-run`（`JD_ORGANIZE` 未设时）：真实目录上什么都不搬，
-    要真归档需显式 `JD_ORGANIZE=on`（ADR-0002 / Q13 的「先预览、过目后转自动」）。
-
-    Returns:
-        tuple[dict | None, float, str]: (整理报告, 整理耗时秒, 错误信息)。
-            失败时报告为 None、错误信息非空；成功时错误信息为空串。
-
-    Example:
-        >>> report, seconds, err = _run_organize()   # doctest: +SKIP
-        >>> err
-        ''
-    """
-    from backend.jobs import organize  # 延迟导入：避免 import 期就拉起 openpyxl / polars
-
-    t0 = time.time()
-    try:
-        report = organize.organize_files(config.POP_SOURCE_DIR)
-        return report, round(time.time() - t0, 3), ""
-    except Exception as e:  # noqa: BLE001 —— 整理自身异常绝不向外抛
-        return None, round(time.time() - t0, 3), f"{type(e).__name__}: {e}"
-
-
 def run_once() -> BatchStatus:
     """执行一次完整批处理，并按配置决定是否重试。
 
     流程：
       1. 记录起始时间与 attempt 上限（未启用重试时上限为 1）；
-      2. 先跑一次源表整理（归档；默认 dry-run），⛔ 整理异常不拖垮本批；
-      3. 调用 pipeline.run_all() 跑全部数据源与模块；
-      4. 成功则写 status.json 并返回；
-      5. 失败则按指数退避等待后重试，全部失败后写失败状态返回。
+      2. 调用 pipeline.run_all() 跑全部数据源与模块；
+      3. 成功则写 status.json 并返回；
+      4. 失败则按指数退避等待后重试，全部失败后写失败状态返回。
 
     Returns:
         BatchStatus: 本次运行结果。success=True 表示批处理完成（message 含模块数量），
@@ -114,25 +84,6 @@ def run_once() -> BatchStatus:
     last_err = ""
     for attempt in range(1, max_attempts + 1):
         try:
-            # 整理（归档）先于入库执行：把冗余源文件搬出源表目录，之后的摄入只读保留集。
-            # ⛔ 整理自身异常已被 _run_organize 吞掉——它绝不拖垮这一批（ADR-0002）。
-            # 目录布局与 write-ahead 清单见 organize.py；默认 dry-run，不搬任何文件。
-            org_report, org_seconds, org_err = _run_organize()
-            # ⚠️ 成功路径**不再**把整理摘要拼进 status.message：status.message 会直接显示在
-            #    模块页「上次更新：… · <message>」那一行，整理的耗时/搬动份数是运维细节，
-            #    对看数据的人只是噪音。它已经由下面那行 print 落进 logs/refresh.log，
-            #    运维排查时去日志看即可，不必在 UI 里重复一遍。
-            #    失败路径**仍然**拼进去——「整理失败」是用户该知道的异常，
-            #    verify_organize_execute 对该提示有断言。
-            if org_err:
-                print(f"[organize] 整理失败（已跳过，不影响入库）：{org_err}")
-                org_summary = f"；整理失败（耗时 {org_seconds}s）：{org_err}"
-            else:
-                print(f"[organize] mode={org_report['mode']}：计划 {org_report['planned']} 份，"
-                      f"搬动 {org_report['moved']} 份，失败 {org_report['failed']} 份；"
-                      f"整理耗时 {org_seconds}s（整批耗时增量 ≈ {org_seconds}s）")
-                org_summary = ""  # 成功时不进 message（理由见上方注释）
-
             # 增量摄入：先把 Excel/CSV 清洗后写入 SQLite（daily_detail + processed_file 哈希追踪），
             # 再由 pipeline 从 DB 读取干净长表产出 JSON / summary。两步都在同一事务边界内完成，
             # 保证「库里存的」与「页面看到的」永远一致
@@ -144,7 +95,7 @@ def run_once() -> BatchStatus:
                 success=True,
                 attempts=attempt,
                 duration_seconds=round(time.time() - start, 2),
-                message=f"成功：{len(manifest.modules)} 个模块，DB {db_result['rows']} 行{org_summary}",
+                message=f"成功：{len(manifest.modules)} 个模块，DB {db_result['rows']} 行",
                 source_dir=str(config.POP_SOURCE_DIR),
                 modules=[m.module_id for m in manifest.modules],
             )
