@@ -82,7 +82,9 @@ def get_conn() -> sqlite3.Connection:
     Side Effects:
         首次调用会在 DB_PATH.parent 建目录。
     """
+    # 确保数据库目录存在（首次运行时可能不存在）
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    # 打开连接（首次运行时会建库文件）
     conn = sqlite3.connect(str(DB_PATH))
     # 行工厂设为 Row：结果可用列名访问，例如 row["shop"]
     conn.row_factory = sqlite3.Row
