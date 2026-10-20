@@ -20,11 +20,15 @@ import atexit
 import logging
 import os
 import socket
+import subprocess
 import sys
 import threading
+import time
 import webbrowser
 from datetime import date
 from pathlib import Path
+
+CREATE_NO_WINDOW = 0x08000000          # 派生 netstat/tasklist/taskkill 时隐藏闪现的控制台窗口
 
 # ---- 路径：确保能 import backend.app.main（无论从哪个 cwd 被拉起）----
 SCRIPT_DIR = Path(__file__).resolve().parent            # .../scripts
@@ -104,6 +108,94 @@ def _port_in_use() -> bool:
         s.settimeout(0.5)                      # 半秒超时：本机连接要么立刻通要么不通
         # connect_ex 返回 0 = 三次握手成功 = 有进程在 LISTEN 并 accept
         return s.connect_ex((probe_host, PORT)) == 0
+
+
+def _pid_holding_port(port: int) -> "int | None":
+    """返回当前 LISTEN 在 port 上的进程 PID；无人监听返回 None。
+
+    用 `netstat -ano` 解析（跨 Windows 版本稳定），不依赖 psutil；
+    解析失败（如 netstat 不可用）返回 None，交由调用方兜底。
+    """
+    try:
+        out = subprocess.run(
+            ["netstat", "-ano"], capture_output=True, text=True,
+            creationflags=CREATE_NO_WINDOW, timeout=5,
+        ).stdout
+    except Exception:
+        return None
+    for line in out.splitlines():
+        parts = line.split()
+        # 形如：TCP    127.0.0.1:8000    0.0.0.0:0    LISTENING    48380
+        if len(parts) >= 5 and parts[0] == "TCP" and parts[3] == "LISTENING":
+            if parts[1].endswith(":" + str(port)):
+                try:
+                    return int(parts[4])
+                except ValueError:
+                    pass
+    return None
+
+
+def _image_of(pid: int) -> str:
+    """取 PID 对应的进程映像名（小写），用于区分托盘(pythonw.exe)与无头服务(python.exe)。
+
+    Args:
+        pid: 进程 ID。
+
+    Returns:
+        str: 映像名小写；取不到时返回空串。
+    """
+    try:
+        out = subprocess.run(
+            ["tasklist", "/nh", "/fi", f"PID eq {pid}"],
+            capture_output=True, text=True,
+            creationflags=CREATE_NO_WINDOW, timeout=5,
+        ).stdout
+        return out.split()[0].lower() if out.strip() else ""
+    except Exception:
+        return ""
+
+
+def _take_over_port(port: int) -> bool:
+    """强制接管 port：杀掉占用进程并等待端口释放。
+
+    仅对「非系统进程且非自身」的占用者动手；成功释放返回 True，
+    杀不掉（权限不足/进程已退出）/超时返回 False。
+
+    调用示例：
+        if not _take_over_port(PORT):
+            _alert_port_busy(PORT)   # 弹窗让用户手动处理
+    """
+    pid = _pid_holding_port(port)
+    if pid is None:
+        return True                                  # 本来就没人占
+    if pid in (0, 4, os.getpid()):
+        return pid == os.getpid()                    # 自己占着（理论上不会在此触发）
+    try:
+        subprocess.run(
+            ["taskkill", "/PID", str(pid), "/F"],
+            capture_output=True, creationflags=CREATE_NO_WINDOW, timeout=10,
+        )
+    except subprocess.CalledProcessError:
+        return False                                 # 权限不足等
+    for _ in range(20):                              # 轮询最多 5s 等端口释放
+        if _pid_holding_port(port) is None:
+            return True
+        time.sleep(0.25)
+    return False
+
+
+def _alert_port_busy(port: int) -> None:
+    """端口被占且无法接管时，用弹窗提示用户（pythonw 无控制台，必须可见）。"""
+    try:
+        import ctypes
+        ctypes.windll.user32.MessageBoxW(
+            0,
+            f"端口 {port} 已被其他进程占用且无法停止（可能权限不足）。\n"
+            f"请先手动结束占用进程，或禁用 JDViz_UvicornAutoStart 计划任务。",
+            "JD 数据可视化", 0x10,
+        )
+    except Exception:
+        pass
 
 
 def acquire_lock() -> None:
@@ -198,14 +290,32 @@ def on_quit(icon: Icon, item) -> None:
 
 
 def main() -> None:
-    """核心启动流程：端口探测（权威单实例判定）→ 写锁 → 起 uvicorn 子线程 → 跑托盘 → 干净退出。"""
+    """核心启动流程：端口探测（权威单实例判定）→ 接管/写锁 → 起 uvicorn 子线程 → 跑托盘 → 干净退出。
+
+    端口被占用时按映像名分流：占用者是 `pythonw.exe`（另一个托盘）→ 直接开面板、互不杀死；
+    占用者是 `python.exe`（无头自启服务/其他）→ 强制接管（杀掉后自起），让托盘成为 8000 唯一主人。
+    """
     setup_logging()
     logging.info("托盘启动器开始；PROJECT_ROOT=%s", PROJECT_ROOT)
-    if _port_in_use():
-        # 端口已被监听 = 已有实例在服务：绝不再起第二个 uvicorn，也不碰锁文件
-        logging.info("端口 %s 已被监听，视为已有实例，打开面板后退出", PORT)
+
+    holder = _pid_holding_port(PORT)
+    if holder is not None and holder != os.getpid():
+        if _image_of(holder) == "pythonw.exe":
+            # 另一个托盘实例已在运行：直接开面板，绝不互杀（避免双击竞态干掉自己人）
+            logging.info("已有托盘实例 PID %s，直接打开面板", holder)
+            webbrowser.open(BASE_URL)
+            return
+        # 其余（无头 python.exe 或其他进程）= 尝试接管：强杀后自起
+        logging.info("端口 %s 被 PID %s 占用，尝试接管", PORT, holder)
+        if not _take_over_port(PORT):
+            logging.error("无法接管端口 %s（可能权限不足），托盘退出", PORT)
+            _alert_port_busy(PORT)
+            return
+
+    if _port_in_use():                              # 兜底竞态：端口仍被占则开面板返回
         webbrowser.open(BASE_URL)
         return
+
     acquire_lock()
     atexit.register(release_lock)
 
