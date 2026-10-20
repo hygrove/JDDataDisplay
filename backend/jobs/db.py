@@ -25,6 +25,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import config
+from .inventory_metrics import schema_sql
 from .sources.base import LONG_COLUMNS
 
 # DB_PATH：数据库文件位置；DATA_DIR 已被 .gitignore 忽略，所以 .db 不会进仓库
@@ -102,6 +103,21 @@ def ensure_schema() -> None:
     conn = get_conn()
     try:
         conn.executescript(_SCHEMA)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def ensure_inventory_schema() -> None:
+    """幂等建表：创建 inventory_daily（182+ 列投影宽表）与 inventory_processed_file。
+
+    Side Effects:
+        在 DB_PATH 创建库存表（若已存在则什么都不做）。表结构由
+        inventory_metrics.schema_sql() 统一生成，建表逻辑不手写列。
+    """
+    conn = get_conn()
+    try:
+        conn.executescript(schema_sql())
         conn.commit()
     finally:
         conn.close()

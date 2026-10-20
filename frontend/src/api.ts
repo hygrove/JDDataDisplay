@@ -5,6 +5,10 @@
 //    写死域名会让「换端口部署」或「走 https」时全部请求失败。
 import type {
   BatchStatus,
+  InventoryMeta,
+  InventoryPagedRows,
+  InventoryRowsQuery,
+  InventorySummary,
   Manifest,
   ModuleSummary,
   PagedRows,
@@ -254,4 +258,66 @@ export async function exportModuleXlsx(moduleId: string, body: ExportPayload): P
   });
   if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
   return res.blob();
+}
+
+// ====================== 库存管理模块 ======================
+
+/**
+ * 拉取库存模块元信息（指标清单 + 城市/店铺/日期列表）。
+ *
+ * @returns {Promise<InventoryMeta>} 首屏元信息；指标清单驱动矩阵列与勾选面板。
+ * @throws {Error} 接口非 2xx（库存库尚未摄入时可能 500）。
+ * @example
+ * ```ts
+ * const meta = await fetchInventoryMeta();
+ * meta.cities; // ["北京", "武汉", ...]
+ * ```
+ */
+export function fetchInventoryMeta(): Promise<InventoryMeta> {
+  return get<InventoryMeta>("/inventory/meta");
+}
+
+/**
+ * 拉取库存分页明细（店铺 / 日期 / 关键词 / 排序 / 分页）。后端返回全列 dict，前端投影成矩阵。
+ *
+ * @param {InventoryRowsQuery} q - 查询参数；shop/date/keyword/sort_* 可选，page/page_size 必填。
+ * @returns {Promise<InventoryPagedRows>} 含 total、当页 rows、totals（指标合计）、city_totals（每城合计）。
+ * @throws {Error} 接口非 2xx。
+ * @example
+ * ```ts
+ * const p = await fetchInventoryRows({ shop: "家配", date: "2026-10-18", page: 1, page_size: 50 });
+ * p.total;          // 过滤后总行数
+ * p.city_totals["city_stock"]; // 8 城现货库存合计数组
+ * ```
+ */
+export function fetchInventoryRows(q: InventoryRowsQuery): Promise<InventoryPagedRows> {
+  const params = new URLSearchParams();
+  if (q.shop) params.set("shop", q.shop);
+  if (q.date) params.set("date", q.date);
+  if (q.keyword) params.set("keyword", q.keyword);
+  if (q.sort_by) params.set("sort_by", q.sort_by);
+  if (q.sort_order) params.set("sort_order", q.sort_order);
+  params.set("page", String(q.page));
+  params.set("page_size", String(q.page_size));
+  return get<InventoryPagedRows>(`/inventory/rows?${params.toString()}`);
+}
+
+/**
+ * 拉取库存 KPI 聚合（供顶部卡片）。
+ *
+ * @param {string} [shop] - 店铺过滤；留空 = 全部店铺。
+ * @param {string} [date] - 快照日期；留空 = 全部日期。
+ * @returns {Promise<InventorySummary>} KPI 聚合。
+ * @throws {Error} 接口非 2xx。
+ * @example
+ * ```ts
+ * const s = await fetchInventorySummary("家配", "2026-10-18");
+ * s.stock; // 现货库存总量
+ * ```
+ */
+export function fetchInventorySummary(shop?: string, date?: string): Promise<InventorySummary> {
+  const params = new URLSearchParams();
+  if (shop) params.set("shop", shop);
+  if (date) params.set("date", date);
+  return get<InventorySummary>(`/inventory/summary?${params.toString()}`);
 }

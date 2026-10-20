@@ -5,6 +5,8 @@ import { useUiStore } from "./stores/ui";
 // 尤其 SpuAnalysisView 依赖 echarts（体积大），必须懒加载，否则会拖慢首屏。
 const ModuleView = () => import("./views/ModuleView.vue");
 const SpuAnalysisView = () => import("./views/SpuAnalysisView.vue");
+// 库存管理模块：独立指标体系，单独懒加载，不拖慢首屏。
+const InventoryView = () => import("./views/InventoryView.vue");
 
 // 首页空白占位（App.vue 会在拉到 manifest 后自动跳转到第一个模块）。
 // ⚠️ 必须用 render 函数而不是 template 字符串：生产构建用的是 runtime-only 版本 Vue，
@@ -44,6 +46,12 @@ export const router = createRouter({
       name: "spu-analysis",
       component: SpuAnalysisView,
       props: true,
+    },
+    {
+      // 库存管理模块（独立指标体系，不在 manifest 模块体系内）
+      path: "/inventory",
+      name: "inventory",
+      component: InventoryView,
     },
   ],
 });

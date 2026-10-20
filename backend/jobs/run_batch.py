@@ -30,6 +30,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from backend.jobs import config, pipeline  # noqa: E402
 from backend.jobs import db as jobdb  # noqa: E402
+from backend.jobs import inventory as inventory_mod  # noqa: E402
 from backend.jobs.models import BatchStatus  # noqa: E402
 
 
@@ -138,6 +139,9 @@ def run_once() -> BatchStatus:
             # 保证「库里存的」与「页面看到的」永远一致
             db_result = jobdb.ingest_excel_to_db(config.POP_SOURCE_DIR)
             print(f"[db] 摄入：{db_result}")
+            # 库存模块摄入（独立宽表 inventory_daily，不影响现有 POP 链路）
+            inv_result = inventory_mod.ingest_inventory_to_db()
+            print(f"[inventory] 摄入：{inv_result}")
             manifest = pipeline.run_all()
             status = BatchStatus(
                 last_run_at=started_at,

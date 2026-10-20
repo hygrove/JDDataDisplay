@@ -24,6 +24,7 @@ from fastapi.staticfiles import StaticFiles
 
 from ..jobs import config
 from .api import router as api_router
+from .inventory_api import router as inventory_router
 
 # FRONTEND_DIST：前端 npm run build 的产物目录，生产模式下页面全部由这里提供
 FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
@@ -40,6 +41,8 @@ app.add_middleware(
 
 # 业务 API 路由（/api/manifest、/api/module/...、/api/refresh 等）
 app.include_router(api_router)
+# 库存管理 API（/api/inventory/...）
+app.include_router(inventory_router)
 
 
 # 启动钩子：确保 SQLite 表已存在（幂等）。
@@ -48,11 +51,12 @@ app.include_router(api_router)
 # （页面照常可开，只是暂时无数据），仅打印告警便于排查
 @app.on_event("startup")
 def _init_db_schema() -> None:
-    """应用启动时幂等建表，保证 daily_detail / processed_file 存在。"""
-    from ..jobs.db import ensure_schema
+    """应用启动时幂等建表，保证 daily_detail / processed_file / inventory_daily 存在。"""
+    from ..jobs.db import ensure_inventory_schema, ensure_schema
 
     try:
         ensure_schema()
+        ensure_inventory_schema()
     except Exception as e:  # noqa: BLE001
         print(f"[db] 启动建表失败（不影响页面）：{type(e).__name__}: {e}")
 

@@ -57,6 +57,10 @@ POP_TABLE_DIR_NAME = "数据源表目录"
 # POP_IMAGE_DIR_NAME：数据源根目录下存放 SPU 图片的目录名
 POP_IMAGE_DIR_NAME = "单品spu图片"
 
+# INVENTORY_SOURCE_DIR：库存明细的数据源目录（独立于 POP 的「数据源表目录」）。
+# 库存表（家配/医拜/卡求自营库存明细）放在 ResourceData/库存数据表/ 下
+INVENTORY_SOURCE_DIR = Path(os.getenv("JD_INVENTORY_DIR", BACKEND_DIR.parent / "ResourceData" / "库存数据表"))
+
 # PG_DSN：PostgreSQL 连接串。留空表示不启用数据库源（db_source.PostgresSource 会自动跳过）
 PG_DSN = os.getenv("PG_DSN", "")
 

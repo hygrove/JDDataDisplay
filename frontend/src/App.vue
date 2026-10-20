@@ -15,6 +15,11 @@ onMounted(async () => {
   if (!store.manifest) {
     try {
       store.manifest = await fetchManifest();
+      // ⚠️ 必须先等首次路由解析完成（router.isReady）再判断「是否在首页」：
+      // InventoryView / SpuAnalysisView 都是懒加载 chunk，下载+解析期间
+      // route.path 仍是初始 "/"；不等待就会把 /inventory 这类深链接
+      // 误判成首页并劫持到第一个模块（实测截图复现过）。
+      await router.isReady();
       // 首页自动跳到第一个模块
       if (route.path === "/" && store.manifest.modules.length) {
         router.replace(`/module/${store.manifest.modules[0].module_id}`);
@@ -97,6 +102,17 @@ function onShopClick(shop: string) {
       <div class="logo">
         <svg class="logo-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 14l3-3 3 3 4-5"/></svg>
         <span>JD 数据平台</span>
+      </div>
+
+      <div class="nav-section">
+        <div class="nav-title">库存</div>
+        <router-link
+          class="nav-item"
+          :class="{ active: route.path === '/inventory' }"
+          to="/inventory"
+        >
+          库存管理
+        </router-link>
       </div>
 
       <div class="nav-section" data-testid="app-nav-modules">

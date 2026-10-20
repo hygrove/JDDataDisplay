@@ -326,3 +326,112 @@ export interface SpuAnalysis {
   /** 自动生成的综合分析文案 */
   insight: string;
 }
+
+// ---------- 库存管理模块 ----------
+/** 库存单元格：数值（REAL）或文本（TEXT），缺失/空值可能为中文或 null。 */
+export type InvCell = number | string | null;
+
+/**
+ * 单个库存指标的元信息（来自后端 inventory_metrics.build_metrics，前端不写死）。
+ *
+ * @remarks
+ * kind 决定列渲染方式：
+ * - `identity` 身份列（商品名称/SPU/类目/上下柜/销售员），锁定恒可见；
+ * - `per_city` 每城指标，渲染成「8 城子列」；
+ * - `national` 全国指标，单列。
+ *
+ * fields 为对应 DB 字段名数组：per_city 长度 8（按 CITIES 顺序）、national/identity 长度 1。
+ */
+export interface InventoryMetric {
+  /** 指标唯一标识（city_<suffix> / 字段名） */
+  key: string;
+  /** 展示标题 */
+  title: string;
+  /** 指标类型 */
+  kind: "identity" | "per_city" | "national";
+  /** 涉及的 DB 字段名数组 */
+  fields: string[];
+  /** 开页是否默认可见 */
+  default_visible: boolean;
+  /** 是否锁定（身份列恒可见、不可勾选） */
+  locked: boolean;
+  /** 合计行是否对该指标求和（不合计则显 "—"） */
+  aggregatable: boolean;
+}
+
+/**
+ * 库存模块首屏元信息（/api/inventory/meta）。
+ */
+export interface InventoryMeta {
+  /** 全部指标（含 identity/per_city/national） */
+  metrics: InventoryMetric[];
+  /** 城市白名单（按展示顺序） */
+  cities: string[];
+  /** 可选店铺列表 */
+  shops: string[];
+  /** 可选快照日期列表（降序） */
+  dates: string[];
+}
+
+/**
+ * 库存分页明细响应（/api/inventory/rows）。
+ *
+ * @remarks
+ * rows 为「全列 dict」——每个元素含 inventory_daily 的全部列（含 8 城字段）；
+ * 前端按 visibleMetrics 投影成矩阵列，后端不负责挑列，保证单一事实来源在 inventory_metrics。
+ *
+ * city_totals 为「每城指标 → 每城求和」数组：下标 i 对应 cities[i]，
+ * 仅供矩阵表每城子列底部合计使用（与列一一对应）。
+ */
+export interface InventoryPagedRows {
+  /** 过滤后总行数 */
+  total: number;
+  /** 当前页码，从 1 开始 */
+  page: number;
+  /** 每页条数 */
+  page_size: number;
+  /** 当页行（全列 dict） */
+  rows: Record<string, InvCell>[];
+  /** 按指标 key 的合计（per_city 为 8 城求和的单一值；national 单列合计；identity 为 null） */
+  totals: Record<string, number | null>;
+  /** 每城指标 → 每城求和数组（下标对应 cities） */
+  city_totals: Record<string, number[]>;
+}
+
+/**
+ * 库存 KPI 聚合（/api/inventory/summary）。
+ */
+export interface InventorySummary {
+  /** SKU 数 */
+  total_skus: number;
+  /** 现货库存总量（8 城求和） */
+  stock: number;
+  /** 滞销件数（8 城求和） */
+  slow: number;
+  /** 采购未到货（8 城求和） */
+  purchase: number;
+  /** 近 30 日出库（8 城求和） */
+  out_30: number;
+  /** 全国滞销件数 */
+  nat_slow: number;
+}
+
+/**
+ * 库存明细查询参数。
+ */
+export interface InventoryRowsQuery {
+  /** 店铺名；留空 = 全部店铺 */
+  shop?: string;
+  /** 快照日期 YYYY-MM-DD；留空 = 全部日期 */
+  date?: string;
+  /** SKU / 商品名称 / SPU 模糊搜索 */
+  keyword?: string;
+  /** 排序 DB 字段名（必须是合法列名） */
+  sort_by?: string;
+  /** 排序方向 */
+  sort_order?: "asc" | "desc";
+  /** 页码，从 1 开始 */
+  page: number;
+  /** 每页条数，最大 500 */
+  page_size: number;
+}
