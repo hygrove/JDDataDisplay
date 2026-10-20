@@ -1,0 +1,29 @@
+# 排除不进构建上下文的内容（加速 build + 避免大体积数据进镜像）
+
+# Python 虚拟环境 / 缓存
+.venv/
+**/__pycache__/
+*.pyc
+*.pyo
+
+# 前端依赖与构建产物（构建阶段会重新生成）
+frontend/node_modules/
+frontend/dist/
+
+# 运行时生成的数据（运行时挂载卷，绝不 bake 进镜像）
+backend/app/data/
+ResourceData/
+logs/
+*.db
+
+# 版本控制 / 文档 / 杂项
+.git/
+.scratch/
+docs/
+.codebuddy/
+mockups/
+preview/
+*.md
+
+# 本地环境配置（含 cpolar token，切勿进镜像/仓库）
+.env

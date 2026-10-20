@@ -1,0 +1,41 @@
+# JDDataDisplay 部署编排
+# 两服务：
+#   jddisplay : 主应用（uvicorn 单端口 8000 同源托管页面/API/图片）
+#   cpolar    : 内网穿透 sidecar，把 jddisplay 的 8000 穿透到公网 HTTPS 子域名
+#
+# 注意：
+#   - jddisplay 的 ports 只绑 127.0.0.1，云端防火墙无需开放 8000 入站
+#   - cpolar 通过共享 jddisplay 网络栈访问 127.0.0.1:8000
+#   - cpolar token 来自 .env（CPOLAR_TOKEN），compose 不写明文
+
+services:
+  jddisplay:
+    build: .
+    container_name: jddisplay
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      # 显式指定挂载路径，便于容器内代码定位（默认值也能推导出相同路径）
+      JD_DATA_DIR: /app/backend/app/data
+      POP_SOURCE_DIR: /app/ResourceData
+      TZ: Asia/Shanghai
+    volumes:
+      # 数据源（只读）：批处理输入
+      - ./ResourceData:/app/ResourceData:ro
+      # 运行时产物（可读写）：JSON / 图片 / 缩略图 / SQLite
+      - ./backend/app/data:/app/backend/app/data
+      # 刷新日志（可选持久化）
+      - ./logs:/app/logs
+    restart: unless-stopped
+
+  cpolar:
+    image: cpolar/cpolar:latest
+    container_name: cpolar
+    # 穿透 jddisplay 的 8000（共享其网络栈，故用 127.0.0.1:8000）
+    command: ["http", "8000"]
+    environment:
+      CPOLAR_AUTH_TOKEN: ${CPOLAR_TOKEN}
+    network_mode: "container:jddisplay"
+    restart: unless-stopped
+    depends_on:
+      - jddisplay
