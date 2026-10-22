@@ -2,6 +2,18 @@
 
 电商数据可视化：Python 批处理（`backend/jobs`）+ FastAPI（`backend/app`）+ Vue3/Vite/TS（`frontend`）。生产单端口 8000 同时提供 API、SPA 与图片。数据源在 `ResourceData/`。
 
+## AI 接手规则（必读）
+
+进项目先读 **`docs/ai-rules/README.md`**——里面是"怎么改才安全"的全部约束与验证命令（数据真相、SSOT、验证铁律、部署运维、前端坑、不可逆动作流程、环境坑、验证脚本清单），论据见 `docs/adr/`。
+
+五条最致命的禁止项（踩中任意一条都会静默损坏数据或让人误以为改好了）：
+
+1. **绝不让 `daily_detail` 减少**——长表只增不减；任何"移走源表"的功能必须先证明每个 key 在别处有来源。
+2. **后端改完必须真导入** `python -c "from backend.app.main import app"`（`py_compile` 查不出 `NameError`）。
+3. **前端改完必须 `npm run build` + 真浏览器实测**——grep dist 只证明构建通过，不证明浏览器生效。
+4. **20:15 计划任务跑的是工作区代码，不是 commit**——半成品不过夜；托盘服务不热重载，后端改动要么提交重启要么新进程直跑。
+5. **不可逆动作走最小安全流程**——前置指纹 + 断言前置状态 → 执行 → 后置逐份哈希核对（详见 README §6）。
+
 ## Agent skills
 
 ### Issue tracker
