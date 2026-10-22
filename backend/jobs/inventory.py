@@ -27,6 +27,7 @@ from .inventory_metrics import (
     CITIES,
     CITY_CODES,
     NUMERIC_FIELDS,
+    extract_city_slow_cols,
     source_to_field,
 )
 
@@ -118,8 +119,11 @@ def _parse_date(value) -> str:
     return s
 
 
-def _parse_file(path: Path) -> tuple[str, str, list[dict]] | None:
-    """解析单个库存 xlsx：投影成 (shop, date, 行字典列表)。
+def _parse_file(path: Path) -> tuple[str, str, list[dict], list[dict]] | None:
+    """解析单个库存 xlsx：投影成 (shop, date, 行字典列表, 全城市滞销长表行)。
+
+    除 8 城白名单宽表外，还把源表里**全部**「<城市>滞销件数」列（约 70 个
+    城市/仓）抽成 inventory_city_slow 长表行（只存 >0 的，控制体量）。
 
     跳过规则：锁文件、缺「时间」列、无数据行的空模板。
 
@@ -127,8 +131,8 @@ def _parse_file(path: Path) -> tuple[str, str, list[dict]] | None:
         path: xlsx 文件路径。
 
     Returns:
-        tuple[str, str, list[dict]] | None: 解析成功返回 (店铺, 日期, 行列表)；
-            应跳过时返回 None。
+        tuple[str, str, list[dict], list[dict]] | None: 解析成功返回
+            (店铺, 日期, 宽表行列表, 滞销长表行列表)；应跳过时返回 None。
     """
     import openpyxl
 
@@ -147,11 +151,15 @@ def _parse_file(path: Path) -> tuple[str, str, list[dict]] | None:
     if "时间" not in header:
         return None  # 非库存明细（如 POP 模板）
     idx = {h: i for i, h in enumerate(header) if h is not None}
+    # 全城市滞销列（动态提取，不限 8 城白名单）
+    slow_cols = extract_city_slow_cols(header)
 
     src_map = source_to_field()
     numeric_set = set(NUMERIC_FIELDS)
     date_value = None
+    shop_value = _parse_shop(path.name)
     out: list[dict] = []
+    slow_out: list[dict] = []
     for raw in rows[1:]:
         if raw is None or all(v is None for v in raw):
             continue  # 空行
@@ -176,28 +184,50 @@ def _parse_file(path: Path) -> tuple[str, str, list[dict]] | None:
         rec["date"] = date_value if date_value else _parse_date(raw[idx["时间"]] if idx.get("时间") is not None and idx["时间"] < len(raw) else None)
         if date_value is None:
             date_value = rec["date"]
-        rec["shop"] = _parse_shop(path.name)
+        rec["shop"] = shop_value
         rec["erp_code"] = None
         out.append(rec)
 
+        # 全城市滞销长表：仅 >0 的 (城市, 件数) 入表
+        for city, ci in slow_cols:
+            v = _to_num(raw[ci] if ci < len(raw) else None)
+            if v > 0:
+                slow_out.append({
+                    "date": rec["date"], "shop": shop_value,
+                    "sku": rec["sku"], "city": city, "slow_units": v,
+                })
+
     if not out or not date_value:
         return None
-    return out[0]["shop"], date_value, out
+    return out[0]["shop"], date_value, out, slow_out
 
 
-def _replace_file_rows(shop: str, date: str, rows: list[dict], key: str, h: str) -> None:
-    """删除该文件对应 (shop, date) 的旧行，重插新行，并刷新哈希。"""
+def _replace_file_rows(
+    shop: str, date: str, rows: list[dict], slow_rows: list[dict], key: str, h: str
+) -> None:
+    """删除该文件对应 (shop, date) 的旧行，重插新行，并刷新哈希。
+
+    同时维护 inventory_city_slow（全城市滞销长表）：先删后插，与宽表同事务。
+    """
     from .db import get_conn
 
     cols = [c[0] for c in all_columns()]
     col_sql = ", ".join(f'"{c}"' for c in cols)
     placeholders = ", ".join(["?"] * len(cols))
     data = [[r.get(c) for c in cols] for r in rows]
+    slow_data = [[r["date"], r["shop"], r["sku"], r["city"], r["slow_units"]] for r in slow_rows]
     conn = get_conn()
     try:
         conn.execute("DELETE FROM inventory_daily WHERE shop=? AND date=?", (shop, date))
         conn.executemany(
             f'INSERT OR REPLACE INTO inventory_daily ({col_sql}) VALUES ({placeholders})', data
+        )
+        conn.execute(
+            "DELETE FROM inventory_city_slow WHERE shop=? AND date=?", (shop, date)
+        )
+        conn.executemany(
+            "INSERT OR REPLACE INTO inventory_city_slow(date, shop, sku, city, slow_units) VALUES (?,?,?,?,?)",
+            slow_data,
         )
         now = datetime.now(timezone.utc).isoformat()
         conn.execute(
@@ -245,8 +275,8 @@ def ingest_inventory_to_db(root: Path | None = None) -> dict[str, object]:
         parsed = _parse_file(p)
         if parsed is None:
             continue
-        shop, date, rows = parsed
-        _replace_file_rows(shop, date, rows, key, hashes[key])
+        shop, date, rows, slow_rows = parsed
+        _replace_file_rows(shop, date, rows, slow_rows, key, hashes[key])
         total_rows += len(rows)
         changed_files += 1
 

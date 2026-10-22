@@ -374,6 +374,111 @@ export interface InventoryMeta {
 }
 
 /**
+ * 库存行 = 全列 dict + 可选的全城市滞销明细（后端按行附带）。
+ *
+ * @remarks
+ * `slow_cities` 来自 inventory_city_slow 长表：城市名 → 滞销件数（只含 >0 的城市，
+ * 约 70 个城市/仓，不限于 8 城白名单）。仅「全国滞销件数」列使用，
+ * 普通行不携带该字段（后端按需附加，控制响应体）。
+ *
+ * `sku_pic` 是库存 SKU 商品图的访问路径，命中图片时才有值（详见下方字段注释）。
+ */
+export type InvRow = Record<string, InvCell> & {
+  /** 全城市滞销明细：城市名 → 件数（仅 >0） */
+  slow_cities?: Record<string, number>;
+  /**
+   * 库存 SKU 商品图访问路径（后端建索引后随行下发），
+   * 形如 "/inv-pics/jpzy/100080186911.jpg"。仅当该 SKU 在
+   * `ResourceData/inventory_sku_pic` 下命中图片时存在；无图行不携带该字段，
+   * 前端渲染「暂无图片」占位。
+   */
+  sku_pic?: string;
+};
+
+/**
+ * 全城市滞销聚合项（/api/inventory/slow-cities）。
+ */
+export interface InventorySlowCity {
+  /** 城市/仓名（含衍生名，如「广州补货B」） */
+  city: string;
+  /** 该城市滞销件数合计 */
+  units: number;
+  /** 是否属于 8 城白名单（前端可高亮） */
+  core: boolean;
+}
+
+/**
+ * 结构分布（/api/inventory/distributions）：概览卡的唯一数据源。
+ *
+ * @remarks
+ * 统计单位为去重后的 (店铺, SKU)：多天快照下同一 SKU 只计一次，
+ * 取最新快照的上下柜 / 类目 / 销售员属性。
+ */
+export interface InventoryDistributions {
+  /** 统计范围概览 */
+  scope: {
+    /** 店铺列表（按首次出现顺序） */
+    shops: string[];
+    /** 全范围去重 SKU 数 */
+    sku_total: number;
+    /** 各店 SKU 数之和（同一 SKU 跨店会重复计） */
+    sku_rows: number;
+    /** 明细行数（含多天快照） */
+    detail_rows: number;
+  };
+  /** 维度 1：SKU 覆盖（总数 + 店铺细分） */
+  sku: {
+    /** 全范围去重 SKU 数 */
+    total: number;
+    /** 每店 SKU 数与占比 */
+    by_shop: { shop: string; sku_count: number; share: number }[];
+  };
+  /** 维度 2：上下柜状态（总数 + 店铺分布） */
+  shelf: {
+    /** 全范围状态 → SKU 数 */
+    total: Record<string, number>;
+    /** 每店的状态拆分 */
+    by_shop: { shop: string; shelf: Record<string, number>; total: number }[];
+  };
+  /** 维度 3：三级类目（含每店数量） */
+  category: {
+    /** 类目个数 */
+    count: number;
+    /** 类目列表（按 SKU 数降序） */
+    items: {
+      category: string;
+      sku_count: number;
+      /** 覆盖店铺数 */
+      shop_count: number;
+      /** 店铺 → 该店该类目 SKU 数 */
+      by_shop: Record<string, number>;
+    }[];
+  };
+  /** 维度 4：销售员（按店铺分布） */
+  seller: {
+    /** 跨店去重的人数 */
+    person_count: number;
+    /** 人次（店铺 × 销售员）之和 */
+    person_times: number;
+    /** 销售员列表（按 SKU 数降序） */
+    items: {
+      seller: string;
+      sku_count: number;
+      /** 服务店铺数 */
+      shop_count: number;
+      /** 店铺 → 该店该销售员 SKU 数 */
+      by_shop: Record<string, number>;
+    }[];
+    /** 每店人数与人员明细 */
+    by_shop: {
+      shop: string;
+      seller_count: number;
+      sellers: { seller: string; sku_count: number }[];
+    }[];
+  };
+}
+
+/**
  * 库存分页明细响应（/api/inventory/rows）。
  *
  * @remarks
@@ -390,8 +495,8 @@ export interface InventoryPagedRows {
   page: number;
   /** 每页条数 */
   page_size: number;
-  /** 当页行（全列 dict） */
-  rows: Record<string, InvCell>[];
+  /** 当页行（全列 dict，全国滞销行附带 slow_cities） */
+  rows: InvRow[];
   /** 按指标 key 的合计（per_city 为 8 城求和的单一值；national 单列合计；identity 为 null） */
   totals: Record<string, number | null>;
   /** 每城指标 → 每城求和数组（下标对应 cities） */
@@ -417,6 +522,34 @@ export interface InventorySummary {
 }
 
 /**
+ * 信息列筛选条件（多选；空数组 = 不限）。
+ *
+ * @remarks
+ * 对应矩阵表「信息」列里的三个身份字段：三级类目 / 销售员 / 上下柜状态。
+ * 值为后端 inventory_daily 的原始字段值（空值统一用「未标注」表示）。
+ */
+export interface InventoryFilters {
+  /** 三级类目 */
+  category: string[];
+  /** 销售员 */
+  seller: string[];
+  /** 上下柜状态 */
+  shelf_status: string[];
+}
+
+/**
+ * 信息列筛选项候选（由结构分布聚合而来）。
+ */
+export interface InventoryFilterOptions {
+  /** 三级类目候选 */
+  categories: string[];
+  /** 销售员候选 */
+  sellers: string[];
+  /** 上下柜状态候选 */
+  shelf_statuses: string[];
+}
+
+/**
  * 库存明细查询参数。
  */
 export interface InventoryRowsQuery {
@@ -426,12 +559,132 @@ export interface InventoryRowsQuery {
   date?: string;
   /** SKU / 商品名称 / SPU 模糊搜索 */
   keyword?: string;
-  /** 排序 DB 字段名（必须是合法列名） */
+  /** 三级类目筛选（多选） */
+  category?: string[];
+  /** 销售员筛选（多选） */
+  seller?: string[];
+  /** 上下柜状态筛选（多选） */
+  shelf_status?: string[];
+  /** 排序指标 key（inventory_metrics 的 key，如 `city_stock`）；留空 = 不排序 */
   sort_by?: string;
-  /** 排序方向 */
+  /** 排序方向：desc（默认） / asc */
   sort_order?: "asc" | "desc";
   /** 页码，从 1 开始 */
   page: number;
   /** 每页条数，最大 500 */
   page_size: number;
+}
+
+/* ============================== 库存预警与补货建议 ============================== */
+
+/**
+ * 预警三档状态（与 backend.jobs.alert_rules 对齐）。
+ *
+ * - healthy：现货 ≥ 城市阈值
+ * - incoming：现货 < 阈值 ≤ 现货+在途（在途可补足）
+ * - alert：现货+在途 < 阈值（在途也填不上窟窿）
+ * 下柜 SKU 由后端排除，不出现在计数与清单里。
+ */
+export type AlertStatus = "healthy" | "incoming" | "alert";
+
+/**
+ * 单城市预警汇总（/api/inventory/alerts/summary 的 cities 数组项）。
+ */
+export interface AlertCityStat {
+  /** 城市中文名（与 meta.cities 同序同值） */
+  city: string;
+  /** 城市码（bj/wh/sh/gz/cd/xa/dz/sy，与 DB 字段前缀同源） */
+  code: string;
+  /** 城市级阈值（所有 SKU 统一生效；0 = 该城不检测） */
+  threshold: number;
+  /** 预警计数（现货+在途 < 阈值） */
+  red: number;
+  /** 在途计数（现货不足但在途可补足） */
+  yellow: number;
+  /** 健康计数 */
+  green: number;
+  /** 该城建议补货合计（默认参数 9 天 / 20% / 14 日） */
+  restock_total: number;
+}
+
+/**
+ * 8 城预警汇总响应。
+ */
+export interface InventoryAlertsSummary {
+  /** 计算所用快照日期（请求未传时 = 最新快照） */
+  date: string;
+  /** 8 城汇总（顺序与 meta.cities 一致） */
+  cities: AlertCityStat[];
+  /** 建议补货合计所用参数 */
+  params: RestockParams;
+}
+
+/**
+ * 补货算法参数（后端夹取后回显）。
+ */
+export interface RestockParams {
+  /** 覆盖天数（默认 9：每周采购一次，7 天周期 + 到货缓冲） */
+  days: number;
+  /** 安全系数（默认 0.2 = 20%） */
+  safety: number;
+  /** 销速窗口天数（7/14/30，默认 14） */
+  window: number;
+}
+
+/**
+ * 补货建议单行（某城市某 SKU）。
+ */
+export interface RestockRow {
+  /** SKU 编码 */
+  sku: string | null;
+  /** 商品名称 */
+  sku_name: string | null;
+  /** 店铺名 */
+  shop: string | null;
+  /** 三级类目 */
+  category: string | null;
+  /** 上下柜状态（本清单只含上柜） */
+  shelf_status: string | null;
+  /** 现货库存 */
+  stock: number;
+  /** 采购未到货（在途） */
+  purchase: number;
+  /** 有效日均销速（窗口出库 ÷ 窗口有货天数，件/天） */
+  velocity: number;
+  /** 目标库存（销速 × days × (1+safety)，取整） */
+  target: number;
+  /** 建议补货量（target − 现货 − 在途，向上取整） */
+  qty: number;
+  /** 该城市当前预警档位（healthy/incoming/alert） */
+  status: AlertStatus;
+}
+
+/**
+ * 按城市分组的补货建议。
+ */
+export interface RestockGroup {
+  /** 城市中文名 */
+  city: string;
+  /** 城市码 */
+  code: string;
+  /** 该城阈值（展示参考） */
+  threshold: number;
+  /** 建议行（qty 降序） */
+  rows: RestockRow[];
+  /** 该城建议量小计 */
+  subtotal: number;
+}
+
+/**
+ * 补货建议清单响应（/api/inventory/restock）。
+ */
+export interface RestockResponse {
+  /** 计算所用快照日期 */
+  date: string;
+  /** 本次计算实际生效的参数（非法值已被后端夹回默认） */
+  params: RestockParams;
+  /** 按城市分组（仅含有建议行的城市，按 CITIES 顺序） */
+  groups: RestockGroup[];
+  /** 8 城建议量总计（本周建议采购总量） */
+  grand_total: number;
 }

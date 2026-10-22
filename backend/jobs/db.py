@@ -25,7 +25,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import config
-from .inventory_metrics import schema_sql
+from .inventory_metrics import (
+    alert_threshold_schema_sql,
+    alert_threshold_seed_sql,
+    city_slow_schema_sql,
+    schema_sql,
+)
 from .sources.base import LONG_COLUMNS
 
 # DB_PATH：数据库文件位置；DATA_DIR 已被 .gitignore 忽略，所以 .db 不会进仓库
@@ -109,15 +114,22 @@ def ensure_schema() -> None:
 
 
 def ensure_inventory_schema() -> None:
-    """幂等建表：创建 inventory_daily（182+ 列投影宽表）与 inventory_processed_file。
+    """幂等建表：创建 inventory_daily（182+ 列投影宽表）、inventory_city_slow
+    （全城市滞销长表）、inventory_processed_file 与 alert_thresholds（城市级
+    预警阈值，2026-10 新增）。
 
     Side Effects:
         在 DB_PATH 创建库存表（若已存在则什么都不做）。表结构由
-        inventory_metrics.schema_sql() 统一生成，建表逻辑不手写列。
+        inventory_metrics.schema_sql() / city_slow_schema_sql() 统一生成，
+        建表逻辑不手写列。alert_thresholds 首建时为 8 城 seed 默认阈值 10
+        （INSERT OR IGNORE，老库升级补行也安全）。
     """
     conn = get_conn()
     try:
         conn.executescript(schema_sql())
+        conn.executescript(city_slow_schema_sql())
+        conn.executescript(alert_threshold_schema_sql())
+        conn.execute(alert_threshold_seed_sql())
         conn.commit()
     finally:
         conn.close()

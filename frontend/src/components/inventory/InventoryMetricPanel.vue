@@ -25,6 +25,36 @@ const emit = defineEmits<{ (e: "update:keys", value: string[]): void }>();
 const open = ref(false);
 /** 面板根节点引用，用于「点击外部关闭」 */
 const rootRef = ref<HTMLElement | null>(null);
+/** 触发按钮引用（用于测量面板可用高度） */
+const btnRef = ref<HTMLElement | null>(null);
+/**
+ * 面板最大高度（px）。
+ *
+ * @remarks
+ * 面板是 `position: absolute`（跟随按钮滚动），而下拉时按钮通常位于
+ * 视口偏上位置：面板按内容撑开就会超出视口底边被裁掉
+ * （实测 1600×900 视口下裁掉 172px，1366×768 下裁掉 249px）。
+ * 这里按「按钮底边到视口底边的距离」限制面板高度，超出部分由面板内
+ * 列表区自行滚动，保证任何屏幕尺寸下「完成」按钮都完整可见。
+ */
+const panelMaxH = ref<number | null>(null);
+
+/** 依据按钮当前位置重算面板可用高度。 */
+function syncPanelMaxH(): void {
+  const btn = btnRef.value;
+  if (!btn || !open.value) return;
+  const r = btn.getBoundingClientRect();
+  const avail = window.innerHeight - r.bottom - 16;
+  // 下限 150px：面板的固定部分（头 60 + 快捷操作 41 + 底栏 41 ≈ 142px）
+  // 不能被压缩，否则「完成」按钮会被裁掉；其余高度让给列表区自行滚动。
+  panelMaxH.value = Math.max(150, Math.min(560, Math.round(avail)));
+}
+
+/** 展开/收起面板（展开时同步一次可用高度）。 */
+function togglePanel(): void {
+  open.value = !open.value;
+  if (open.value) syncPanelMaxH();
+}
 
 /** 已勾选集合（O(1) 判断）。 */
 const selected = computed(() => new Set(props.keys));
@@ -74,27 +104,38 @@ function onEsc(e: KeyboardEvent): void {
 onMounted(() => {
   document.addEventListener("click", onDocClick);
   document.addEventListener("keydown", onEsc);
+  // 面板可用高度依赖按钮的视口位置：滚动 / 缩放时都要重算
+  window.addEventListener("scroll", syncPanelMaxH, true);
+  window.addEventListener("resize", syncPanelMaxH);
 });
 onBeforeUnmount(() => {
   document.removeEventListener("click", onDocClick);
   document.removeEventListener("keydown", onEsc);
+  window.removeEventListener("scroll", syncPanelMaxH, true);
+  window.removeEventListener("resize", syncPanelMaxH);
 });
 </script>
 
 <template>
   <div class="mc" data-testid="inv-metric-config" ref="rootRef">
     <button
+      ref="btnRef"
       class="mc-btn"
       data-testid="inv-metric-config-btn"
       :class="{ active: open }"
-      @click="open = !open"
+      @click="togglePanel"
     >
       <svg class="mc-ico" viewBox="0 0 1024 1024" width="16" height="16" xmlns="http://www.w3.org/2000/svg"><path d="M199.978667 488.021333H416c38.4 0 71.978667-33.621333 71.978667-72.021333V199.978667c0-38.4-33.578667-71.978667-71.978667-71.978667H199.978667C161.578667 128 128 161.621333 128 200.021333V416c0 38.4 33.578667 72.021333 71.978667 72.021333zM535.978667 718.378667c0 96 81.621333 177.621333 182.4 177.621333 96 0 177.621333-81.621333 172.8-177.621333 0-96-76.8-177.578667-177.621334-177.578667-96 0-177.578667 76.8-177.578666 177.578667z" fill="#2563eb" opacity=".4"/><path d="M608 488.021333h215.978667c38.4 0 72.021333-33.621333 72.021333-72.021333V199.978667C896 161.621333 862.378667 128 819.2 128h-211.2c-38.4 0-72.021333 33.621333-72.021333 72.021333V416c0 38.4 33.621333 72.021333 72.021333 72.021333zM199.978667 896H416c38.4 0 71.978667-33.621333 71.978667-76.8v-211.2c0-38.4-33.578667-72.021333-71.978667-72.021333H199.978667c-38.4 0-71.978667 33.621333-71.978667 72.021333v216.021333c0 38.4 33.578667 71.978667 71.978667 71.978667z" fill="#2563eb"/></svg>
       <span>指标配置</span>
       <span class="mc-count">{{ props.keys.length }}/{{ selectableMetrics.length }}</span>
     </button>
 
-    <div v-if="open" class="mc-panel" data-testid="inv-metric-config-panel">
+    <div
+      v-if="open"
+      class="mc-panel"
+      data-testid="inv-metric-config-panel"
+      :style="panelMaxH ? { maxHeight: panelMaxH + 'px' } : undefined"
+    >
       <div class="mc-head">
         <div>
           <div class="mc-title">选择要展示的指标</div>
@@ -231,6 +272,10 @@ onBeforeUnmount(() => {
   box-shadow: 0 12px 32px rgba(15, 23, 42, 0.14);
   z-index: 60;
   overflow: hidden;
+  /* 纵向 flex：max-height 生效时，列表区（.mc-body）可压缩并自行滚动，
+     保证「完成」按钮永远留在面板内、不会被视口底边裁掉 */
+  display: flex;
+  flex-direction: column;
 }
 .mc-head {
   display: flex;
@@ -239,6 +284,7 @@ onBeforeUnmount(() => {
   gap: 10px;
   padding: 12px 14px;
   border-bottom: 1px solid var(--color-bg);
+  flex: none;
 }
 .mc-title {
   font-size: 14px;
@@ -268,6 +314,7 @@ onBeforeUnmount(() => {
   padding: 10px 14px;
   border-bottom: 1px solid var(--color-bg);
   background: var(--color-surface-3);
+  flex: none;
 }
 .mc-actions-label {
   font-size: 11.5px;
@@ -289,8 +336,13 @@ onBeforeUnmount(() => {
   color: var(--color-brand);
 }
 .mc-body {
-  max-height: 340px;
+  /* 面板整体高度受视口约束：矮屏时列表区自动收窄（内部滚动），
+     避免面板比视口还高、页面滚到底也看不全「完成」按钮。 */
+  max-height: min(340px, 42vh);
+  flex: 1 1 auto;
+  min-height: 0;
   overflow: auto;
+  overscroll-behavior: contain;
   padding: 6px 14px 12px;
 }
 .mc-group {
@@ -361,6 +413,7 @@ onBeforeUnmount(() => {
   background: var(--color-surface-3);
   font-size: 11.5px;
   color: var(--color-text-5);
+  flex: none;
 }
 .mc-done {
   background: var(--color-brand);

@@ -61,6 +61,20 @@ POP_IMAGE_DIR_NAME = "单品spu图片"
 # 库存表（家配/医拜/卡求自营库存明细）放在 ResourceData/库存数据表/ 下
 INVENTORY_SOURCE_DIR = Path(os.getenv("JD_INVENTORY_DIR", BACKEND_DIR.parent / "ResourceData" / "库存数据表"))
 
+# INV_PIC_DIR：库存 SKU 商品图目录（数据源，**只读**）。
+# 下面是 4 个业务线子目录：jpzy(家配) / kqzy(卡求) / ybzy(医拜) / pop(POP 模块)，
+# 文件名主干即 SKU，与 inventory_daily.sku 逐字符相等。
+# ⚠️ 与 POP 模块的分工别搞混：POP 单品明细按 **SPU** 取图（单品spu图片/ 目录），
+#    库存矩阵表按 **SKU** 取图（本目录），两条链路彼此独立。
+INV_PIC_DIR = Path(os.getenv("JD_INV_PIC_DIR", POP_SOURCE_DIR / "inventory_sku_pic"))
+
+# INV_THUMBS_DIR：库存 SKU 商品图的缩略图根目录。
+# 刻意落在既有 THUMBS_DIR（= IMAGES_DIR/"thumbs"）之下，这样缩略图直接被已有的
+# /thumbs 静态挂载托管，**无需新增静态挂载、也无需在 vite proxy 里加新前缀**；
+# 前端访问路径形如 /thumbs/inv/<sub>/<size>/<sku>.avif。
+# 数据源目录只读，缩略图产物一律写进 DATA_DIR。
+INV_THUMBS_DIR = THUMBS_DIR / "inv"
+
 # PG_DSN：PostgreSQL 连接串。留空表示不启用数据库源（db_source.PostgresSource 会自动跳过）
 PG_DSN = os.getenv("PG_DSN", "")
 

@@ -10,6 +10,10 @@
   thumbs/{96,120,180}/{stem}.avif 与 thumbs/{96,120,180}/{stem}.webp
   原图仍保留在 /images 下，详情页要看大图时依然可访问。
 
+尺寸档位可由调用方通过 build_thumbnails 的 sizes 参数指定
+（库存 SKU 图只用 120/240 两档，见 backend/jobs/inv_pics.py）；
+POP 模块的调用不传该参数，行为与本文档描述保持一致。
+
 触发时机：
   在 pipeline._load_image_map 中调用，随每次批处理**幂等重算**——
   只有「缩略图不存在」或「比源图旧」时才重新生成，源图没变则直接跳过。
@@ -74,7 +78,7 @@ def _open_rgb(img_path: Path) -> Image.Image:
     return im.convert("RGB")
 
 
-def build_thumbnails(src_dir: Path, thumbs_root: Path) -> int:
+def build_thumbnails(src_dir: Path, thumbs_root: Path, sizes: tuple[int, ...] | None = None) -> int:
     """为 src_dir 下的所有图片生成多尺寸 AVIF + WebP 缩略图。
 
     幂等逻辑：
@@ -84,6 +88,9 @@ def build_thumbnails(src_dir: Path, thumbs_root: Path) -> int:
     Args:
         src_dir: 源图目录（数据源里的「单品spu图片」或已同步到 DATA_DIR/images 的目录）。
         thumbs_root: 缩略图根目录，产物落在 thumbs_root/{size}/{stem}.{ext}。
+        sizes: 需要生成的尺寸档位；None 表示用默认的 THUMB_SIZES。
+            库存 SKU 图只需 120（1x）与 240（2x 高清屏）两档，传入自定义值可省掉
+            用不到的 96/180 编码开销。**POP 模块的调用不传该参数**，行为保持不变。
 
     Returns:
         int: 本次实际生成（保存成功）的缩略图文件数。全部跳过时为 0。
@@ -96,12 +103,18 @@ def build_thumbnails(src_dir: Path, thumbs_root: Path) -> int:
         >>> n = build_thumbnails(Path("ResourceData/单品spu图片"), Path("data/images/thumbs"))
         >>> n >= 0
         True
+        >>> n2 = build_thumbnails(Path("ResourceData/inventory_sku_pic/jpzy"),
+        ...                      Path("data/images/thumbs/inv/jpzy"), sizes=(120, 240))
+        >>> n2 >= 0
+        True
     """
     if not src_dir.is_dir():
         return 0
 
-    # 预建三个尺寸目录，避免保存时逐文件判断目录是否存在
-    for size in THUMB_SIZES:
+    use_sizes: tuple[int, ...] = tuple(sizes) if sizes else THUMB_SIZES
+
+    # 预建各尺寸目录，避免保存时逐文件判断目录是否存在
+    for size in use_sizes:
         (thumbs_root / str(size)).mkdir(parents=True, exist_ok=True)
 
     total = 0
@@ -113,7 +126,7 @@ def build_thumbnails(src_dir: Path, thumbs_root: Path) -> int:
 
         # 判断是否需要重算：任一尺寸/格式的产物缺失或过期即需要
         need = False
-        for size in THUMB_SIZES:
+        for size in use_sizes:
             for ext, _, _ in THUMB_FORMATS:
                 out = thumbs_root / str(size) / f"{src.stem}.{ext}"
                 if not out.exists() or out.stat().st_mtime < src.stat().st_mtime:
@@ -130,7 +143,7 @@ def build_thumbnails(src_dir: Path, thumbs_root: Path) -> int:
             print(f"[make_thumbs] 跳过无法解码的源图 {src.name}: {e}")
             continue
 
-        for size in THUMB_SIZES:
+        for size in use_sizes:
             # copy 后再 thumbnail：thumbnail 是原地缩放，避免污染下一轮尺寸的计算基准
             thumb = im.copy()
             # LANCZOS 在缩小时画质最好；thumbnail 会保持宽高比且不会放大（长边不超过 size）

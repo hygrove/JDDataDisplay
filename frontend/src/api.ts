@@ -5,13 +5,18 @@
 //    写死域名会让「换端口部署」或「走 https」时全部请求失败。
 import type {
   BatchStatus,
+  InventoryAlertsSummary,
+  InventoryDistributions,
   InventoryMeta,
   InventoryPagedRows,
   InventoryRowsQuery,
+  InventorySlowCity,
   InventorySummary,
   Manifest,
   ModuleSummary,
   PagedRows,
+  RestockParams,
+  RestockResponse,
   SpuAnalysis,
 } from "./types";
 
@@ -34,6 +39,24 @@ const BASE = "/api";
 async function get<T>(url: string): Promise<T> {
   const res = await fetch(BASE + url);
   // 把状态码 + 后端详情文本一并塞进错误，便于直接把 message 显示在页面上定位问题
+  if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+  return (await res.json()) as T;
+}
+
+/**
+ * 通用 PUT 请求：与 get 相同的错误约定（非 2xx 抛 Error，message 带状态码与详情）。
+ *
+ * @template T 期望的响应数据类型。
+ * @param {string} url - 以 "/" 开头的接口路径（不含 /api 前缀）。
+ * @param {unknown} body - 请求体（JSON 序列化）。
+ * @returns {Promise<T>} 解析后的响应 JSON。
+ */
+async function put<T>(url: string, body: unknown): Promise<T> {
+  const res = await fetch(BASE + url, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
   if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
   return (await res.json()) as T;
 }
@@ -278,9 +301,13 @@ export function fetchInventoryMeta(): Promise<InventoryMeta> {
 }
 
 /**
- * 拉取库存分页明细（店铺 / 日期 / 关键词 / 排序 / 分页）。后端返回全列 dict，前端投影成矩阵。
+ * 拉取库存分页明细（店铺 / 日期 / 关键词 / 信息列筛选 / 排序 / 分页）。后端返回全列 dict，前端投影成矩阵。
  *
- * @param {InventoryRowsQuery} q - 查询参数；shop/date/keyword/sort_* 可选，page/page_size 必填。
+ * @remarks
+ * 排序参数作用于**全部行**（后端先排序再分页），传 sort_by 即可跨页排序，
+ * 而不是在当页 50 条内部排。
+ *
+ * @param {InventoryRowsQuery} q - 查询参数；shop/date/keyword/category/seller/shelf_status/sort_by/sort_order 可选，page/page_size 必填。
  * @returns {Promise<InventoryPagedRows>} 含 total、当页 rows、totals（指标合计）、city_totals（每城合计）。
  * @throws {Error} 接口非 2xx。
  * @example
@@ -288,6 +315,8 @@ export function fetchInventoryMeta(): Promise<InventoryMeta> {
  * const p = await fetchInventoryRows({ shop: "家配", date: "2026-10-18", page: 1, page_size: 50 });
  * p.total;          // 过滤后总行数
  * p.city_totals["city_stock"]; // 8 城现货库存合计数组
+ * // 按现货库存合计降序取第 2 页（排序跨全量数据）
+ * const q = await fetchInventoryRows({ sort_by: "city_stock", sort_order: "desc", page: 2, page_size: 50 });
  * ```
  */
 export function fetchInventoryRows(q: InventoryRowsQuery): Promise<InventoryPagedRows> {
@@ -295,8 +324,15 @@ export function fetchInventoryRows(q: InventoryRowsQuery): Promise<InventoryPage
   if (q.shop) params.set("shop", q.shop);
   if (q.date) params.set("date", q.date);
   if (q.keyword) params.set("keyword", q.keyword);
-  if (q.sort_by) params.set("sort_by", q.sort_by);
-  if (q.sort_order) params.set("sort_order", q.sort_order);
+  // 多选筛选：后端按逗号分隔解析（category / seller / shelf_status）
+  if (q.category?.length) params.set("category", q.category.join(","));
+  if (q.seller?.length) params.set("seller", q.seller.join(","));
+  if (q.shelf_status?.length) params.set("shelf_status", q.shelf_status.join(","));
+  // 排序：指标 key + 方向，缺省 desc
+  if (q.sort_by) {
+    params.set("sort_by", q.sort_by);
+    params.set("sort_order", q.sort_order ?? "desc");
+  }
   params.set("page", String(q.page));
   params.set("page_size", String(q.page_size));
   return get<InventoryPagedRows>(`/inventory/rows?${params.toString()}`);
@@ -320,4 +356,102 @@ export function fetchInventorySummary(shop?: string, date?: string): Promise<Inv
   if (shop) params.set("shop", shop);
   if (date) params.set("date", date);
   return get<InventorySummary>(`/inventory/summary?${params.toString()}`);
+}
+
+/**
+ * 拉取全城市滞销聚合（不限于 8 城）：城市 → 滞销件数，降序。
+ *
+ * @param {string} [shop] - 店铺过滤；留空 = 全部店铺。
+ * @param {string} [date] - 快照日期；留空 = 全部日期。
+ * @returns {Promise<InventorySlowCity[]>} 每城一项，core=true 为 8 城白名单。
+ * @throws {Error} 接口非 2xx。
+ * @example
+ * ```ts
+ * const cities = await fetchInventorySlowCities("家配", "2026-10-18");
+ * cities[0]; // { city: "上海", units: 1424, core: true }
+ * ```
+ */
+export function fetchInventorySlowCities(
+  shop?: string,
+  date?: string,
+): Promise<InventorySlowCity[]> {
+  const params = new URLSearchParams();
+  if (shop) params.set("shop", shop);
+  if (date) params.set("date", date);
+  return get<{ cities: InventorySlowCity[] }>(`/inventory/slow-cities?${params.toString()}`)
+    .then((r) => r.cities);
+}
+
+/**
+ * 拉取结构分布（概览卡数据源）：SKU 覆盖 / 上下柜 / 三级类目 / 销售员四维度。
+ *
+ * @param {InventoryRowsQuery} [q] - 与明细一致的筛选条件（shop / date / keyword）。
+ * @returns {Promise<InventoryDistributions>} 四维度 + 店铺拆分。
+ * @throws {Error} 接口非 2xx。
+ * @example
+ * ```ts
+ * const d = await fetchInventoryDistributions({ shop: "家配", date: "2026-10-19" });
+ * d.sku.total;            // 201
+ * d.category.items[0].by_shop; // { 家配: 89, 医拜: 0, 卡求: 0 }
+ * ```
+ */
+export function fetchInventoryDistributions(
+  q: Pick<InventoryRowsQuery, "shop" | "date" | "keyword"> = {},
+): Promise<InventoryDistributions> {
+  const params = new URLSearchParams();
+  if (q.shop) params.set("shop", q.shop);
+  if (q.date) params.set("date", q.date);
+  if (q.keyword) params.set("keyword", q.keyword);
+  return get<InventoryDistributions>(`/inventory/distributions?${params.toString()}`);
+}
+
+/**
+ * 拉取 8 城预警汇总（每城阈值、红/黄/绿计数、建议补货合计）。
+ *
+ * @param {string} [shop] - 店铺过滤；留空 = 全部店铺。
+ * @param {string} [date] - 快照日期；留空 = 最新快照。
+ * @returns {Promise<InventoryAlertsSummary>} 8 城汇总（cities 顺序与 meta.cities 一致）。
+ * @throws {Error} 接口非 2xx。
+ */
+export function fetchInventoryAlerts(shop?: string, date?: string): Promise<InventoryAlertsSummary> {
+  const params = new URLSearchParams();
+  if (shop) params.set("shop", shop);
+  if (date) params.set("date", date);
+  return get<InventoryAlertsSummary>(`/inventory/alerts/summary?${params.toString()}`);
+}
+
+/**
+ * 批量保存城市阈值（UPSERT，持久化到 SQLite；负数按 0 = 不检测）。
+ *
+ * @param {Record<string, number>} thresholds - 城市码 → 阈值，只提交要改的城市即可。
+ * @returns {Promise<{ ok: boolean; thresholds: Record<string, number> }>} 规范化后的全量阈值。
+ * @throws {Error} 接口非 2xx（422 = 未包含任何合法城市码）。
+ */
+export function putAlertThresholds(
+  thresholds: Record<string, number>,
+): Promise<{ ok: boolean; thresholds: Record<string, number> }> {
+  return put("/inventory/alerts/thresholds", { thresholds });
+}
+
+/**
+ * 拉取补货建议清单（按城市分组，只含建议量 > 0 的行，下柜排除）。
+ *
+ * @param {object} [q] - 查询与算法参数。
+ * @param {string} [q.shop] - 店铺过滤；留空 = 全部店铺。
+ * @param {string} [q.date] - 快照日期；留空 = 最新快照。
+ * @param {RestockParams} [q.params] - 算法参数（days/safety/window）；非法值由后端夹回默认。
+ * @returns {Promise<RestockResponse>} 分组清单 + 参数回显 + 总计。
+ * @throws {Error} 接口非 2xx。
+ */
+export function fetchRestockList(
+  q: { shop?: string; date?: string; params?: Partial<RestockParams> } = {},
+): Promise<RestockResponse> {
+  const params = new URLSearchParams();
+  if (q.shop) params.set("shop", q.shop);
+  if (q.date) params.set("date", q.date);
+  const p = q.params ?? {};
+  if (p.days !== undefined) params.set("days", String(p.days));
+  if (p.safety !== undefined) params.set("safety", String(p.safety));
+  if (p.window !== undefined) params.set("window", String(p.window));
+  return get<RestockResponse>(`/inventory/restock?${params.toString()}`);
 }

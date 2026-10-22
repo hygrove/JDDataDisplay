@@ -10,7 +10,7 @@
 
 ⚠️ 挂载顺序是硬约束：
   SPA 回退路由 `/{full_path:path}` 会吞掉**一切**未匹配的 GET 请求，
-  所以 `/images`、`/thumbs`、`/assets` 这些静态挂载**必须**写在它之前，
+  所以 `/images`、`/thumbs`、`/inv-pics`、`/assets` 这些静态挂载**必须**写在它之前，
   否则图片请求会被回退成 index.html（表现为「页面能开、图片全 404」）。
 """
 from __future__ import annotations
@@ -68,6 +68,22 @@ app.mount("/images", StaticFiles(directory=config.IMAGES_DIR), name="images")
 # 前端按展示框实际尺寸引用对应目录，避免为了 96px 的框去下载 MB 级原图
 config.THUMBS_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/thumbs", StaticFiles(directory=config.THUMBS_DIR), name="thumbs")
+
+# 库存 SKU 商品原图：ResourceData/inventory_sku_pic/<业务线>/<SKU>.jpg
+# 只挂这一个子目录，**不暴露整个 ResourceData**（数据源目录语义上只读）。
+# 缩略图不需要另挂：它们落在 config.THUMBS_DIR/inv 下，已被上面的 /thumbs 覆盖。
+# ⚠️ 同样必须写在 SPA 回退路由之前，否则图片请求会被回退成 index.html。
+#
+# 数据源目录可能尚未就位（首次部署还没拷图），而 StaticFiles 在目录不存在时会启动即报错。
+# 这里不 mkdir 造目录（数据源根目录不该被程序凭空造出来），
+# 改为挂一个空占位目录：图片请求得到 404，而不是被 SPA 回退成 index.html。
+if config.INV_PIC_DIR.is_dir():
+    INV_PIC_MOUNT_DIR = config.INV_PIC_DIR
+else:
+    INV_PIC_MOUNT_DIR = config.DATA_DIR / "_inv_pics_missing"
+    print(f"[inv_pics] 图片目录不存在，已挂空占位（图片将 404）：{config.INV_PIC_DIR}")
+INV_PIC_MOUNT_DIR.mkdir(parents=True, exist_ok=True)
+app.mount("/inv-pics", StaticFiles(directory=INV_PIC_MOUNT_DIR), name="inv-pics")
 
 # 前端静态资源与 SPA 回退：仅在 dist 存在时挂载，
 # 否则纯后端启动（如只跑 API 调试）不会因为找不到 dist 而崩

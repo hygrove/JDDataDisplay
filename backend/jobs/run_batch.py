@@ -31,6 +31,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from backend.jobs import config, pipeline  # noqa: E402
 from backend.jobs import db as jobdb  # noqa: E402
 from backend.jobs import inventory as inventory_mod  # noqa: E402
+from backend.jobs import inv_pics as inv_pics_mod  # noqa: E402
 from backend.jobs.models import BatchStatus  # noqa: E402
 
 
@@ -142,6 +143,15 @@ def run_once() -> BatchStatus:
             # 库存模块摄入（独立宽表 inventory_daily，不影响现有 POP 链路）
             inv_result = inventory_mod.ingest_inventory_to_db()
             print(f"[inventory] 摄入：{inv_result}")
+            # 库存 SKU 商品图缩略图（120/240 两档，AVIF+WebP）：
+            # ⛔ 失败只告警、不中断本批——图片是展示层的辅助产物，
+            # 缺了只会让矩阵表第一列回落到占位图，不该让整天的数据更新失败。
+            # 幂等：源图没变就跳过，所以日常批处理几乎不产生开销。
+            try:
+                thumb_count = inv_pics_mod.build_inv_thumbs()
+                print(f"[inv_pics] 库存 SKU 缩略图：新增 {thumb_count} 个文件")
+            except Exception as e:  # noqa: BLE001 —— 缩略图失败绝不拖垮批处理
+                print(f"[inv_pics] 库存 SKU 缩略图生成失败（已跳过，不影响本批）：{type(e).__name__}: {e}")
             manifest = pipeline.run_all()
             status = BatchStatus(
                 last_run_at=started_at,

@@ -72,6 +72,24 @@ IDENTITY: list[tuple[str | None, str, str]] = [
     ("销售员名称", "seller", "销售员名称"),
 ]
 
+# 矩阵表列顺序的「插位点」：指标 key → 锚点指标 key，表示前者要排到后者之后。
+#
+# 全国指标默认整体排在每城指标之前，但「全国滞销件数」要插到「近30日出库」之后
+# （默认展示列顺序：现货库存 | 昨日出库 | 采购未到货 | 数量周转 | 预计可售天数
+#   | 近7日出库 | 7日有货天数 | 近14日出库 | 14日有货天数 | 近30日出库 | 30日有货天数
+#   | 全国滞销件数，对照 .scratch/inventory/plan.md §2.1）。
+# 其余全国指标仍留在每城指标之前 —— 只有这一列需要换位。
+#
+# 「有货天数」三列各自紧跟同窗口的出库列（7 日有货天数跟近7日出库、14 日跟近14日、
+# 30 日跟近30日）：同样走插位机制，锚点互不相同、互不串行，可独立调整；
+# 被插位列若排在锚点之后，锚点之后的原有列（如 nat_slow）整体后移一位，相对次序不变。
+COLUMN_ANCHOR_AFTER: dict[str, str] = {
+    "nat_slow": "city_out_30",
+    "city_avail_7": "city_out_7",
+    "city_avail_14": "city_out_14",
+    "city_avail_30": "city_out_30",
+}
+
 
 def all_columns() -> list[tuple[str, str | None, str]]:
     """返回全部 184 个 DB 列：(db_field, source_header, col_type)。
@@ -128,6 +146,58 @@ CREATE TABLE IF NOT EXISTS inventory_processed_file (
 """
 
 
+# 城市级预警阈值表：city 存城市码（bj/wh/...，与字段前缀同源），
+# 默认值 DEFAULT_THRESHOLD=10；updated_at 记录最后一次修改（ISO 时间戳）。
+def alert_threshold_schema_sql() -> str:
+    """生成 alert_thresholds 建表 SQL（幂等，由 db.ensure_inventory_schema 执行）。"""
+    from .alert_rules import DEFAULT_THRESHOLD
+
+    return f"""
+CREATE TABLE IF NOT EXISTS alert_thresholds (
+    city TEXT PRIMARY KEY,
+    threshold REAL NOT NULL DEFAULT {DEFAULT_THRESHOLD},
+    updated_at TEXT NOT NULL
+);
+"""
+
+
+def alert_threshold_seed_sql() -> str:
+    """8 城默认阈值 seed SQL（INSERT OR IGNORE，老库补行 / 新库首灌都安全）。"""
+    from datetime import datetime, timezone
+
+    from .alert_rules import DEFAULT_THRESHOLD
+
+    now = datetime.now(timezone.utc).isoformat()
+    values = ",\n".join(
+        f"('{code}', {DEFAULT_THRESHOLD}, '{now}')" for code in CITY_CODES.values()
+    )
+    return f"INSERT OR IGNORE INTO alert_thresholds (city, threshold, updated_at) VALUES\n{values};"
+
+
+def _apply_column_anchors(metrics: list[dict]) -> list[dict]:
+    """按 COLUMN_ANCHOR_AFTER 调整指标展示顺序（只动顺序，不动指标本身）。
+
+    Args:
+        metrics: 原始指标列表（身份列 → 全国指标 → 每城指标）。
+
+    Returns:
+        list[dict]: 调整顺序后的新列表（入参不被修改）。
+        锚点指标不存在时，被插位的指标保持原位（不报错、不丢列）。
+    """
+    out = list(metrics)
+    for key, anchor in COLUMN_ANCHOR_AFTER.items():
+        src = next((i for i, m in enumerate(out) if m["key"] == key), None)
+        if src is None:
+            continue
+        metric = out.pop(src)
+        dst = next((i for i, m in enumerate(out) if m["key"] == anchor), None)
+        if dst is None:
+            out.insert(src, metric)  # 锚点不存在 → 放回原位
+        else:
+            out.insert(dst + 1, metric)
+    return out
+
+
 def build_metrics() -> list[dict]:
     """构建前端指标配置（配置驱动，不写死）。
 
@@ -139,6 +209,10 @@ def build_metrics() -> list[dict]:
       default_visible 开页是否可见
       locked         是否锁定（身份列恒可见、不参与勾选）
       aggregatable   合计行是否对该指标求和（不合计则显 "—"）
+
+    返回顺序 = 矩阵表列顺序：身份列 → 全国指标 → 每城指标，
+    再按 COLUMN_ANCHOR_AFTER 做插位（「全国滞销件数」移到「近30日出库」之后；
+    7 / 14 / 30 日有货天数分别紧随同窗口出库列）。
     """
     metrics: list[dict] = []
 
@@ -167,7 +241,7 @@ def build_metrics() -> list[dict]:
         ("预计可售天数", "sellable_days", "预计可售天数", True, False),
         ("近7日出库商品件数", "out_7", "近7日出库", True, True),
         ("近14日出库商品件数", "out_14", "近14日出库", True, True),
-        ("近30日出库商品件数", "out_30", "近30出库", True, True),
+        ("近30日出库商品件数", "out_30", "近30日出库", True, True),
         ("滞销件数", "slow", "滞销件数", False, True),
         ("不动销库存件数", "unsalable", "不动销库存件数", False, True),
         ("月至今出库商品件数", "out_mtd", "月至今出库", False, True),
@@ -187,10 +261,58 @@ def build_metrics() -> list[dict]:
             "key": f"city_{scode}", "title": title, "kind": "per_city",
             "fields": fields, "default_visible": dv, "locked": False, "aggregatable": agg,
         })
-    return metrics
+    return _apply_column_anchors(metrics)
 
 
 # 模块级常量（一次性构建，避免重复计算）
 METRICS = build_metrics()
 ALL_FIELD_NAMES = [fld for fld, _s, _t in all_columns()]
 NUMERIC_FIELDS = numeric_fields()
+
+# 全城市滞销明细：源表每个「<城市>滞销件数」列（约 70 个城市/仓，远超 8 城白名单）
+# 都进 inventory_city_slow 长表，供前端在「全国滞销件数」列里按行展示城市拆分。
+SLOW_SUFFIX = "滞销件数"
+
+
+def city_slow_schema_sql() -> str:
+    """生成 inventory_city_slow（全城市滞销长表）的建表 SQL（幂等）。
+
+    Returns:
+        str: CREATE TABLE IF NOT EXISTS + 索引。主键 (date, shop, sku, city)，
+            查询按 (date, shop, sku) 命中索引。
+
+    Note:
+        城市维度是数据而非 schema：源表新增城市列无需改表，ETL 按表头动态提取。
+    """
+    return """
+CREATE TABLE IF NOT EXISTS inventory_city_slow (
+    date TEXT NOT NULL,
+    shop TEXT NOT NULL,
+    sku TEXT NOT NULL,
+    city TEXT NOT NULL,
+    slow_units REAL NOT NULL,
+    PRIMARY KEY (date, shop, sku, city)
+);
+CREATE INDEX IF NOT EXISTS idx_inv_city_slow_lookup ON inventory_city_slow(date, shop, sku);
+"""
+
+
+def extract_city_slow_cols(header: list) -> list[tuple[str, int]]:
+    """从源表表头提取「城市 → 列下标」的滞销件数映射（排除全国口径）。
+
+    Args:
+        header: 源表第一行（表头）列表。
+
+    Returns:
+        list[tuple[str, int]]: [(城市名, 列下标), ...]；表头无匹配列时为空列表。
+            城市名含衍生仓名（如「广州补货B」「上海B仓(商)京东自营渠道」按原样保留，
+            仅剥掉「滞销件数」后缀），「全国滞销件数」等全国口径不计入。
+    """
+    out: list[tuple[str, int]] = []
+    for i, h in enumerate(header):
+        if not h:
+            continue
+        s = str(h)
+        if s.endswith(SLOW_SUFFIX) and not s.startswith("全国"):
+            out.append((s[: -len(SLOW_SUFFIX)], i))
+    return out

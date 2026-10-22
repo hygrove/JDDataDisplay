@@ -12,7 +12,7 @@
   --color-text-3: #475569;
   --color-text-4: #64748b;
   --color-text-5: #94a3b8;
-  --color-text-6: #cbd5e1;        /* 最弱 / placeholder */
+  --color-text-6: #c4ceda;        /* 最弱 / placeholder */
 
   /* 背景 */
   --color-bg: #f1f5f9;            /* 页面底 */
@@ -46,8 +46,8 @@
   /* 「涨」的语义绿（国内习惯绿涨红跌）：与 --color-success 刻意不同——
      后者偏青绿、用于「操作成功」类反馈；本色用于数值上涨，与红 #dc2626 配对。
      改动前该色散落 3 处硬编码（MonthCompareTable 气泡/标题、ModuleView 日均）。 */
-  --color-up: #16a34a;
-  --color-down: #dc2626;
+  --color-up: #1eb656;
+  --color-down: #da2d2d;
 
   /* 圆角 */
   --radius-xs: 2px;
