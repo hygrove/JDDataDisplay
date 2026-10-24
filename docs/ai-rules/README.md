@@ -52,6 +52,7 @@
 - **列投影**：按**列名白名单**投影（不按列位置；生产原表 2000+ 列乱序，"前 22 列是固定列"纯属巧合）。
 - **城市匹配**：8 城（北京/武汉/上海/广州/成都/西安/德州/沈阳）**精确等值匹配**；`广州补货B`/`上海零售` 等衍生前缀自然排除——⛔ 不用 `startswith`（会误吞「西安」）。
 - **设计令牌（颜色/边框/圆角）**：`frontend/src/style.css` 的 `:root` 是唯一事实来源；组件 scoped 样式一律引用 `var(--color-text-*)` 等变量，⛔ 不写魔法色值（改一处即全局生效）。
+- 🔴 **给行 payload 加字段必须两处同时改**：装配处（dict 里塞值）**且** `RestockRowModel` 里显式声明。`model_config = {"extra": "allow"}` 意味着**未声明的字段会被 Pydantic 静默丢弃**——不声明 = 白加，接口返回里没有该字段，而前端类型已声明 → 表现为"前端拿到 undefined 却没人报错"。
 
 ---
 
@@ -107,6 +108,20 @@
    - 「能撤回」要有前置基线才成立；备份必须在注入/改动**之前**拍；恢复的**唯一可信判据是逐字节比对**，⛔ 不靠"手工改回来"。
    - organize 回滚覆盖两区（`--rollback` 同时遍历归档与隔离清单）；目标已有同名→只报冲突不覆盖。
    - 论据：`docs/adr/0006-recycle-bin-cleanup.md`（回收站语义）。
+
+### 6.1 推送到 public 远端（不可逆：推上去撤不回来）
+
+**仓库 `hygrove/JDDataDisplay` 是 public**，业务数据一旦推上去就是公开的。
+
+- ⛔ **业务数据禁入仓**：`ResourceData/`（业务 Excel/CSV/图）、`app.db`（含 POP 销售明细与库存业务数据）、`backend/app/data/` 运行时产物。`.gitignore` 已双保险（`ResourceData/` + `*.db` + `backend/app/data/`），`sample_data/` 是**脱敏样例**、刻意入库。
+- 🔴 **核验只能看 `origin/main`，⛔ 不能用 `git log --all`**：`--all` 会把**本地未推送的分支与 worktree** 一并算进来，命中 `ResourceData/*.xlsx` 极易误判"业务数据已入库"，白折腾甚至做出错误决策。正确判据：
+  ```bash
+  git log origin/main --diff-filter=A --name-only --pretty=format: | grep -i '^ResourceData'   # 必须为空
+  git ls-tree -r origin/main --name-only | grep -ci '^ResourceData'                              # 必须为 0
+  ```
+- **推前扫描四件套**：①`.gitignore` 双保险复核 ②密钥正则（`api_key|secret|token|private key|sk-|ghp_`）③外网硬编码 IP（排除 `127.0.0.1`/`0.0.0.0`/`localhost`）④真实店铺名/手机号。
+- **推前必过验证闸门**（§3）：后端真导入 + 后端单测 + 前端 `npm run build` + `npm run verify:tokens`（纯静态项）。红灯不推。
+- ⚠️ **并行跑「前端 build」与「后端真导入」会假报** `RuntimeError: Directory 'frontend/dist/assets' does not exist`——build 会清空重写 `dist/assets`，撞上后端导入读目录。**不是真 bug**，串行重跑即过。验证项之间要么串行，要么后端导入放最后。
 
 ---
 
