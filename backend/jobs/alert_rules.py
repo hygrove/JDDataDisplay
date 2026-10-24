@@ -8,13 +8,28 @@
 下柜 SKU 完全排除：不预警、不补货。
 
 补货量（销速驱动目标库存）：
-  velocity = 窗口出库量 ÷ 窗口有货天数（有货天数 = 0 视为无销速依据 → 0）
+  velocity = 可信日均销速（三级估计器，见 credible_velocity）
   target   = velocity × 覆盖天数 × (1 + 安全系数)
   qty      = max(0, ceil(target) − 现货 − 在途)；qty = 0 的行不进补货清单
 
-默认参数（2026-10-21 grilling 拍板）：
+可信销速三级估计器（2026-10-24 方案，ADR-0010；修正"有货天数过少时
+out/avail 把积压爆发当常态"的销速失真，例：14 日窗仅 1 天有货出 66 件 →
+直算 66 件/天，目标库存被顶到 ~713 件）：
+  L0 有货天数 ≤ 0      → 0（无销速依据，宁可不建议，不凭空估）
+  L1 有货天数 ≥ 7      → 窗口出库 ÷ 窗口有货天数（样本覆盖完整周节奏）
+  L2 0 < 有货天数 < 7  → 收缩估算：
+       v_ref    参照销速 = 30 日窗出库 ÷ max(30 日窗有货天数, 15)——分母垫底
+                防参照窗自己也长期断货时踩同一个坑；参照窗无量则退摊薄下界
+       v_short' min(窗口出库÷有货天数, v_ref × 3)——突发封顶：积压集中释放
+                最多按参照的 3 倍计（v_ref = 0 时跳过封顶）
+       w        = 有货天数 ÷ 7——可信度权重（精算 credibility 思想：
+                样本越少越信历史基准）
+       v        = w · v_short' + (1−w) · v_ref
+
+默认参数（2026-10-21 grilling 拍板；可信销速参数 2026-10-24 拍板）：
   覆盖天数 9（每周采购一次：7 天周期 + 到货延迟缓冲）
   安全系数 0.2；销速窗口 14 日（用 avail 修正缺货期导致的销速低估）
+  可信门槛 7 天；突发封顶 3 倍；参照窗固定 30 日
 """
 from __future__ import annotations
 
@@ -30,6 +45,16 @@ DEFAULT_DAYS = 9
 DEFAULT_SAFETY = 0.2
 DEFAULT_WINDOW = 14
 ALLOWED_WINDOWS = (7, 14, 30)
+
+# 可信销速参数（三级估计器，见模块 docstring 与 ADR-0010）
+CRED_MIN_DAYS = 7  # 可信最少有货天数：不足一个完整周节奏 → 销速收缩估算
+BURST_CAP = 3.0  # 突发封顶倍数：短窗销速最多放大参照销速的 3 倍
+REF_WINDOW = 30  # 参照窗天数：收缩估算的历史基准，固定 30 日
+
+# 销速估计方式（补货行的 velocity_kind；前端/导出据此标"收缩估算"）
+VELOCITY_NONE = "none"  # 有货天数 ≤ 0：无销速依据 → 0
+VELOCITY_MEASURED = "measured"  # 有货天数 ≥ 可信门槛：直接测得
+VELOCITY_SHRUNK = "shrunk"  # 有货天数不足可信门槛：收缩估算
 
 # 城市阈值默认值（首次建表 seed；0 = 该城不检测）
 DEFAULT_THRESHOLD = 10.0
@@ -61,19 +86,71 @@ def alert_status(threshold: float, stock: float, purchase: float) -> str:
     return ALERT
 
 
-def effective_velocity(out: float, avail: float) -> float:
-    """有效日均销速：窗口出库 ÷ 窗口有货天数。
+def reference_velocity(out_ref: float, avail_ref: float, ref_window: int) -> float:
+    """参照销速：参照窗出库 ÷ 分母垫底后的有货天数。
 
-    有货天数 ≤ 0（一直缺货、无销速依据）→ 0：宁可不建议，不凭空估。
+    分母垫底 = max(avail_ref, ceil(ref_window/2))——参照窗自己也长期断货时，
+    直接 out/avail 会把积压爆发当常态（与被修正的短窗是同一个坑），所以无论
+    实际有货几天，最多按半个参照窗摊薄。参照窗完全无量（出库、有货全 0）时
+    返回 0，由 credible_velocity 决定是否跳过封顶。
+
+    Args:
+        out_ref: 参照窗出库量（如 30 日出库）。
+        avail_ref: 参照窗有货天数（如 30 日有货天数）。
+        ref_window: 参照窗天数（REF_WINDOW = 30）。
+
+    Returns:
+        float: 参照销速（件/天）；无依据时 0。
+    """
+    if avail_ref > 0:
+        return out_ref / max(avail_ref, math.ceil(ref_window / 2))
+    if out_ref > 0:
+        # 有出库却记 0 天有货（源数据矛盾）：退摊薄下界，比 0 略可信
+        return out_ref / ref_window
+    return 0.0
+
+
+def credible_velocity(
+    out: float,
+    avail: float,
+    out_ref: float = 0.0,
+    avail_ref: float = 0.0,
+    ref_window: int = REF_WINDOW,
+) -> tuple[float, str]:
+    """可信日均销速：三级估计器（L0 无依据 / L1 直接测得 / L2 收缩估算）。
+
+    Args:
+        out: 计算窗出库量（如近 14 日出库）。
+        avail: 计算窗有货天数（如 14 日有货天数）。
+        out_ref: 参照窗出库量（30 日出库；窗口选 30 日时与 out 相同，天然自洽）。
+        avail_ref: 参照窗有货天数（30 日有货天数）。
+        ref_window: 参照窗天数（默认 REF_WINDOW = 30）。
+
+    Returns:
+        tuple[float, str]: (销速 件/天, 估计方式)。
+        估计方式 ∈ {VELOCITY_NONE, VELOCITY_MEASURED, VELOCITY_SHRUNK}。
+
+    Examples:
+        >>> v, kind = credible_velocity(66, 1, 80, 5)  # 14 日窗 1 天有货出 66
+        >>> round(v, 2), kind  # 参照 80/15≈5.3，封顶 min(66,16)=16，w=1/7
+        (6.86, 'shrunk')
     """
     if avail <= 0:
-        return 0.0
-    return out / avail
+        return 0.0, VELOCITY_NONE
+    if avail >= CRED_MIN_DAYS:
+        return out / avail, VELOCITY_MEASURED
+    v_short = out / avail
+    v_ref = reference_velocity(out_ref, avail_ref, ref_window)
+    if v_ref > 0:
+        # 突发封顶：补货日的积压集中释放不是常态，最多按参照的 BURST_CAP 倍计；
+        # 参照为 0（新品无历史）时不封顶，退化为纯可信度加权
+        v_short = min(v_short, v_ref * BURST_CAP)
+    w = avail / CRED_MIN_DAYS
+    return w * v_short + (1 - w) * v_ref, VELOCITY_SHRUNK
 
 
 def restock_qty(
-    out: float,
-    avail: float,
+    velocity: float,
     days: float,
     safety: float,
     stock: float,
@@ -82,8 +159,8 @@ def restock_qty(
     """建议补货量：目标库存 − 现货 − 在途，向上取整、不为负。
 
     Args:
-        out: 窗口出库量（如近 14 日出库）。
-        avail: 窗口有货天数（如 14 日有货天数）。
+        velocity: 可信日均销速（件/天；由 credible_velocity 算得后传入，
+            展示与计算共用同一个销速，不在两处各算一遍）。
         days: 覆盖天数（默认 9）。
         safety: 安全系数（默认 0.2 = 20%）。
         stock: 现货库存。
@@ -92,7 +169,7 @@ def restock_qty(
     Returns:
         int: ≥ 0 的整数建议量；0 表示无需补货（调用方过滤即可）。
     """
-    target = effective_velocity(out, avail) * days * (1 + safety)
+    target = velocity * days * (1 + safety)
     return max(0, math.ceil(target) - int(stock) - int(purchase))
 
 

@@ -11,6 +11,7 @@
 //   ⚠️ 与 POP 单品明细模块的分工：POP 那套按 **SPU** 取图（/thumbs/{96|120|180}/{spu}.*），
 //   两套链路彼此独立，本表只用 SKU 这套。
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { THUMB_SIZE, invThumb } from "../../modules/inventory";
 import type {
   InventoryFilters,
   InventoryFilterOptions,
@@ -513,38 +514,6 @@ onBeforeUnmount(() => {
   cancelSlowTipTimer();
   if (copyTimer !== undefined) clearTimeout(copyTimer);
 });
-
-/**
- * 库存 SKU 商品图：原图路径 → 缩略图路径。
- *
- * 约定（与后端 backend/jobs/inv_pics.py 一一对应）：
- *   原图  /inv-pics/{业务线}/{SKU}.jpg
- *   缩略图 /thumbs/inv/{业务线}/{尺寸}/{SKU}.{avif|webp}
- *
- * @remarks
- * 刻意沿用项目既有的 thumb() 模式（见 views/ModuleView.vue）：后端只给原图路径，
- * 前端按展示尺寸换算缩略图路径，省得后端把两套路径都塞进响应体。
- */
-function invThumb(pic: string, size: number, fmt: "avif" | "webp"): string {
-  const parts = pic.split("/").filter(Boolean);
-  if (parts.length < 3) return "";
-  const sub = parts[parts.length - 2];
-  const sku = (parts[parts.length - 1] ?? "").replace(/\.[^.]+$/, "");
-  if (!sub || !sku) return "";
-  return `/thumbs/inv/${sub}/${size}/${sku}.${fmt}`;
-}
-
-/**
- * 缩略图尺寸档（像素）。
- *
- * @remarks
- * 商品图本身是 1:1 的正方形（源图 800×800），展示框也做成 1:1（120×120），
- * 缩略图按 **1:1 呈现**：120px 缩略图直接铺在 120px 框里，像素对像素、不缩放不重采样，
- * 边缘最锐利（缩略图长边就是 120，宽度同为 120）。
- * 不做 2x 档：DPR 高只是让浏览器用更多物理像素画同一块区域，
- * 对"1:1 呈现"这个诉求没有帮助，反而多一倍流量。
- */
-const THUMB_SIZE = 120;
 
 /**
  * 每行图片的降级档位：0=avif 缩略图 / 1=webp 缩略图 / 2=原图 / 3=占位（无图可显示）。
@@ -1958,7 +1927,8 @@ async function copySku(sku: string): Promise<void> {
   line-height: 1.6;
 }
 .tag.up {
-  color: #16a34a;
+  /* 绿字提到 -700 档 #15803d（原 #16a34a 3.3:1 → 5:1，与徽章「健康」同色）。 */
+  color: #15803d;
   background: #ecfdf3;
 }
 .tag.down {

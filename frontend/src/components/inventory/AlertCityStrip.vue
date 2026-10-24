@@ -10,6 +10,9 @@
 // - 下柜 SKU 已由后端排除，计数口径与补货工作台一致。
 // - 布局：容器通栏，8 城恒定单行、格子等分伸缩、整组居中；不够宽才换行，
 //   详见 <style> 段注释（2026-10 重排）。
+// - 样式：库存矩阵模式与补货工作台模式**完全一致**（2026-10-24 统一）——
+//   阈值标签 13px、输入框文字 14px、边框 --color-border-3(#cbd5e1) 加深，
+//   两种模式共用同一套规则，无需按模式分支。
 import type { AlertCityStat } from "../../types";
 
 const props = defineProps<{
@@ -67,13 +70,13 @@ function onThreshold(c: AlertCityStat, e: Event): void {
    ============================================================
    - 容器：通栏（width:100%，不再用 fit-content）→ 用满内容列，把原先
      「卡外大片留白」变成格子本身的宽度；卡片随父级宽度自然向外扩展。
-   - 格子：flex:1 1 0 + min-width:104px + max-width:180px
-     ① 基准 0：换行判定按 min-width 算（8×104 + 7×1 = 839px），只要容器
-        ≥ 839px 就恒定 8 城单行；不会像原先 flex:1 那样被等分拉伸变形。
-     ② grow:1：单行时 8 格等分铺满，每格 = clamp(104, (W-7)/8, 180)，
+   - 格子：flex:1 1 0 + min-width:112px + max-width:180px
+     ① 基准 0：换行判定按 min-width 算（8×112 + 7×1 = 903px），只要容器
+        ≥ 903px 就恒定 8 城单行；不会像原先 flex:1 那样被等分拉伸变形。
+     ② grow:1：单行时 8 格等分铺满，每格 = clamp(112, (W-7)/8, 180)，
         既不浪费空间，也没有「行尾参差」。
      ③ max-width:180：超宽屏时整组封顶居中，两侧留白，容器仍继续外扩。
-   - 窄屏（容器 < 839px）：自动换行成多行，每行内格子等分铺满该行，
+   - 窄屏（容器 < 903px）：自动换行成多行，每行内格子等分铺满该行，
      内容完整显示、不溢出；单元格内边距收到 10px 以压低单行门槛。
    - 分隔：单元格之间 1px 白缝（gap，卡片底色即白），靠渐变断点区分城市格。
    ============================================================ */
@@ -94,9 +97,11 @@ function onThreshold(c: AlertCityStat, e: Event): void {
 }
 .cell {
   /* 等分伸缩：基准 0 + grow → 8 城单行时等分铺满；min-width 定住换行门槛，
-     max-width 防止超宽屏上格子过宽（原先是 flex:1 + min-width:148px） */
+     max-width 防止超宽屏上格子过宽（原先是 flex:1 + min-width:148px）。
+     min-width 112px：阈值标签(13px×2字=26px) + gap 5px + 输入框 58px = 89px，
+     需 ≥ 89px 才不溢出；104px 扣掉内边距只剩 84px，故抬到 112px（内容宽 92px）。 */
   flex: 1 1 0;
-  min-width: 104px;
+  min-width: 112px;
   max-width: 180px;
   padding: 11px 10px 10px;
   display: flex;
@@ -121,17 +126,25 @@ function onThreshold(c: AlertCityStat, e: Event): void {
   display: inline-flex;
   align-items: center;
   gap: 5px;
+  /* 13px：原继承 .th-row 的 11.5px 偏小；抬到与输入框数值同档即可，
+     不必抢表头（14px）的层级。 */
+  font-size: 13px;
   font-weight: 700;
   color: var(--color-text-2);
   white-space: nowrap;
 }
 .th-input {
-  width: 54px;
-  height: 24px;
+  /* 宽 58 / 高 26：14px 数字 + 3 位数 + 数字微调箭头需要更多横向空间，
+     否则窄屏下数字会被挤压。 */
+  width: 58px;
+  height: 26px;
   padding: 0 6px;
-  border: 1px solid var(--color-border-2);
+  /* 边框用 --color-border-3(#cbd5e1)：库存视图把 --color-border-2 覆盖成
+     #eef2f7，原边框几乎与白底同色、看不出输入框边界；抬到 slate-300
+     才有明确轮廓。（:focus 态特异度更高，仍是品牌蓝） */
+  border: 1px solid var(--color-border-3);
   border-radius: 6px;
-  font-size: 12px;
+  font-size: 14px;
   text-align: center;
   color: var(--color-text-2);
   font-variant-numeric: tabular-nums;

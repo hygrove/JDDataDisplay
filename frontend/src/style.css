@@ -5,14 +5,25 @@
    命名贴近 Tailwind slate 梯度 + 语义色，便于团队对齐。
    ============================================================ */
 :root {
-  /* 文字（中性 slate 梯度） */
+  /* 文字（中性 slate 梯度）
+     ⚠️ 可读性铁律（2026-10-24 用户反馈：「最浅的字体都快看不清了」）：
+     最浅三档已整体加深一档并重新定标（改一次、全站生效，别再逐处手改）：
+       --color-text-4 = #56657a（原 #64748b）
+       --color-text-5 = #64748b（原 #94a3b8，白底对比度 2.6:1 → 4.8:1）
+       --color-text-6 = #6b7b90（原 #c4ceda，白底对比度 1.9:1 → 4.3:1）
+     新增内容的用法（照抄即可，不用每次手动加深）：
+       「最浅/次要/脚注/占位/说明」文字 → 一律 var(--color-text-5)
+       「禁用/无数据/placeholder」文字     → 一律 var(--color-text-6)
+     ⛔ 禁止再手写比 --color-text-6 更浅的灰色（会退回 #c4ceda 那种"看不清"的档）。
+     ⛔ 文字令牌不得用于边框/分隔线（加深后虚线会过重）→ 用 --color-divider / --color-border-*。
+     自检：npm run verify:tokens（阶梯单调性 + 对比度 + 禁止手写浅灰 + 禁止文字令牌当边框）。 */
   --color-text: #1e293b;          /* 主文字 */
   --color-text-strong: #0f172a;  /* 强调 */
   --color-text-2: #334155;
   --color-text-3: #475569;
-  --color-text-4: #64748b;
-  --color-text-5: #94a3b8;
-  --color-text-6: #c4ceda;        /* 最弱 / placeholder */
+  --color-text-4: #56657a;        /* 次要正文（原 #64748b，跟随最浅档一起加深） */
+  --color-text-5: #64748b;        /* 弱化文字基准：脚注 / 说明 / 占位（原 #94a3b8） */
+  --color-text-6: #6b7b90;        /* 最弱文字：禁用 / 无数据 / placeholder（原 #c4ceda） */
 
   /* 背景 */
   --color-bg: #f1f5f9;            /* 页面底 */
@@ -25,6 +36,11 @@
   --color-border-2: #e2e8f0;
   --color-border-3: #cbd5e1;
   --color-border-4: #eef2f7;
+  /* 分隔线（虚线 / 细分割）：原 --color-text-6 的浅色独立成令牌。
+     文字加深后虚线不再跟着变深，保持原有"轻分隔"观感。 */
+  --color-divider: #c4ceda;
+  /* 分隔线强调档（hover / 需要看得见的细线）：比 --color-divider 深一档。 */
+  --color-divider-strong: #94a3b8;
 
   /* 品牌红 */
   --color-brand: #e1251b;

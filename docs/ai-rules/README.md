@@ -51,6 +51,7 @@
 - **库存指标**：唯一来源 `backend/jobs/inventory_metrics.py`（identity/per_city/national + 可见/可聚合/锁定）；前端矩阵列与勾选面板由 `/api/inventory/meta` **动态构建，不写死**。
 - **列投影**：按**列名白名单**投影（不按列位置；生产原表 2000+ 列乱序，"前 22 列是固定列"纯属巧合）。
 - **城市匹配**：8 城（北京/武汉/上海/广州/成都/西安/德州/沈阳）**精确等值匹配**；`广州补货B`/`上海零售` 等衍生前缀自然排除——⛔ 不用 `startswith`（会误吞「西安」）。
+- **设计令牌（颜色/边框/圆角）**：`frontend/src/style.css` 的 `:root` 是唯一事实来源；组件 scoped 样式一律引用 `var(--color-text-*)` 等变量，⛔ 不写魔法色值（改一处即全局生效）。
 
 ---
 
@@ -69,6 +70,11 @@
 - 🔴 改完 `.vue`/`.ts` **必须 `npm run build`**（FastAPI 托管 `frontend/dist`）。
 - ⚠️ grep dist 字符串**只证明构建通过，不证明浏览器生效**——交付前必须真实浏览器实测（见 §5）。
 - **判定与渲染分离**：判定集中进 `src/modules/*.ts` 纯函数（node 断言），`.vue` 只渲染。「roi=null 被当 0 排序」「阈值内小额 delta 误染」页面上看正常，只有断言能抓。⚠️ 判定用的格式化函数**自己写**，别复用通用 formatter（历史降级契约：`null` 可能要显示 `--` 而非 `0.00`）。
+- 🔴 **最浅文字只走令牌，别手写浅灰**（2026-10-24 用户反馈：「最浅的字体都快看不清了」）：
+  - 令牌层已把最浅三档整体加深一档——`--color-text-4 #56657a` / `--color-text-5 #64748b`（原 #94a3b8）/ `--color-text-6 #6b7b90`（原 #c4ceda）；**改令牌即全站生效**，不必逐处手改。
+  - 新增「最浅/次要/脚注/占位/说明」文字 → 一律 `var(--color-text-5)`；「禁用/无数据/placeholder」→ `var(--color-text-6)`；⛔ 不许再手写比 text-6 更浅的灰色。
+  - ⛔ **文字令牌不得用于边框/分隔线**（加深后虚线会过重）→ 用 `--color-divider`（#c4ceda）/ `--color-divider-strong`（#94a3b8）/ `--color-border-*`。
+  - 自检闸门：`npm run verify:tokens`（阶梯单调性 + 对比度下限 + 禁手写浅灰 + 禁文字令牌当边框），已并入 `npm run verify` 首步。
 
 ---
 
@@ -130,7 +136,7 @@
 ## 附录 B：验证脚本清单（改对应模块后必跑）
 
 - **organize 全套**：`backend/jobs/verify_organize*.py`（`make-fixtures`/`snapshot`/`diff`/`selftest`/`env`/`accept <源根>` 等子命令；`accept ResourceData` 一键闸门）。
-- **前端**：`frontend/verify_month_compare.mjs`、`frontend/verify_agg.mjs`（`npm run verify:month` / `verify:agg`，需 8000 在跑）。
+- **前端**：`frontend/verify_month_compare.mjs`、`frontend/verify_agg.mjs`（`npm run verify:month` / `verify:agg`，需 8000 在跑）、`frontend/verify_text_tokens.mjs`（`npm run verify:tokens`，纯静态，**不需 8000**；守最浅文字可读性）。
 - **后端自愈**：改完 `python -c "from backend.app.main import app"`。
 - ⚠️ `verify_all.py` 与 `verify_promo_*` 已在 `78eb10f` 删除，**不要引用**。
 

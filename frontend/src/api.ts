@@ -15,8 +15,8 @@ import type {
   Manifest,
   ModuleSummary,
   PagedRows,
+  RestockListResponse,
   RestockParams,
-  RestockResponse,
   SpuAnalysis,
 } from "./types";
 
@@ -439,19 +439,29 @@ export function putAlertThresholds(
  * @param {object} [q] - 查询与算法参数。
  * @param {string} [q.shop] - 店铺过滤；留空 = 全部店铺。
  * @param {string} [q.date] - 快照日期；留空 = 最新快照。
+ * @param {string} [q.keyword] - 关键词（SKU / 商品名称 / SPU）；留空 = 不过滤。口径与矩阵表一致。
+ * @param {"city" | "sku"} [q.view] - 视图：city=按城市分组（默认）/ sku=平铺长表。两者共用同一份计算。
  * @param {RestockParams} [q.params] - 算法参数（days/safety/window）；非法值由后端夹回默认。
- * @returns {Promise<RestockResponse>} 分组清单 + 参数回显 + 总计。
+ * @returns {Promise<RestockListResponse>} 分组清单或平铺清单 + 参数回显 + 总计。
  * @throws {Error} 接口非 2xx。
  */
 export function fetchRestockList(
-  q: { shop?: string; date?: string; params?: Partial<RestockParams> } = {},
-): Promise<RestockResponse> {
+  q: {
+    shop?: string;
+    date?: string;
+    keyword?: string;
+    view?: "city" | "sku";
+    params?: Partial<RestockParams>;
+  } = {},
+): Promise<RestockListResponse> {
   const params = new URLSearchParams();
   if (q.shop) params.set("shop", q.shop);
   if (q.date) params.set("date", q.date);
+  if (q.keyword) params.set("keyword", q.keyword);
+  params.set("view", q.view ?? "city");
   const p = q.params ?? {};
   if (p.days !== undefined) params.set("days", String(p.days));
   if (p.safety !== undefined) params.set("safety", String(p.safety));
   if (p.window !== undefined) params.set("window", String(p.window));
-  return get<RestockResponse>(`/inventory/restock?${params.toString()}`);
+  return get<RestockListResponse>(`/inventory/restock?${params.toString()}`);
 }

@@ -934,8 +934,8 @@ const hasAnyData = computed(() => Object.values(aggMap.value).some((v) => v !== 
                   </g>
                   <!-- 数值标签 -->
                   <text v-for="(p, i) in tl.vals" :key="'vt' + i" :x="p.x" :y="p.y > tl.yMid ? p.y + 18 : p.y - 10" text-anchor="middle" :font-size="tl.fs" fill="#334155">{{ p.text }}</text>
-                  <!-- 月份标签 -->
-                  <text v-for="(p, i) in tl.vals" :key="'mt' + i" :x="p.x" :y="tl.monthY" text-anchor="middle" :font-size="tl.fs" fill="#64748b">{{ p.month }}</text>
+                  <!-- 月份标签（SVG 读不到 CSS 变量 → 硬编码同步 --color-text-4 的 #56657a） -->
+                  <text v-for="(p, i) in tl.vals" :key="'mt' + i" :x="p.x" :y="tl.monthY" text-anchor="middle" :font-size="tl.fs" fill="#56657a">{{ p.month }}</text>
                   <!-- 气泡：差额与变化**分两行**（去掉「·」分隔符，避免挤在一行读不清） -->
                   <text
                     v-for="(s, i) in tl.segs"
@@ -1154,14 +1154,15 @@ const hasAnyData = computed(() => Object.values(aggMap.value).some((v) => v !== 
   font-size: 12px;
   color: var(--color-text-3);
   background: var(--color-surface);
-  border: 1px solid var(--color-text-6);
+  border: 1px solid var(--color-divider);
   border-radius: var(--radius-pill);
   padding: 3px 11px;
   cursor: pointer;
   transition: all 0.15s;
 }
 .mc-chip:hover {
-  border-color: var(--color-text-5);
+  /* hover 描边用分隔线强调档（文字令牌不得用于边框；见 style.css 令牌注释） */
+  border-color: var(--color-divider-strong);
 }
 .mc-chip.on {
   color: var(--color-surface);
@@ -1241,7 +1242,7 @@ const hasAnyData = computed(() => Object.values(aggMap.value).some((v) => v !== 
   color: var(--color-text);
   background: var(--color-surface-2);
   padding: 8px 18px 8px var(--mc-inset);
-  border-bottom: 1px solid var(--color-text-6);
+  border-bottom: 1px solid var(--color-divider);
 }
 .mc-rowline {
   padding: 7px 18px 7px var(--mc-inset);
@@ -1408,14 +1409,14 @@ const hasAnyData = computed(() => Object.values(aggMap.value).some((v) => v !== 
   background: var(--color-bg);
   font-weight: 500;
   padding: 5px 18px 5px var(--mc-inset);
-  border-bottom: 1px solid var(--color-text-6);
+  border-bottom: 1px solid var(--color-divider);
 }
 /* 展开的时间轴大图：外缩进与表格文字对齐，右侧留18px。
    overflow-x:auto 让「月份很多、图超宽」时可横向滚动，而不是压扁节点。 */
 .mc-exp {
   padding: 10px 12px 12px;
   margin: 0 18px 8px var(--mc-inset);
-  border: 1px dashed var(--color-text-6);
+  border: 1px dashed var(--color-divider);
   border-radius: var(--radius-lg);
   background: var(--color-surface-2);
   overflow-x: auto;

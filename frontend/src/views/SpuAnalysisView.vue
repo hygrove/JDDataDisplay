@@ -1101,7 +1101,7 @@ function goBack() {
   text-align: center;
   font-size: 13px;
   color: var(--color-text-4);
-  border: 1px dashed var(--color-text-6);
+  border: 1px dashed var(--color-divider);
   border-radius: var(--radius-xl);
 }
 /* ---------- 趋势图 ---------- */

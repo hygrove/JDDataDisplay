@@ -18,12 +18,18 @@
 """
 from __future__ import annotations
 
-from typing import Any, Optional
+import io
+import sqlite3
+from typing import Any, Literal, Optional, Union
+from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import Response
 from pydantic import BaseModel
 
+from . import restock_export
 from ..jobs import db as jobdb
+from ..jobs import erp_map as erp_map_mod
 from ..jobs import inv_pics
 from ..jobs.alert_rules import (
     ALERT,
@@ -33,8 +39,11 @@ from ..jobs.alert_rules import (
     DEFAULT_SAFETY,
     DEFAULT_THRESHOLD,
     DEFAULT_WINDOW,
+    REF_WINDOW,
+    VELOCITY_NONE,
     alert_status,
     clamp_params,
+    credible_velocity,
     is_offshelf,
     restock_qty,
 )
@@ -53,6 +62,30 @@ class InvRow(BaseModel):
 
 def _conn():
     return jobdb.get_conn()
+
+
+def _filter_keyword(data: list[dict], keyword: Optional[str]) -> list[dict]:
+    """按关键词过滤行：SKU / 商品名称 / SPU 任一命中即算命中。
+
+    关键词口径是**矩阵表与补货清单共用的唯一实现**（两个端点调用同一个函数），
+    避免"矩阵能搜到、补货搜不到"这类口径漂移。
+
+    Args:
+        data: 库存行列表。
+        keyword: 关键词；空 = 不过滤。
+
+    Returns:
+        list[dict]: 命中关键词的行（顺序保持不变）。
+    """
+    if not keyword or not keyword.strip():
+        return data
+    kw = keyword.strip().lower()
+    return [
+        d for d in data
+        if kw in (str(d.get("sku") or "")).lower()
+        or kw in (str(d.get("sku_name") or "")).lower()
+        or kw in (str(d.get("spu") or "")).lower()
+    ]
 
 
 def _query_rows(shop: Optional[str], date: Optional[str]) -> list[dict]:
@@ -271,14 +304,7 @@ def get_rows(
     与单元格末行「【合计】」同口径；缺失值恒排末尾。合计行取自全量数据，不受排序影响。
     """
     data = _query_rows(shop, date)
-    if keyword:
-        kw = keyword.strip().lower()
-        data = [
-            d for d in data
-            if kw in (str(d.get("sku") or "")).lower()
-            or kw in (str(d.get("sku_name") or "")).lower()
-            or kw in (str(d.get("spu") or "")).lower()
-        ]
+    data = _filter_keyword(data, keyword)
     data = _filter_multi(data, "category", _split_multi(category))
     data = _filter_multi(data, "seller", _split_multi(seller))
     data = _filter_multi(data, "shelf_status", _split_multi(shelf_status))
@@ -561,14 +587,75 @@ def _num(v: Any) -> float:
     return float(v) if isinstance(v, (int, float)) else 0.0
 
 
-def _row_city_values(row: dict, code: str, window: int) -> tuple[float, float, float, float]:
-    """从宽表行取某城市的 (现货, 在途, 窗口出库, 窗口有货天数)。"""
+def _row_city_values(
+    row: dict, code: str, window: int
+) -> tuple[float, float, float, float, float, float]:
+    """从宽表行取某城市的 (现货, 在途, 窗口出库, 窗口有货天数, 30日参照出库, 30日参照有货天数)。
+
+    30 日参照供可信销速收缩估算用（alert_rules.credible_velocity）：窗口选 30 日时
+    参照与窗口是同一对字段，配合参照分母垫底逻辑天然自洽，无需特判。
+    """
     return (
         _num(row.get(f"{code}_stock")),
         _num(row.get(f"{code}_purchase")),
         _num(row.get(f"{code}_out_{window}")),
         _num(row.get(f"{code}_avail_{window}")),
+        _num(row.get(f"{code}_out_{REF_WINDOW}")),
+        _num(row.get(f"{code}_avail_{REF_WINDOW}")),
     )
+
+
+def _sku_pics(rows: list[dict]) -> dict[str, str]:
+    """取这些行涉及 SKU 的商品图路径（命中图片索引的才有）。
+
+    商品图是展示层的辅助产物：没有图不影响补货判定，只是行里没有 sku_pic。
+
+    Args:
+        rows: 库存行列表（每行含 sku）。
+
+    Returns:
+        dict[str, str]: SKU → 商品图访问路径；无图的 SKU 不在结果里。
+    """
+    skus = [str(r.get("sku") or "") for r in rows]
+    if not skus:
+        return {}
+    return {sku: pic for sku in skus if (pic := inv_pics.pic_path(sku))}
+
+
+def _erp_codes(rows: list[dict]) -> dict[str, str]:
+    """取这些行涉及 SKU 的 ERP 编码映射。
+
+    只有**已登记**的 SKU 才会出现在结果里；未登记的返回缺失，
+    前端据此显示「--」（库里绝不把缺失写成 0，见 ADR-0009）。
+
+    ERP 映射是展示层的附加信息：映射表缺失或损坏时返回空映射并告警，
+    绝不让整个补货清单挂掉。
+
+    Args:
+        rows: 库存行列表（每行含 sku）。
+
+    Returns:
+        dict[str, str]: SKU → ERP 编码。
+    """
+    skus = [str(r.get("sku") or "") for r in rows]
+    if not skus:
+        return {}
+    conn = _conn()
+    try:
+        return erp_map_mod.lookup_erp_codes(conn, skus)
+    except sqlite3.Error as e:
+        if "no such table" in str(e).lower():
+            # 服务没重启 / 还没跑过批处理 → 表不存在。这是部署问题，不是"没登记"，
+            # 必须说清楚，否则整列「--」会被误读成"所有人都没登记"。
+            print("[erp_map] ERP 映射表不存在（服务未重启或尚未跑过批处理）——补货清单的 ERP 编码列显示「--」")
+        else:
+            print(f"[erp_map] ERP 编码查询失败（补货清单将显示「--」）：{type(e).__name__}: {e}")
+        return {}
+    except Exception as e:  # noqa: BLE001 —— 映射表异常不该拖垮补货清单
+        print(f"[erp_map] ERP 编码查询失败（补货清单将显示「--」）：{type(e).__name__}: {e}")
+        return {}
+    finally:
+        conn.close()
 
 
 @router.get("/alerts/summary")
@@ -578,7 +665,8 @@ def get_alerts_summary(
 ) -> dict[str, Any]:
     """8 城预警汇总：每城阈值、红/黄/绿计数与建议补货合计（默认参数）。
 
-    计数口径：下柜 SKU 完全排除；建议补货合计按默认参数（9 天 / 20% / 14 日）。
+    计数口径：下柜 SKU 完全排除；建议补货合计按默认参数（9 天 / 20% / 14 日），
+    销速与补货清单同口径（有货天数不足 7 天时按 30 日参照收缩，见 alert_rules）。
     返回的 cities 顺序与 CITIES（前端 meta.cities）一致，city=中文名、code=城市码。
     """
     thresholds = _threshold_map()
@@ -597,7 +685,7 @@ def get_alerts_summary(
         for row in data:
             if is_offshelf(row.get("shelf_status")):
                 continue
-            stock, purchase, out, avail = _row_city_values(row, code, DEFAULT_WINDOW)
+            stock, purchase, out, avail, out_ref, avail_ref = _row_city_values(row, code, DEFAULT_WINDOW)
             st = alert_status(t, stock, purchase)
             if st == ALERT:
                 red += 1
@@ -605,7 +693,8 @@ def get_alerts_summary(
                 yellow += 1
             else:
                 green += 1
-            restock_total += restock_qty(out, avail, DEFAULT_DAYS, DEFAULT_SAFETY, stock, purchase)
+            v, _kind = credible_velocity(out, avail, out_ref, avail_ref)
+            restock_total += restock_qty(v, DEFAULT_DAYS, DEFAULT_SAFETY, stock, purchase)
         cities.append({
             "city": city,
             "code": code,
@@ -647,19 +736,95 @@ def put_alert_thresholds(body: ThresholdUpdate) -> dict[str, Any]:
     return {"ok": True, "thresholds": _threshold_map()}
 
 
-@router.get("/restock")
-def get_restock(
-    shop: Optional[str] = Query(None, description="店铺名；空=全部店铺"),
-    date: Optional[str] = Query(None, description="快照日期；空=最新快照"),
-    days: Optional[float] = Query(None, description="覆盖天数；默认 9，域 [1,60]"),
-    safety: Optional[float] = Query(None, description="安全系数；默认 0.2（20%）"),
-    window: Optional[int] = Query(None, description="销速窗口天数；7/14/30，默认 14"),
-) -> dict[str, Any]:
-    """补货建议清单（按城市分组）：销速驱动目标库存 − 现货 − 在途。
+def _restock_long_rows(
+    data: list[dict],
+    thresholds: dict[str, float],
+    days: float,
+    safety: float,
+    window: int,
+    erp_codes: dict[str, str],
+    pics: dict[str, str],
+) -> list[dict[str, Any]]:
+    """算出 (SKU × 城市) 粒度的补货行。
 
-    只返回建议量 > 0 的行；下柜 SKU 完全排除；合计行（subtotal/grand_total）
-    与前端展示同口径。None/越界参数被夹回默认值；非数字串由 Query 类型
-    验证拦下（422）。
+    行的含义与城市视图**完全一致**（同一套阈值与公式），区别只有两点：
+    保留建议量为 0 的行、跳过完全没有数据的城市——这样 SKU 视图能看全
+    "哪城缺、哪城不缺"，而不是把同一个 SKU 拆散到 8 个城市组里。
+
+    Args:
+        data: 库存行列表（已按店铺 / 日期 / 关键词过滤）。
+        thresholds: 每城阈值。
+        days: 覆盖天数。
+        safety: 安全系数。
+        window: 销速窗口天数。
+        erp_codes: SKU → ERP 编码。
+        pics: SKU → 商品图路径。
+
+    Returns:
+        list[dict[str, Any]]: 长表行（SKU × 城市），含 out（窗口出库）、avail（窗口有货天数）
+        与 velocity_kind（销速估计方式 none/measured/shrunk：收缩估算的行前端标 ≈）。
+    """
+    rows: list[dict[str, Any]] = []
+    for row in data:
+        if is_offshelf(row.get("shelf_status")):
+            continue
+        sku = str(row.get("sku") or "")
+        for city in CITIES:
+            code = CITY_CODES[city]
+            stock, purchase, out, avail, out_ref, avail_ref = _row_city_values(row, code, window)
+            if stock <= 0 and purchase <= 0 and out <= 0:
+                continue  # 该城没有任何数据，不占一行
+            velocity, velocity_kind = credible_velocity(out, avail, out_ref, avail_ref)
+            qty = restock_qty(velocity, days, safety, stock, purchase)
+            rows.append({
+                "sku": row.get("sku"),
+                "sku_name": row.get("sku_name"),
+                "shop": row.get("shop"),
+                "city": city,
+                "category": row.get("category"),
+                "shelf_status": row.get("shelf_status"),
+                "spu": row.get("spu"),
+                "seller": row.get("seller"),
+                "erp_code": erp_codes.get(sku),
+                "sku_pic": pics.get(sku),
+                "sellable_days": row.get(f"{code}_sellable_days"),
+                "stock": stock,
+                "purchase": purchase,
+                "out": out,
+                "velocity": round(velocity, 2),
+                "avail": avail,
+                "velocity_kind": velocity_kind,
+                "target": round(velocity * days * (1 + safety)),
+                "qty": qty,
+                "status": alert_status(thresholds[code], stock, purchase),
+            })
+    return rows
+
+
+def _restock_payload(
+    shop: Optional[str],
+    date: Optional[str],
+    keyword: Optional[str],
+    days: Optional[float],
+    safety: Optional[float],
+    window: Optional[int],
+) -> dict[str, Any]:
+    """算出补货清单的全部数据（两个视图与导出共用同一份计算）。
+
+    @remarks
+    导出与清单查询共用这一个函数，是"所见即所得"的根本保证：
+    参数夹取、阈值、销速、建议量、行范围只有一处实现。
+
+    Args:
+        shop: 店铺过滤；None = 全部店铺。
+        date: 快照日期；None = 最新快照。
+        keyword: 关键词（SKU / 商品名称 / SPU）。
+        days: 覆盖天数；None / 越界 → 默认值。
+        safety: 安全系数；None / 越界 → 默认值。
+        window: 销速窗口天数；None / 越界 → 默认值。
+
+    Returns:
+        dict[str, Any]: {"date", "params", "rows"(长表), "city_groups", "grand_total", "sku_count"}。
     """
     d, s, w = clamp_params(days, safety, window)
     thresholds = _threshold_map()
@@ -668,49 +833,200 @@ def get_restock(
         snap = date or _latest_date(conn)
     finally:
         conn.close()
-    data = _query_rows(shop, snap)
+    data = _filter_keyword(_query_rows(shop, snap), keyword)
+    rows = _restock_long_rows(data, thresholds, d, s, w, _erp_codes(data), _sku_pics(data))
+    order = {city: i for i, city in enumerate(CITIES)}
+    sku_rows = sorted(rows, key=lambda r: (str(r["sku"]), order.get(str(r["city"]), len(order))))
     groups: list[dict[str, Any]] = []
     grand_total = 0
     for city in CITIES:
         code = CITY_CODES[city]
-        t = thresholds[code]
-        rows: list[dict[str, Any]] = []
-        subtotal = 0
-        for row in data:
-            if is_offshelf(row.get("shelf_status")):
-                continue
-            stock, purchase, out, avail = _row_city_values(row, code, w)
-            qty = restock_qty(out, avail, d, s, stock, purchase)
-            if qty <= 0:
-                continue
-            velocity = out / avail if avail > 0 else 0.0
-            rows.append({
-                "sku": row.get("sku"),
-                "sku_name": row.get("sku_name"),
-                "shop": row.get("shop"),
-                "category": row.get("category"),
-                "shelf_status": row.get("shelf_status"),
-                "stock": stock,
-                "purchase": purchase,
-                "velocity": round(velocity, 2),
-                "target": round(velocity * d * (1 + s)),
-                "qty": qty,
-                "status": alert_status(t, stock, purchase),
-            })
-            subtotal += qty
-        if rows:
-            rows.sort(key=lambda r: r["qty"], reverse=True)
-            groups.append({
-                "city": city,
-                "code": code,
-                "threshold": t,
-                "rows": rows,
-                "subtotal": subtotal,
-            })
-            grand_total += subtotal
+        crows = [r for r in rows if r["city"] == city and r["qty"] > 0]
+        if not crows:
+            continue
+        crows.sort(key=lambda r: r["qty"], reverse=True)
+        subtotal = sum(r["qty"] for r in crows)
+        groups.append({
+            "city": city,
+            "code": code,
+            "threshold": thresholds[code],
+            "rows": crows,
+            "subtotal": subtotal,
+        })
+        grand_total += subtotal
     return {
         "date": snap,
         "params": {"days": d, "safety": s, "window": w},
-        "groups": groups,
+        "rows": sku_rows,
+        "city_groups": groups,
         "grand_total": grand_total,
+        "sku_count": len({str(r["sku"]) for r in sku_rows}),
     }
+
+
+class RestockRowModel(BaseModel):
+    """补货行（SKU × 城市粒度，两个视图与导出共用同一套装配）。"""
+
+    model_config = {"extra": "allow"}
+
+    sku: Optional[str] = None
+    sku_name: Optional[str] = None
+    shop: Optional[str] = None
+    city: Optional[str] = None
+    category: Optional[str] = None
+    shelf_status: Optional[str] = None
+    spu: Optional[str] = None
+    seller: Optional[str] = None
+    erp_code: Optional[str] = None
+    sku_pic: Optional[str] = None
+    sellable_days: Optional[float] = None
+    stock: float = 0
+    purchase: float = 0
+    out: float = 0
+    velocity: float = 0
+    avail: float = 0
+    velocity_kind: str = VELOCITY_NONE
+    target: int = 0
+    qty: int = 0
+    status: str = "healthy"
+
+
+class RestockParamsModel(BaseModel):
+    """本次计算实际生效的参数（服务端夹取后的结果）。"""
+
+    days: float
+    safety: float
+    window: int
+
+
+class RestockCityGroupModel(BaseModel):
+    """城市分组（城市视图的组：只含有建议量 > 0 的行）。"""
+
+    city: str
+    code: str
+    threshold: float
+    rows: list[RestockRowModel]
+    subtotal: int = 0
+
+
+class RestockCityResponse(BaseModel):
+    """城市视图响应（view=city）。"""
+
+    view: Literal["city"] = "city"
+    date: Optional[str] = None
+    params: RestockParamsModel
+    groups: list[RestockCityGroupModel] = []
+    grand_total: int = 0
+
+
+class RestockSkuResponse(BaseModel):
+    """SKU 视图响应（view=sku）：平铺长表。"""
+
+    view: Literal["sku"] = "sku"
+    date: Optional[str] = None
+    params: RestockParamsModel
+    rows: list[RestockRowModel] = []
+    grand_total: int = 0
+    sku_count: int = 0
+
+
+@router.get("/restock", response_model=Union[RestockCityResponse, RestockSkuResponse])
+def get_restock(
+    shop: Optional[str] = Query(None, description="店铺名；空=全部店铺"),
+    date: Optional[str] = Query(None, description="快照日期；空=最新快照"),
+    keyword: Optional[str] = Query(None, description="SKU / 商品名称 / SPU 模糊搜索（口径与矩阵表一致）"),
+    view: str = Query("city", description="视图：city=按城市分组 / sku=平铺长表（同一份计算的两种装配）"),
+    days: Optional[float] = Query(None, description="覆盖天数；默认 9，域 [1,60]"),
+    safety: Optional[float] = Query(None, description="安全系数；默认 0.2（20%）"),
+    window: Optional[int] = Query(None, description="销速窗口天数；7/14/30，默认 14"),
+) -> Union[RestockCityResponse, RestockSkuResponse]:
+    """补货建议清单：销速驱动目标库存 − 现货 − 在途。
+
+    两个视图共用同一份计算（_restock_payload），只是装配方式不同：
+    - view=city：按城市分组，组内按建议量降序，每组小计 + 8 城总计（只含建议量 > 0 的行）；
+    - view=sku：平铺长表（每行一个 SKU × 城市），按 SKU 编码升序、同 SKU 按城市白名单顺序，
+      保留建议量为 0 的行，便于看全"哪城缺、哪城不缺"。
+
+    下柜 SKU 完全排除；合计口径与前端展示一致。None/越界参数被夹回默认值；
+    非数字串由 Query 类型验证拦下（422）。关键词过滤与矩阵表共用同一套口径。
+    每行含 avail（窗口有货天数）与 velocity_kind（销速估计方式）：有货天数不足
+    7 天时销速按 30 日参照收缩估算（kind=shrunk），防积压爆发把销速顶上天。
+    """
+    v = view if view in ("city", "sku") else "city"
+    payload = _restock_payload(shop, date, keyword, days, safety, window)
+    if v == "sku":
+        return {
+            "view": "sku",
+            "date": payload["date"],
+            "params": payload["params"],
+            "rows": payload["rows"],
+            "grand_total": payload["grand_total"],
+            "sku_count": payload["sku_count"],
+        }
+    return {
+        "view": "city",
+        "date": payload["date"],
+        "params": payload["params"],
+        "groups": payload["city_groups"],
+        "grand_total": payload["grand_total"],
+    }
+
+
+@router.api_route(
+    "/restock/export",
+    methods=["GET", "POST"],
+    response_class=Response,
+    responses={
+        200: {
+            "content": {
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {}
+            },
+            "description": "补货清单 xlsx（含「按城市」与「按SKU」两个 sheet + 商品图）",
+        }
+    },
+)
+def export_restock(
+    shop: Optional[str] = Query(None, description="店铺名；空=全部店铺"),
+    date: Optional[str] = Query(None, description="快照日期；空=最新快照"),
+    keyword: Optional[str] = Query(None, description="SKU / 商品名称 / SPU 模糊搜索（口径与矩阵表一致）"),
+    days: Optional[float] = Query(None, description="覆盖天数；默认 9，域 [1,60]"),
+    safety: Optional[float] = Query(None, description="安全系数；默认 0.2（20%）"),
+    window: Optional[int] = Query(None, description="销速窗口天数；7/14/30，默认 14"),
+) -> Response:
+    """导出补货清单（xlsx，两个 sheet + 商品图嵌入）。
+
+    @remarks
+    - 同时支持 GET 与 POST：GET 供浏览器**原生下载**（<a href> 直连，文件名取自
+      Content-Disposition），POST 供程序化调用（测试、脚本）。参数全在查询串里，
+      两种方法语义完全一致。
+    - 两个 sheet：「按城市」（分组头 + 小计 + 总计）与「按SKU」（明细长表）；
+    - 商品图嵌进单元格区域（openpyxl 只支持 png/jpeg/gif，因此用原图 jpg 而不是 avif 缩略图）；
+    - ERP 编码缺失时写 0（下游模板占位；页面显示「--」）；
+    - 加 no-store：导出是"此刻的快照"，绝不能被浏览器缓存成旧文件；
+    - **失败也返回附件**（错误说明 txt + 500）：前端用 <a href> 触发下载，若这里返回
+      普通 JSON 错误，浏览器会把当前工作台页面导航到错误页上，用户的筛选状态全丢。
+      返回附件则浏览器照样下载，页面纹丝不动。
+    """
+    try:
+        payload = _restock_payload(shop, date, keyword, days, safety, window)
+        content = restock_export.build_workbook(payload)
+    except Exception as e:  # noqa: BLE001 —— 导出失败要给出可读说明，而不是 500 页面
+        message = f"补货清单导出失败：{type(e).__name__}: {e}\n"
+        filename = f"补货导出失败_{date or '最新'}.txt"
+        disposition = f"attachment; filename*=UTF-8''{quote(filename)}"
+        return Response(
+            content=message.encode("utf-8"),
+            status_code=500,
+            media_type="text/plain; charset=utf-8",
+            headers={"Content-Disposition": disposition, "Cache-Control": "no-store"},
+        )
+    filename = f"补货清单_{payload['date']}.xlsx"
+    disposition = f"attachment; filename*=UTF-8''{quote(filename)}"
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": disposition,
+            "Cache-Control": "no-store",
+        },
+    )

@@ -65,7 +65,10 @@ const cityCodes = computed<string[]>(() => (alerts.value?.cities ?? []).map((c) 
 /** 筛选条件。 */
 const shop = ref("");
 const date = ref("");
+/** 关键词（已提交）：防抖后的值，矩阵表与补货清单共用同一份。 */
 const keyword = ref("");
+/** 关键词输入框的即时值：输入即回显，防抖结束后才提交给后端。 */
+const keywordInput = ref("");
 const page = ref(1);
 const pageSize = ref(50);
 
@@ -261,12 +264,23 @@ function onFilterChange(): void {
   void loadData();
 }
 
-/** 关键词输入：防抖 300ms 后重拉。 */
+/**
+ * 关键词输入：回显立即、提交防抖 300ms。
+ *
+ * @remarks
+ * 输入框的值（keywordInput）即时回显；防抖结束后才写入 keyword 并重拉。
+ * keyword 是矩阵表与补货清单**共用**的已提交值——两个视图都只对它做响应，
+ * 因此一次输入只发一轮请求（两个视图各一次），不会逐字打接口。
+ */
 let kwTimer: number | undefined;
-function onKeywordInput(): void {
+function onKeywordInput(e: Event): void {
+  keywordInput.value = (e.target as HTMLInputElement).value;
   page.value = 1;
   if (kwTimer) clearTimeout(kwTimer);
-  kwTimer = window.setTimeout(() => void loadData(), 300);
+  kwTimer = window.setTimeout(() => {
+    keyword.value = keywordInput.value;
+    void loadData();
+  }, 300);
 }
 
 /**
@@ -338,6 +352,10 @@ onMounted(async () => {
       </div>
     </header>
 
+    <!-- 筛选条不再放在这里：矩阵 / 补货两个 pane 各渲染一份，位置随模式不同
+         （矩阵在阈值条下方、补货在模式切换条下方），筛选状态 shop/date/keyword
+         仍由本组件持有，切 Tab 不丢选择。 -->
+
     <template v-if="activeTab === 'matrix'">
       <!-- 概览：4 张结构分布卡（点击店铺名/店铺列头 → 联动下方表格按该店铺过滤） -->
       <InventoryDistCards
@@ -354,6 +372,44 @@ onMounted(async () => {
         :saving="alertsSaving"
         @update:threshold="onThreshold"
       />
+
+      <!-- 筛选条（2026-10 调整至阈值条下方）：店铺 / 日期 / 搜索 + 指标配置。
+           「指标配置」只对矩阵表有意义，故仅在矩阵 pane 渲染；筛选状态由父级共享。 -->
+      <div class="inv-toolbar">
+        <div class="inv-filters">
+          <label class="inv-field">
+            <span>店铺</span>
+            <select v-model="shop" data-testid="inv-shop" @change="onFilterChange">
+              <option value="">全部店铺</option>
+              <option v-for="s in meta?.shops ?? []" :key="s" :value="s">{{ s }}</option>
+            </select>
+          </label>
+          <label class="inv-field">
+            <span>日期</span>
+            <select v-model="date" data-testid="inv-date" @change="onFilterChange">
+              <option value="">全部日期</option>
+              <option v-for="d in meta?.dates ?? []" :key="d" :value="d">{{ d }}</option>
+            </select>
+          </label>
+          <label class="inv-field inv-search">
+            <span>搜索</span>
+            <input
+              :value="keywordInput"
+              data-testid="inv-keyword"
+              type="text"
+              placeholder="SKU / 商品名称 / SPU"
+              @input="onKeywordInput"
+            />
+          </label>
+        </div>
+        <div v-if="meta" class="inv-tools">
+          <InventoryMetricPanel
+            :metrics="meta.metrics"
+            :keys="chosenKeys"
+            @update:keys="onKeys"
+          />
+        </div>
+      </div>
 
       <!-- 视图切换（2026-10 新增，原型变体 B）：库存矩阵 / 补货工作台 -->
       <div class="inv-viewtabs">
@@ -372,44 +428,6 @@ onMounted(async () => {
       </div>
 
     <div v-if="error" class="inv-error" data-testid="inv-error">{{ error }}</div>
-
-    <!-- 筛选条：置于概览卡与矩阵表之间 -->
-    <div class="inv-toolbar">
-      <div class="inv-filters">
-        <label class="inv-field">
-          <span>店铺</span>
-          <select v-model="shop" data-testid="inv-shop" @change="onFilterChange">
-            <option value="">全部店铺</option>
-            <option v-for="s in meta?.shops ?? []" :key="s" :value="s">{{ s }}</option>
-          </select>
-        </label>
-        <label class="inv-field">
-          <span>日期</span>
-          <select v-model="date" data-testid="inv-date" @change="onFilterChange">
-            <option value="">全部日期</option>
-            <option v-for="d in meta?.dates ?? []" :key="d" :value="d">{{ d }}</option>
-          </select>
-        </label>
-        <label class="inv-field inv-search">
-          <span>搜索</span>
-          <input
-            v-model="keyword"
-            data-testid="inv-keyword"
-            type="text"
-            placeholder="SKU / 商品名称 / SPU"
-            @input="onKeywordInput"
-          />
-        </label>
-      </div>
-      <div class="inv-tools">
-        <InventoryMetricPanel
-          v-if="meta"
-          :metrics="meta.metrics"
-          :keys="chosenKeys"
-          @update:keys="onKeys"
-        />
-      </div>
-    </div>
 
     <div v-if="data" class="inv-table-meta" data-testid="inv-table-meta">
       <span class="inv-count">共 <b>{{ data.total }}</b> 条</span>
@@ -466,7 +484,7 @@ onMounted(async () => {
       </template>
 
       <!-- 补货工作台：参数可调的采购清单（单 sheet Excel 导出）。
-           顶部同样渲染预警条 + 视图切换（与矩阵 pane 同构、共享 activeTab 绑定），
+           顶部同样渲染预警条 + 视图切换 + 筛选条（与矩阵 pane 同构、共享 activeTab 绑定），
            保证 Tab 可达、预警信息常驻；两个 pane 一次仅渲染一个，DOM 中只存在一份。 -->
       <template v-else>
         <AlertCityStrip
@@ -484,7 +502,37 @@ onMounted(async () => {
             按「有效日均销速 × 期望库存覆盖天数 × (1+安全系数) − 现货库存 − 在途库存」生成每周采购建议，下柜 SKU 已排除。
           </span>
         </div>
-        <RestockPanel :shop="shop" :date="date" />
+        <!-- 筛选条（2026-10 调整至模式切换条下方）：店铺 / 日期 / 搜索。
+             补货视图无「指标配置」；筛选状态与矩阵 pane 共用父级的 shop/date/keyword。 -->
+        <div class="inv-toolbar">
+          <div class="inv-filters">
+            <label class="inv-field">
+              <span>店铺</span>
+              <select v-model="shop" data-testid="inv-shop" @change="onFilterChange">
+                <option value="">全部店铺</option>
+                <option v-for="s in meta?.shops ?? []" :key="s" :value="s">{{ s }}</option>
+              </select>
+            </label>
+            <label class="inv-field">
+              <span>日期</span>
+              <select v-model="date" data-testid="inv-date" @change="onFilterChange">
+                <option value="">全部日期</option>
+                <option v-for="d in meta?.dates ?? []" :key="d" :value="d">{{ d }}</option>
+              </select>
+            </label>
+            <label class="inv-field inv-search">
+              <span>搜索</span>
+              <input
+                :value="keywordInput"
+                data-testid="inv-keyword"
+                type="text"
+                placeholder="SKU / 商品名称 / SPU"
+                @input="onKeywordInput"
+              />
+            </label>
+          </div>
+        </div>
+        <RestockPanel :shop="shop" :date="date" :keyword="keyword" />
       </template>
     </div>
 </template>

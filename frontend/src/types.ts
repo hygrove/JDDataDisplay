@@ -641,16 +641,34 @@ export interface RestockRow {
   sku_name: string | null;
   /** 店铺名 */
   shop: string | null;
+  /** 城市名（SKU 视图里用它排版；城市视图里分组头已经写了城市） */
+  city: string;
   /** 三级类目 */
   category: string | null;
   /** 上下柜状态（本清单只含上柜） */
   shelf_status: string | null;
+  /** SPU 编码（同款不同规格的 SKU 共用） */
+  spu: string | null;
+  /** 销售员名称 */
+  seller: string | null;
+  /** ERP 编码（未登记时为 null → 页面显示「--」；库里不写 0，见 ADR-0009） */
+  erp_code: string | null;
+  /** 商品图访问路径（无图时为 null） */
+  sku_pic: string | null;
+  /** 该城预计可售天数（率值，不参与任何合计） */
+  sellable_days: number | null;
   /** 现货库存 */
   stock: number;
   /** 采购未到货（在途） */
   purchase: number;
-  /** 有效日均销速（窗口出库 ÷ 窗口有货天数，件/天） */
+  /** 窗口出库件数（销速的分子；=0 表示该窗口没有任何出库记录） */
+  out: number;
+  /** 有效日均销速（件/天；有货天数不足 7 天时为 30 日参照收缩估算值，页面标 ≈） */
   velocity: number;
+  /** 窗口有货天数（销速的分母；0 = 整窗缺货，无销速依据） */
+  avail: number;
+  /** 销速估计方式：none=无依据(0) / measured=直接测得 / shrunk=收缩估算 */
+  velocity_kind: "none" | "measured" | "shrunk";
   /** 目标库存（销速 × days × (1+safety)，取整） */
   target: number;
   /** 建议补货量（target − 现货 − 在途，向上取整） */
@@ -679,6 +697,8 @@ export interface RestockGroup {
  * 补货建议清单响应（/api/inventory/restock）。
  */
 export interface RestockResponse {
+  /** 视图标识：城市视图 */
+  view: "city";
   /** 计算所用快照日期 */
   date: string;
   /** 本次计算实际生效的参数（非法值已被后端夹回默认） */
@@ -688,3 +708,22 @@ export interface RestockResponse {
   /** 8 城建议量总计（本周建议采购总量） */
   grand_total: number;
 }
+
+/** SKU 视图：平铺长表，一行一个 SKU × 城市。 */
+export interface RestockSkuResponse {
+  /** 视图标识：SKU 视图 */
+  view: "sku";
+  /** 计算所用快照日期 */
+  date: string;
+  /** 本次计算实际生效的参数 */
+  params: RestockParams;
+  /** 平铺行（按 SKU 编码升序、同 SKU 按城市白名单顺序） */
+  rows: RestockRow[];
+  /** 建议量总计（与城市视图的 grand_total 同口径） */
+  grand_total: number;
+  /** 涉及的 SKU 个数 */
+  sku_count: number;
+}
+
+/** 补货清单响应（两个视图的联合类型）。 */
+export type RestockListResponse = RestockResponse | RestockSkuResponse;

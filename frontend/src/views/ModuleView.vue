@@ -877,7 +877,7 @@ async function exportXlsx() {
   align-items: flex-start;
   gap: 10px;
   padding-bottom: 10px;
-  border-bottom: 1px dashed var(--color-text-6);
+  border-bottom: 1px dashed var(--color-divider);
 }
 .spu-name {
   font-size: 16px;
@@ -1006,7 +1006,7 @@ async function exportXlsx() {
   align-items: baseline;
   gap: 12px;
   padding: 5px 0;
-  border-bottom: 1px solid var(--color-text-6);
+  border-bottom: 1px solid var(--color-divider);
   font-size: 14px;
 }
 .metric-row:last-child {
@@ -1094,7 +1094,7 @@ async function exportXlsx() {
   gap: 10px;
   align-items: stretch;
   padding-right: 16px;
-  border-right: 1px dashed var(--color-text-6);
+  border-right: 1px dashed var(--color-divider);
   box-sizing: border-box;
 }
 .spu-row-head .spu-name {
@@ -1118,7 +1118,7 @@ async function exportXlsx() {
   flex-direction: column;
   margin-top: 6px;
   padding-top: 8px;
-  border-top: 1px dashed var(--color-text-6);
+  border-top: 1px dashed var(--color-divider);
   font-size: 13px;
 }
 .spu-row-head .spu-avg .avg-row {
@@ -1204,7 +1204,7 @@ async function exportXlsx() {
   font-weight: 700;
   font-size: 13px;
   letter-spacing: 0.2px;
-  border-bottom: 2px solid var(--color-text-6);
+  border-bottom: 2px solid var(--color-divider);
   z-index: 1;
 }
 .spu-matrix thead th.weekend {
@@ -1216,7 +1216,7 @@ async function exportXlsx() {
   z-index: 2;
   background: #eef2f6;
   color: var(--color-brand);
-  border-right: 2px solid var(--color-text-6);
+  border-right: 2px solid var(--color-divider);
 }
 /* 斑马纹：隔行浅灰，阅读更省力 */
 .spu-matrix tbody tr:nth-child(even) td {
@@ -1230,7 +1230,7 @@ async function exportXlsx() {
   text-align: left;
   color: var(--color-text);
   font-weight: 600;
-  border-right: 2px solid var(--color-text-6);
+  border-right: 2px solid var(--color-divider);
   z-index: 1;
 }
 .spu-matrix tbody tr:nth-child(even) td.m-label {
@@ -1283,7 +1283,7 @@ async function exportXlsx() {
   .spu-row-head {
     width: auto;
     border-right: none;
-    border-bottom: 1px dashed var(--color-text-6);
+    border-bottom: 1px dashed var(--color-divider);
     padding-right: 0;
     padding-bottom: 12px;
   }

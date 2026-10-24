@@ -30,6 +30,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from backend.jobs import config, pipeline  # noqa: E402
 from backend.jobs import db as jobdb  # noqa: E402
+from backend.jobs import erp_map as erp_map_mod  # noqa: E402
 from backend.jobs import inventory as inventory_mod  # noqa: E402
 from backend.jobs import inv_pics as inv_pics_mod  # noqa: E402
 from backend.jobs.models import BatchStatus  # noqa: E402
@@ -143,6 +144,18 @@ def run_once() -> BatchStatus:
             # 库存模块摄入（独立宽表 inventory_daily，不影响现有 POP 链路）
             inv_result = inventory_mod.ingest_inventory_to_db()
             print(f"[inventory] 摄入：{inv_result}")
+            # ERP 编码映射（静态对照表 → erp_map）：补货清单要显示 ERP 编码。
+            # ⛔ 失败只告警、不中断本批——ERP 映射是展示层的附加信息，
+            # 缺了只是补货清单上的 ERP 列显示「--」，不该让整天的数据更新失败。
+            erp_summary = ""
+            try:
+                erp_result = erp_map_mod.ingest_erp_map()
+                print(f"[erp_map] ERP 编码映射摄入：{erp_result}")
+                if erp_result.get("reason") == "shrink_guard":
+                    erp_summary = "；ERP 编码映射源表条数骤减，本次只增未删"
+            except Exception as e:  # noqa: BLE001 —— ERP 映射失败绝不拖垮批处理
+                print(f"[erp_map] ERP 编码映射摄入失败（已跳过，不影响本批）：{type(e).__name__}: {e}")
+                erp_summary = f"；ERP 编码映射摄入失败（{type(e).__name__}）"
             # 库存 SKU 商品图缩略图（120/240 两档，AVIF+WebP）：
             # ⛔ 失败只告警、不中断本批——图片是展示层的辅助产物，
             # 缺了只会让矩阵表第一列回落到占位图，不该让整天的数据更新失败。
@@ -158,7 +171,7 @@ def run_once() -> BatchStatus:
                 success=True,
                 attempts=attempt,
                 duration_seconds=round(time.time() - start, 2),
-                message=f"成功：{len(manifest.modules)} 个模块，DB {db_result['rows']} 行{org_summary}",
+                message=f"成功：{len(manifest.modules)} 个模块，DB {db_result['rows']} 行{org_summary}{erp_summary}",
                 source_dir=str(config.POP_SOURCE_DIR),
                 modules=[m.module_id for m in manifest.modules],
             )

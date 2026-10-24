@@ -25,6 +25,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import config
+from .erp_map import erp_map_schema_sql
 from .inventory_metrics import (
     alert_threshold_schema_sql,
     alert_threshold_seed_sql,
@@ -130,6 +131,23 @@ def ensure_inventory_schema() -> None:
         conn.executescript(city_slow_schema_sql())
         conn.executescript(alert_threshold_schema_sql())
         conn.execute(alert_threshold_seed_sql())
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def ensure_erp_map_schema() -> None:
+    """幂等建表：erp_map（库存 SKU → ERP 编码映射，见 ADR-0009）。
+
+    与库存宽表分开放：ERP 映射是与快照无关的静态对照表，
+    「未登记」（无行）与「ERP 编码是 0」必须长期可区分。
+
+    Side Effects:
+        在 DB_PATH 创建 erp_map 表（若已存在则什么都不做）。
+    """
+    conn = get_conn()
+    try:
+        conn.executescript(erp_map_schema_sql())
         conn.commit()
     finally:
         conn.close()

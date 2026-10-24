@@ -52,11 +52,12 @@ app.include_router(inventory_router)
 @app.on_event("startup")
 def _init_db_schema() -> None:
     """应用启动时幂等建表，保证 daily_detail / processed_file / inventory_daily 存在。"""
-    from ..jobs.db import ensure_inventory_schema, ensure_schema
+    from ..jobs.db import ensure_erp_map_schema, ensure_inventory_schema, ensure_schema
 
     try:
         ensure_schema()
         ensure_inventory_schema()
+        ensure_erp_map_schema()
     except Exception as e:  # noqa: BLE001
         print(f"[db] 启动建表失败（不影响页面）：{type(e).__name__}: {e}")
 
