@@ -3,7 +3,7 @@
 
 为什么需要它：
   批处理把 Excel 清洗后的干净长表写进 SQLite（见 jobs/db.py），
-  下游 pipeline / transforms 不直接读 Excel，而是统一从 DB 取，
+  下游（API 直查 / transforms，ADR-0012）不直接读 Excel，而是统一从 DB 取，
   这样「数据源」与「展示」解耦，且 DB 可随数据增长做增量更新，
   而不必每次都重新解析全部 Excel / CSV。
 

@@ -204,14 +204,13 @@ def evidence_run_once_full(base: Path, tmp: Path, ck: vo.Checker) -> None:
     src = _fresh_copy(base, tmp / "ronce")
     data_dir = tmp / "ronce_data"
     saved = {k: getattr(config, k) for k in
-             ("POP_SOURCE_DIR", "DATA_DIR", "MODULES_DIR", "IMAGES_DIR", "THUMBS_DIR")}
+             ("POP_SOURCE_DIR", "DATA_DIR", "IMAGES_DIR", "THUMBS_DIR")}
     saved_db = jobdb.DB_PATH
     saved_mode = config.ORGANIZE_MODE
     snap_full = None
     try:
         config.POP_SOURCE_DIR = src
         config.DATA_DIR = data_dir
-        config.MODULES_DIR = data_dir / "modules"
         config.IMAGES_DIR = data_dir / "images"
         config.THUMBS_DIR = config.IMAGES_DIR / "thumbs"
         jobdb.DB_PATH = data_dir / "app.db"

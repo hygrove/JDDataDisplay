@@ -92,7 +92,7 @@ def run_once() -> BatchStatus:
     流程：
       1. 记录起始时间与 attempt 上限（未启用重试时上限为 1）；
       2. 先跑一次源表整理（归档；默认 dry-run），⛔ 整理异常不拖垮本批；
-      3. 调用 pipeline.run_all() 跑全部数据源与模块；
+      3. 摄入数据（POP 明细 + 库存宽表），再同步 SPU 图片与缩略图；
       4. 成功则写 status.json 并返回；
       5. 失败则按指数退避等待后重试，全部失败后写失败状态返回。
 
@@ -136,9 +136,9 @@ def run_once() -> BatchStatus:
                       f"整理耗时 {org_seconds}s（整批耗时增量 ≈ {org_seconds}s）")
                 org_summary = ""  # 成功时不进 message（理由见上方注释）
 
-            # 增量摄入：先把 Excel/CSV 清洗后写入 SQLite（daily_detail + processed_file 哈希追踪），
-            # 再由 pipeline 从 DB 读取干净长表产出 JSON / summary。两步都在同一事务边界内完成，
-            # 保证「库里存的」与「页面看到的」永远一致
+            # 增量摄入：把 Excel/CSV 清洗后写入 SQLite（daily_detail + processed_file 哈希追踪）。
+            # POP 数据链路为「API 直查 DB」（ADR-0012）：摄入落库即生效，
+            # 批处理不再生成 modules/*.json / manifest.json 等 JSON 中间产物。
             db_result = jobdb.ingest_excel_to_db(config.POP_SOURCE_DIR)
             print(f"[db] 摄入：{db_result}")
             # 库存模块摄入（独立宽表 inventory_daily，不影响现有 POP 链路）
@@ -165,15 +165,17 @@ def run_once() -> BatchStatus:
                 print(f"[inv_pics] 库存 SKU 缩略图：新增 {thumb_count} 个文件")
             except Exception as e:  # noqa: BLE001 —— 缩略图失败绝不拖垮批处理
                 print(f"[inv_pics] 库存 SKU 缩略图生成失败（已跳过，不影响本批）：{type(e).__name__}: {e}")
-            manifest = pipeline.run_all()
+            # SPU 原图同步 + 多尺寸缩略图（幂等）：POP 链路里批处理唯一的文件产物
+            pipeline.sync_images()
+            registry = pipeline.default_registry()
             status = BatchStatus(
                 last_run_at=started_at,
                 success=True,
                 attempts=attempt,
                 duration_seconds=round(time.time() - start, 2),
-                message=f"成功：{len(manifest.modules)} 个模块，DB {db_result['rows']} 行{org_summary}{erp_summary}",
+                message=f"成功：{len(registry)} 个模块，DB {db_result['rows']} 行{org_summary}{erp_summary}",
                 source_dir=str(config.POP_SOURCE_DIR),
-                modules=[m.module_id for m in manifest.modules],
+                modules=[spec.module_id for spec in registry],
             )
             _write_status(status)
             return status

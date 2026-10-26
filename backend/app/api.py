@@ -1,18 +1,18 @@
 # -*- coding: utf-8 -*-
 """数据 API：manifest / 模块分页明细 / summary / 单品分析 / 状态 / 手动刷新。
 
-设计要点：
-- 明细 JSON 是层级结构（店铺->spu->日期->指标），这里加载后**扁平化为行缓存**，
-  按 shop / date / keyword / sort 过滤分页，每页 200-500 行，**绝不整模块推给前端**；
-- 三份缓存（模块 / 汇总 / 扁平行）都用「双重检查加锁」懒加载，
-  `/api/refresh` 重跑批处理后统一 clear_caches() 失效；
-- 新增模块时在这里加配置即可（路径参数 module_id 驱动，无需改路由）。
+设计要点（ADR-0012：DB 直连，与库存模块同款）：
+- 每次请求经 SqliteSource 直查 SQLite daily_detail，**无中间 JSON 文件、无内存缓存**，
+  摄入落库即生效——不存在「刷新了但页面没变」的缓存失效类问题；
+- 指标口径复用 transforms（SSOT）：扁平行 / summary / 单品分析全部走
+  compute_metrics 的「先求和再相除」，四层口径与改造前完全一致；
+- 明细按 shop / date / keyword / sort 过滤分页，每页 200-500 行，**绝不整模块推给前端**；
+- 新增模块时在 jobs/pipeline.default_registry() 登记元数据即可（路径参数 module_id 驱动，无需改路由）。
 """
 from __future__ import annotations
 
 import json
-import threading
-from functools import lru_cache
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -21,7 +21,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from ..jobs import config
-from ..jobs.models import Manifest, MetricRecord, ModuleData, ModuleSummary
+from ..jobs.models import Manifest, MetricRecord, ModuleManifest, ModuleSummary
 from .analysis import DayPoint, build_insight, split_workday_holiday
 
 router = APIRouter(prefix="/api")
@@ -209,169 +209,197 @@ class SpuAnalysisOut(BaseModel):
     insight: str
 
 
-# ---------------- 数据加载（带缓存，手动刷新时失效）----------------
-# _lock 必须是**可重入**锁（RLock）：flatten_module 内部会再调用 load_module，
-# 若用普通 Lock 会在同一线程内二次加锁时死锁
-_lock = threading.RLock()
-_module_cache: dict[str, ModuleData] = {}
-_summary_cache: dict[str, ModuleSummary] = {}
-_flat_cache: dict[str, list[RowOut]] = {}
+# ---------------- 数据加载（DB 直连，无缓存；ADR-0012）----------------
+# 与库存模块同款：每次请求直接查 SQLite daily_detail，摄入落库即生效，
+# 不存在任何需要失效的中间态。指标口径复用 transforms（SSOT），不另算一份比率。
 
 
-def _data_path(name: str) -> Path:
-    """校验并返回数据文件的绝对路径，文件不存在时转成 404。
+def _pop_frame():
+    """从 SQLite 读出 POP 干净长表（SqliteSource 协议源），返回 polars DataFrame。
 
-    Args:
-        name: 相对 DATA_DIR 的文件名（如 "manifest.json"、"modules/pop_spu_detail.json"）。
+    延迟导入 SqliteSource（连带 polars）：保持「仅启动 API 服务」不加载批处理
+    重依赖，与 /api/refresh 的延迟导入同一约定；首次导入后走 sys.modules 缓存。
 
     Returns:
-        Path: 存在的数据文件绝对路径。
-
-    Raises:
-        HTTPException: 404 —— 文件不存在时抛出，提示「请先运行批处理」，
-            避免下游抛 FileNotFoundError 变成 500，让调用方误以为是服务故障。
+        pl.DataFrame: 列等于 LONG_COLUMNS 的统一长表；库为空时返回 0 行同构空表。
 
     Example:
-        >>> _data_path("manifest.json")  # doctest: +SKIP
-        WindowsPath('E:/JDDataDisplay/backend/app/data/manifest.json')
-    """
-    p = config.DATA_DIR / name
-    if not p.exists():
-        raise HTTPException(status_code=404, detail=f"数据文件不存在：{name}，请先运行批处理")
-    return p
-
-
-def load_module(module_id: str) -> ModuleData:
-    """加载模块层级明细 JSON（带缓存）。
-
-    双重检查加锁：先无锁读一次（快路径），未命中才加锁并在锁内再查一次，
-    避免并发请求重复解析同一个大 JSON。
-
-    Args:
-        module_id: 模块标识。
-
-    Returns:
-        ModuleData: 该模块的层级数据（店铺->SPU->日期->指标）。
-
-    Raises:
-        HTTPException: 404 —— 对应模块的 JSON 文件不存在。
-        pydantic.ValidationError: JSON 结构与 ModuleData 定义不符时抛出。
-
-    Example:
-        >>> data = load_module("pop_spu_detail")   # doctest: +SKIP
-        >>> data.module_id                         # doctest: +SKIP
-        'pop_spu_detail'
-    """
-    if module_id not in _module_cache:
-        with _lock:
-            if module_id not in _module_cache:
-                raw = _data_path(f"modules/{module_id}.json").read_text(encoding="utf-8")
-                _module_cache[module_id] = ModuleData.model_validate_json(raw)
-    return _module_cache[module_id]
-
-
-def load_summary(module_id: str) -> ModuleSummary:
-    """加载模块汇总 JSON（带缓存），加锁与缓存策略同 load_module。
-
-    Args:
-        module_id: 模块标识。
-
-    Returns:
-        ModuleSummary: 该模块的图表汇总数据。
-
-    Raises:
-        HTTPException: 404 —— 汇总文件不存在。
-        pydantic.ValidationError: JSON 结构与 ModuleSummary 定义不符时抛出。
-
-    Example:
-        >>> s = load_summary("pop_spu_detail")   # doctest: +SKIP
-        >>> s.module_id                          # doctest: +SKIP
-        'pop_spu_detail'
-    """
-    if module_id not in _summary_cache:
-        with _lock:
-            if module_id not in _summary_cache:
-                raw = _data_path(f"modules/{module_id}.summary.json").read_text(encoding="utf-8")
-                _summary_cache[module_id] = ModuleSummary.model_validate_json(raw)
-    return _summary_cache[module_id]
-
-
-def flatten_module(module_id: str) -> list[RowOut]:
-    """把层级结构（店铺->SPU->日期）扁平化成「一行 = 一个 SPU 一天」的列表（带缓存）。
-
-    为什么要扁平化：
-      前端要按 shop / date / keyword 过滤并排序分页，层级结构无法直接做这件事；
-      扁平成行后所有过滤排序都是简单的列表推导，且结果可缓存复用。
-
-    Args:
-        module_id: 模块标识。
-
-    Returns:
-        list[RowOut]: 扁平行列表；每行含 shop / spu / 名称 / 类目 / 图片 / date / metrics。
-
-    Raises:
-        HTTPException: 404 —— 模块明细文件不存在（由 load_module 抛出）。
-
-    Example:
-        >>> rows = flatten_module("pop_spu_detail")   # doctest: +SKIP
-        >>> len(rows) >= 0                            # doctest: +SKIP
+        >>> df = _pop_frame()          # doctest: +SKIP
+        >>> df.height >= 0             # doctest: +SKIP
         True
     """
-    if module_id not in _flat_cache:
-        with _lock:
-            if module_id not in _flat_cache:
-                data = load_module(module_id)
-                rows: list[RowOut] = []
-                # 三层展开：店铺 -> SPU -> 日期，每天产出一行
-                for shop_node in data.shops.values():
-                    for spu_node in shop_node.spus.values():
-                        for d, m in spu_node.dates.items():
-                            rows.append(RowOut(
-                                shop=shop_node.shop, spu=spu_node.spu,
-                                spu_name=spu_node.spu_name, category=spu_node.category,
-                                image=spu_node.image, date=d, metrics=m,
-                            ))
-                _flat_cache[module_id] = rows
-    return _flat_cache[module_id]
+    from ..jobs.sources.sqlite_source import SqliteSource
+
+    return SqliteSource().fetch()
 
 
-def clear_caches() -> None:
-    """清空全部数据缓存（模块 / 汇总 / 扁平行）。
-
-    调用时机：`/api/refresh` 重跑批处理完成后必须调用，
-    否则接口会继续返回旧数据，表现为「刷新了但页面没变」。
+def _require_module(module_id: str) -> None:
+    """校验 module_id 已在模块注册表登记，未登记时 404（对齐旧「数据文件不存在」的 404 语义）。
 
     Args:
-        无。
+        module_id: 模块标识（路径参数原样传入）。
+
+    Raises:
+        HTTPException: 404 —— 模块不在 jobs/pipeline.default_registry() 中。
+    """
+    from ..jobs.pipeline import default_registry
+
+    if module_id not in {spec.module_id for spec in default_registry()}:
+        raise HTTPException(status_code=404, detail=f"模块不存在：{module_id}")
+
+
+def _image_map() -> dict[str, str]:
+    """扫描 IMAGES_DIR 构建「SPU 号 -> /images/xxx.png」映射。
+
+    图片由批处理 pipeline.sync_images() 从数据源同步到该目录（幂等、mtime 增量），
+    API 只读自己名下的产物目录，**不碰数据源目录**（数据源语义上只读）。
 
     Returns:
-        None
+        dict[str, str]: key 为图片文件名主干（即 SPU 号），value 为前端可访问路径。
+    """
+    mapping: dict[str, str] = {}
+    if config.IMAGES_DIR.is_dir():
+        for img in config.IMAGES_DIR.glob("*.png"):
+            mapping[img.stem] = f"/images/{img.name}"
+    return mapping
+
+
+def _data_updated_at() -> Optional[datetime]:
+    """取「数据最后一次摄入时刻」= MAX(processed_file.processed_at)。
+
+    manifest / summary 的 updated_at 用它而不是请求时刻：前者诚实反映数据新鲜度；
+    用请求时刻会让页面误以为数据「刚刚更新」。
+
+    Returns:
+        Optional[datetime]: 摄入时刻；从未摄入（processed_file 空）时 None。
+    """
+    from ..jobs import db as jobdb
+
+    conn = jobdb.get_conn()
+    try:
+        v = conn.execute("SELECT MAX(processed_at) AS t FROM processed_file").fetchone()["t"]
+    finally:
+        conn.close()
+    if not v:
+        return None
+    try:
+        return datetime.fromisoformat(v)
+    except ValueError:
+        return None
+
+
+def _flat_rows(module_id: str) -> list[RowOut]:
+    """把 daily_detail 扁平化成「一行 = 一个 SPU 一天」的行列表（DB 直查，无缓存）。
+
+    名称/类目的合并语义复刻改造前的层级 JSON（transforms.build_module_data）：
+      spu_name = 同 (shop, spu) 内**最后一个非空值**（改标题后旧日期行也显示新名）；
+      category = 该 (shop, spu) **首行**的值（层级版只在建节点时取一次，从不更新）。
+    不复刻的话，名称在多日期间漂移的 SPU 会在部分日期行上显示 None。
+
+    Args:
+        module_id: 模块标识。
+
+    Returns:
+        list[RowOut]: 扁平行列表；每行含 shop / spu / 名称 / 类目 / 图片 / date / metrics
+            （metrics 的比率列由 transforms.compute_metrics 按「先求和再相除」补齐）。
+
+    Raises:
+        HTTPException: 404 —— 模块未登记，或库中无数据（未跑过批处理）。
 
     Example:
-        >>> clear_caches()
+        >>> rows = _flat_rows("pop_spu_detail")   # doctest: +SKIP
+        >>> len(rows) >= 0                        # doctest: +SKIP
+        True
     """
-    with _lock:
-        _module_cache.clear()
-        _summary_cache.clear()
-        _flat_cache.clear()
+    _require_module(module_id)
+    from ..jobs import transforms
+
+    df = transforms.compute_metrics(_pop_frame())
+    if df.height == 0:
+        raise HTTPException(status_code=404, detail="暂无数据，请先运行批处理")
+    image_map = _image_map()
+    # (shop, spu) -> 合并后的元信息；dict 保序，合并语义见 docstring
+    meta: dict[tuple[str, str], dict] = {}
+    # 「店铺 -> SPU -> 行列表」三级保序 dict：复刻旧 flatten_module 的层级遍历顺序
+    # （店铺优先、同店铺的 SPU 连续），保证无 sort 参数时 /rows 的默认行序与改造前
+    # 逐字节一致；直接按 DB 行序展开会得到店铺交错的另一种合法顺序，契约就变了。
+    nested: dict[str, dict[str, list[RowOut]]] = {}
+    for row in df.iter_rows(named=True):
+        key = (row["shop"], row["spu"])
+        g = meta.get(key)
+        if g is None:
+            g = {"spu_name": row.get("spu_name"), "category": row.get("category")}
+            meta[key] = g
+        elif row.get("spu_name"):
+            g["spu_name"] = row["spu_name"]
+        rec = RowOut(
+            shop=row["shop"],
+            spu=row["spu"],
+            spu_name=g["spu_name"],
+            category=g["category"],
+            image=image_map.get(row["spu"]),
+            date=row["date"],
+            metrics=MetricRecord(
+                visitors=row.get("visitors"),
+                buyers=row.get("buyers"),
+                orders=row.get("orders"),
+                items=row.get("items"),
+                amount=row.get("amount"),
+                avg_price=row.get("avg_price"),
+                search_impressions=row.get("search_impressions"),
+                search_clicks=row.get("search_clicks"),
+                search_click_rate=row.get("search_click_rate"),
+                promotion_cost=row.get("promotion_cost"),
+                promotion_amount=row.get("promotion_amount"),
+                conversion_rate=row.get("conversion_rate"),
+                roi=row.get("roi"),
+                promotion_ratio=row.get("promotion_ratio"),
+                refund_orders=row.get("refund_orders"),
+                refund_amount=row.get("refund_amount"),
+            ),
+        )
+        nested.setdefault(row["shop"], {}).setdefault(row["spu"], []).append(rec)
+    return [rec for spus in nested.values() for rows_ in spus.values() for rec in rows_]
 
 
 # ---------------- 路由 ----------------
 @router.get("/manifest", response_model=Manifest)
 def get_manifest() -> Manifest:
-    """获取模块清单（前端首屏第一个请求）。
+    """获取模块清单（前端首屏第一个请求；DB 直查实时聚合，ADR-0012）。
 
     Returns:
-        Manifest: 含生成时间与各模块的店铺列表、日期区间、SPU 数等元信息。
+        Manifest: 含生成时间与各模块的店铺列表、日期区间、SPU 数等元信息；
+            generated_at / updated_at 取「数据最后一次摄入时刻」而非请求时刻。
 
     Raises:
-        HTTPException: 404 —— manifest.json 不存在（未跑过批处理）。
+        HTTPException: 404 —— 库中无数据（未跑过批处理）。
 
     Example:
         GET /api/manifest
     """
-    raw = _data_path("manifest.json").read_text(encoding="utf-8")
-    return Manifest.model_validate_json(raw)
+    from ..jobs.pipeline import default_registry
+
+    df = _pop_frame()
+    if df.height == 0:
+        raise HTTPException(status_code=404, detail="暂无数据，请先运行批处理")
+    updated = _data_updated_at()
+    entries: list[ModuleManifest] = []
+    for spec in default_registry():
+        # SPU 数按 (shop, spu) 去重统计：同一个 SPU 可能跨店存在，不能只按 spu 去重
+        dates = sorted(df["date"].unique().to_list())
+        entries.append(
+            ModuleManifest(
+                module_id=spec.module_id,
+                title=spec.title,
+                description=spec.description,
+                shops=sorted(df["shop"].unique().to_list()),
+                date_range=[dates[0], dates[-1]] if dates else [],
+                spu_count=df.select(["shop", "spu"]).unique().height,
+                row_count=df.height,
+                updated_at=updated,
+            )
+        )
+    return Manifest(generated_at=updated or datetime.now(timezone.utc), modules=entries)
 
 
 def _build_rows(
@@ -398,14 +426,14 @@ def _build_rows(
         tuple[list[RowOut], list[str]]: (过滤聚合后的全量行, 区间内日期升序列表)。
 
     Raises:
-        HTTPException: 404 —— 模块数据文件不存在（由 flatten_module 抛出）。
+        HTTPException: 404 —— 模块未登记或库中无数据（由 _flat_rows 抛出）。
 
     Example:
         >>> rows, dates = _build_rows("pop_spu_detail", None, "2026-09-01", "2026-09-24", None, None, "amount", "desc")
         >>> len(rows) >= 0
         True
     """
-    all_rows = flatten_module(module_id)
+    all_rows = _flat_rows(module_id)
     all_dates = sorted({r.date for r in all_rows})
 
     # 解析有效日期区间：start+end 优先，其次兼容单日 date（旧前端只传 date）
@@ -528,21 +556,34 @@ def get_rows(
 
 @router.get("/module/{module_id}/summary", response_model=ModuleSummary)
 def get_summary(module_id: str) -> ModuleSummary:
-    """获取模块汇总（图表用：店铺×日期趋势、TOP SPU、店铺汇总）。
+    """获取模块汇总（图表用：店铺×日期趋势、TOP SPU、店铺汇总；DB 直查实时聚合）。
+
+    复用 transforms.build_summary（与改造前生成 summary.json 的是同一个函数），
+    口径零漂移；updated_at 覆写为「数据最后一次摄入时刻」（理由见 _data_updated_at）。
 
     Args:
         module_id: 模块标识（路径参数）。
 
     Returns:
-        ModuleSummary: 汇总数据（带缓存）。
+        ModuleSummary: 汇总数据。
 
     Raises:
-        HTTPException: 404 —— 汇总文件不存在。
+        HTTPException: 404 —— 模块未登记，或库中无数据（未跑过批处理）。
 
     Example:
         GET /api/module/pop_spu_detail/summary
     """
-    return load_summary(module_id)
+    _require_module(module_id)
+    from ..jobs import transforms
+
+    df = _pop_frame()
+    if df.height == 0:
+        raise HTTPException(status_code=404, detail="暂无数据，请先运行批处理")
+    summary = transforms.build_summary(module_id, df, _image_map(), config.SUMMARY_TOP_N)
+    updated = _data_updated_at()
+    if updated:
+        summary.updated_at = updated
+    return summary
 
 
 # ---------------- 数据导出（xlsx）----------------
@@ -853,8 +894,8 @@ def get_spu_analysis(
     """单品分析：某 SPU 在选定区间内的逐日指标 + 工作日/节假日对比 + 综合分析文案。
 
     实现说明（性能）：
-      这里**不是**重跑批处理，而是在已缓存的扁平行（_flat_cache）上做按需聚合，
-      所以切区间 / 切 SPU 的响应是毫秒级；真正的重算只在 /api/refresh 时发生。
+      这里**不是**重跑批处理，而是在 DB 直查得到的扁平行上做按需聚合；
+      daily_detail 规模小（数百行级），单次请求含拉库 + 聚合仍在毫秒级。
 
     Args:
         module_id: 模块标识（路径参数）。
@@ -872,7 +913,7 @@ def get_spu_analysis(
     Example:
         GET /api/module/pop_spu_detail/spu/100123/analysis?start=2026-09-18&end=2026-09-24
     """
-    rows = [r for r in flatten_module(module_id) if r.spu == spu]
+    rows = [r for r in _flat_rows(module_id) if r.spu == spu]
     if shop:
         rows = [r for r in rows if r.shop == shop]
     if not rows:
@@ -958,7 +999,7 @@ def get_status() -> dict[str, Any]:
 
 @router.post("/refresh")
 def refresh() -> dict[str, Any]:
-    """手动触发重跑批处理（同步执行，完成后清缓存）。
+    """手动触发重跑批处理（同步执行；DB 直连模式下无需清任何缓存）。
 
     Returns:
         dict[str, Any]: 本次批处理的 BatchStatus 内容（success / message / 耗时等）。
@@ -967,7 +1008,8 @@ def refresh() -> dict[str, Any]:
         无（run_once 内部已捕获异常并转成失败状态返回）。
 
     Side Effects:
-        同步执行完整批处理（耗时可能数十秒），完成后清空全部数据缓存。
+        同步执行完整批处理（耗时可能数十秒）；摄入落库后下一次请求即见新数据
+        （ADR-0012：API 无内存缓存，不存在「刷新了但页面没变」）。
 
     Example:
         POST /api/refresh
@@ -976,6 +1018,4 @@ def refresh() -> dict[str, Any]:
     from ..jobs.run_batch import run_once
 
     status = run_once()
-    # 必须清缓存，否则接口继续返回旧数据，表现为「刷新了但页面没变」
-    clear_caches()
     return json.loads(status.model_dump_json())

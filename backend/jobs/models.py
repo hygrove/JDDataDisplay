@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Pydantic v2 数据模型：批处理产出 JSON 的 schema 定义。
+"""Pydantic v2 数据模型：API 响应与批处理产物的 schema 定义（ADR-0012：层级 JSON 专属结构已随 JSON 产物废除）。
 
 前端 TS 类型在 frontend/src/types.ts 中与本文件**手工对齐**；
 如需自动生成可引入 datamodel-code-generator，见 README「类型对齐」一节。
@@ -71,77 +71,6 @@ class MetricRecord(BaseModel):
     promotion_ratio: Optional[float] = None     # 推广占比 = 推广花费 / 成交金额
     refund_orders: Optional[float] = None       # 取消及售后退款单量
     refund_amount: Optional[float] = None       # 取消及售后退款金额
-
-
-# ---------------- 层级结构：店铺 -> spu -> 日期 -> 指标 ----------------
-class SpuNode(BaseModel):
-    """单个 SPU 节点：挂在某个店铺下，持有该 SPU 逐日的指标。
-
-    Fields:
-        spu: SPU 编号（全局唯一标识）。
-        spu_name: 商品名称；数据源映射表缺失时为 None，前端降级显示 SPU 号。
-        category: 三级类目；可为空。
-        image: 图片访问路径，如 "/images/100xxxx.png"；无图时为 None。
-        dates: 日期 -> MetricRecord 的映射，key 为 "YYYY-MM-DD"。
-
-    Raises:
-        pydantic.ValidationError: dates 中的值不是合法 MetricRecord 时抛出。
-
-    Example:
-        >>> node = SpuNode(spu="100123", spu_name="钻芯保温杯", dates={"2026-09-24": MetricRecord(amount=99)})
-        >>> node.spu
-        '100123'
-    """
-
-    spu: str
-    spu_name: Optional[str] = None
-    category: Optional[str] = None      # 三级类目
-    image: Optional[str] = None         # 图片相对路径，如 /images/100xxxx.png
-    dates: dict[str, MetricRecord] = Field(default_factory=dict)  # key: YYYY-MM-DD
-
-
-class ShopNode(BaseModel):
-    """单个店铺节点：持有该店铺下所有 SPU。
-
-    Fields:
-        shop: 店铺名。
-        spus: SPU 编号 -> SpuNode 的映射。
-
-    Raises:
-        pydantic.ValidationError: spus 中值类型不合法时抛出。
-
-    Example:
-        >>> shop = ShopNode(shop="钻芯旗舰店", spus={"100123": SpuNode(spu="100123")})
-        >>> shop.shop
-        '钻芯旗舰店'
-    """
-
-    shop: str
-    spus: dict[str, SpuNode] = Field(default_factory=dict)  # key: spu
-
-
-class ModuleData(BaseModel):
-    """模块明细 JSON（如 pop_spu_detail.json）的根结构。
-
-    Fields:
-        module_id: 模块标识。
-        updated_at: 本批数据生成时间（UTC）。
-        date_range: 数据覆盖的日期区间 [最早日, 最晚日]；无数据时为空列表。
-        shops: 店铺名 -> ShopNode 的映射，构成「店铺->SPU->日期->指标」四层结构。
-
-    Raises:
-        pydantic.ValidationError: 字段缺失或类型错误时抛出（如 updated_at 不是 datetime）。
-
-    Example:
-        >>> data = ModuleData(module_id="pop_spu_detail", updated_at=datetime.now())
-        >>> data.shops
-        {}
-    """
-
-    module_id: str
-    updated_at: datetime
-    date_range: list[str] = Field(default_factory=list)  # [min_date, max_date]
-    shops: dict[str, ShopNode] = Field(default_factory=dict)  # key: 店铺名
 
 
 # ---------------- 汇总（图表用，Python 端预聚合）----------------

@@ -3,12 +3,13 @@
 
 设计要点：
 所有数据源（Excel / CSV / 数据库）都把各自格式**先规整成同一张长表**再交给下游，
-这样 transforms 与 pipeline 不需要关心「数据是从哪来的」，新增数据源只要实现 Source 协议即可。
+这样 transforms 与消费方（入库 / API 直查）不需要关心「数据是从哪来的」，
+新增数据源只要实现 Source 协议即可。
 
 新增数据源步骤：
 1. 在 sources/ 下新建模块，定义类并满足下面的 Source 协议（实现 name 与 fetch）；
 2. fetch() 返回 polars.DataFrame，列至少包含 LONG_COLUMNS（缺失的列补 None）；
-3. 在 pipeline 里把新源加入源列表即可。
+3. 按用途接线：入库侧接入 db.py 摄入流程，查询侧接入 backend/app 的 API。
 """
 from __future__ import annotations
 

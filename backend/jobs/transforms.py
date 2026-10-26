@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
-"""Polars 清洗与聚合：统一长表 -> 层级 JSON（明细）与 summary（图表汇总）。
+"""Polars 清洗与聚合：统一长表 -> 派生比率与图表 summary（ADR-0012：明细扁平化在 API 侧完成）。
 
 Polars 上手要点（详见 README）：
   - DataFrame 是不可变风格，with_columns / filter / group_by 都返回**新表**，不会原地改；
   - 表达式 API：pl.col("a").sum().over("b") 这类写法代替 pandas 的逐行操作；
   - lazy（LazyFrame）可做查询优化，本数据量用 eager 已足够。
 
-⚠️ 本模块是整个指标口径的**后端事实来源**，与前端 frontend/src/metrics.ts 对应。
+⚠️ 本模块是整个指标口径的**后端事实来源**（批处理与 API 直查共用），与前端 frontend/src/metrics.ts 对应。
   任何比率指标都必须走 compute_metrics 的「先求和再相除」路径，禁止在别处另算一份，
   否则会出现「单日对、汇总不对」的经典口径事故。
 """
@@ -16,12 +16,8 @@ import polars as pl
 
 from .models import (
     DailySummary,
-    MetricRecord,
-    ModuleData,
     ModuleSummary,
-    ShopNode,
     ShopSummary,
-    SpuNode,
     TopSpu,
 )
 
@@ -125,8 +121,11 @@ def aggregate(df: pl.DataFrame, keys: list[str]) -> pl.DataFrame:
         >>> aggregate(df, ["shop", "date"])["amount"][0]
         300.0
     """
-    # 只累加「可累加」的原始指标；比率不在 agg 之列（理由见函数 docstring）
-    out = df.group_by(keys).agg(
+    # 只累加「可累加」的原始指标；比率不在 agg 之列（理由见函数 docstring）。
+    # maintain_order=True：group_by 默认行序随线程调度漂移（跨调用都不稳定）；
+    # 改为「首现顺序」保证确定性——ADR-0012 后 summary 每次请求重算，
+    # 顺序漂移会让图表在两次刷新间重排（旧的 JSON 冻结恰好掩盖了这一点）。
+    out = df.group_by(keys, maintain_order=True).agg(
         pl.col("visitors").sum(),
         pl.col("buyers").sum(),
         pl.col("orders").sum(),
@@ -140,75 +139,6 @@ def aggregate(df: pl.DataFrame, keys: list[str]) -> pl.DataFrame:
         pl.col("refund_amount").sum(),
     )
     return compute_metrics(out)
-
-
-def build_module_data(module_id: str, df: pl.DataFrame, image_map: dict[str, str]) -> ModuleData:
-    """长表 -> 层级结构（店铺 -> SPU -> 日期 -> 指标），产出模块明细 JSON 的本体。
-
-    Args:
-        module_id: 模块标识，写入 ModuleData.module_id。
-        df: 统一长表；函数内部会先调用 compute_metrics 补全派生指标。
-        image_map: 「SPU 号 -> 图片 URL」映射；查不到时 image 为 None（前端显示「暂无图片」）。
-
-    Returns:
-        ModuleData: 含 shops 层级结构与 date_range（[最早日, 最晚日]，无数据时为空列表）。
-
-    Raises:
-        polars.exceptions.ColumnNotFoundError: 长表缺少 shop / spu / date 等必需列时抛出。
-        pydantic.ValidationError: 某行数据类型不符合 MetricRecord 定义时抛出。
-
-    Example:
-        >>> data = build_module_data("pop_spu_detail", df, {"100123": "/images/100123.png"})
-        >>> data.module_id
-        'pop_spu_detail'
-    """
-    # 先补全派生指标，保证写进 JSON 的每一行都带齐比率字段
-    df = compute_metrics(df)
-    shops: dict[str, ShopNode] = {}
-    for row in df.iter_rows(named=True):
-        # setdefault 保证「同店铺同 SPU」在多日期下复用同一个节点，而不是每天新建一个
-        shop = shops.setdefault(row["shop"], ShopNode(shop=row["shop"]))
-        spu = shop.spus.setdefault(
-            row["spu"],
-            SpuNode(
-                spu=row["spu"],
-                spu_name=row.get("spu_name"),
-                category=row.get("category"),
-                image=image_map.get(row["spu"]),
-            ),
-        )
-        # 同一 (shop, spu) 多日期时名称可能变化（如改标题），保留最新非空名称，
-        # 否则后出现的空值会把前面已得到的名称覆盖成 None
-        if row.get("spu_name"):
-            spu.spu_name = row["spu_name"]
-        spu.dates[row["date"]] = MetricRecord(
-            visitors=row.get("visitors"),
-            buyers=row.get("buyers"),
-            orders=row.get("orders"),
-            items=row.get("items"),
-            amount=row.get("amount"),
-            avg_price=row.get("avg_price"),
-            search_impressions=row.get("search_impressions"),
-            search_clicks=row.get("search_clicks"),
-            search_click_rate=row.get("search_click_rate"),
-            promotion_cost=row.get("promotion_cost"),
-            promotion_amount=row.get("promotion_amount"),
-            conversion_rate=row.get("conversion_rate"),
-            roi=row.get("roi"),
-            promotion_ratio=row.get("promotion_ratio"),
-            refund_orders=row.get("refund_orders"),
-            refund_amount=row.get("refund_amount"),
-        )
-    # date_range 取排序后的首尾：数据源里日期是字符串 YYYY-MM-DD，字典序即时间序
-    dates = sorted(df["date"].unique().to_list())
-    from datetime import datetime, timezone
-
-    return ModuleData(
-        module_id=module_id,
-        updated_at=datetime.now(timezone.utc),
-        date_range=[dates[0], dates[-1]] if dates else [],
-        shops=shops,
-    )
 
 
 def build_summary(module_id: str, df: pl.DataFrame, image_map: dict[str, str], top_n: int = 10) -> ModuleSummary:
@@ -250,12 +180,15 @@ def build_summary(module_id: str, df: pl.DataFrame, image_map: dict[str, str], t
     # TOP SPU：先按「店铺+SPU」聚合出区间累计值，再单独取每个 SPU 的名称
     spu_df = aggregate(df, ["shop", "spu"])
     # 名称用 drop_nulls().last()：同一 SPU 多行里取最后一个非空名称，避免被空值覆盖
-    meta = df.group_by(["shop", "spu"]).agg(
+    # maintain_order=True：保证行序确定（与 aggregate 的确定性策略一致，见其注释）
+    meta = df.group_by(["shop", "spu"], maintain_order=True).agg(
         pl.col("spu_name").drop_nulls().last(),
     )
     spu_df = spu_df.join(meta, on=["shop", "spu"], how="left")
     top: list[TopSpu] = []
-    for shop in spu_df["shop"].unique().to_list():
+    # unique(maintain_order=True)：店铺遍历顺序 = 聚合表首现顺序（确定性），
+    # 默认 unique 的顺序同样随线程调度漂移，会让 TOP 榜跨店铺的排列在刷新间跳动
+    for shop in spu_df["shop"].unique(maintain_order=True).to_list():
         # 按成交金额倒序取前 top_n：运营最关心「哪个品卖得最好」
         part = spu_df.filter(pl.col("shop") == shop).sort("amount", descending=True).head(top_n)
         for r in part.iter_rows(named=True):

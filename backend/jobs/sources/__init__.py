@@ -4,9 +4,11 @@
 新增数据源：
   1. 在本包下新建模块，实现 sources/base.py 里的 Source 协议（name + fetch）；
   2. fetch() 返回列集合等于 LONG_COLUMNS 的 polars.DataFrame（缺失列补 None）；
-  3. 在 pipeline.default_registry() 里把新源挂到对应模块。
+  3. 按用途接线：入库侧在 db.py 的摄入流程里调用，查询侧在 API（backend/app）里调用
+     （ADR-0012 后 pipeline 不再消费数据源，只管图片同步与模块注册表）。
 
 现有数据源：
-  excel_source  POP 单品明细（读固定「数据源表目录」下的 xlsx 明细 + csv 推广）
-  db_source     PostgreSQL 占位骨架（配置 PG_DSN 与 query 后可用）
+  excel_source   POP 单品明细（读固定「数据源表目录」下的 xlsx 明细 + csv 推广，入库用）
+  sqlite_source  从 SQLite daily_detail 还原长表（API 直查用）
+  db_source      PostgreSQL 占位骨架（配置 PG_DSN 与 query 后可用）
 """
