@@ -770,7 +770,7 @@ onMounted(async () => {
   border-radius: var(--radius-md);
   background: var(--color-brand);
   color: #fff;
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--font-scale));
   font-weight: 600;
   white-space: nowrap;
   cursor: pointer;
@@ -790,7 +790,7 @@ onMounted(async () => {
 }
 /* 导出提示：与按钮同行的轻量反馈，4 秒后自动消失（逻辑见 exportMatrix） */
 .inv-export-msg {
-  font-size: 12px;
+  font-size: calc(12px * var(--font-scale));
   color: var(--color-text-3);
   max-width: 320px;
 }

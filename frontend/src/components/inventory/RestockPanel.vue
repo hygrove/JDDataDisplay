@@ -969,7 +969,7 @@ function exportExcel(): void {
 }
 .rp-modal-head h3 {
   margin: 0;
-  font-size: 15px;
+  font-size: calc(15px * var(--font-scale));
   color: var(--color-text-strong);
 }
 .rp-modal-close {
@@ -992,7 +992,7 @@ function exportExcel(): void {
 .rp-modal-body {
   padding: 14px 18px 18px;
   overflow: auto;
-  font-size: 13px;
+  font-size: calc(13px * var(--font-scale));
   line-height: 1.75;
   color: var(--color-text-2);
 }
@@ -1001,7 +1001,7 @@ function exportExcel(): void {
 }
 .rp-algo-sec h4 {
   margin: 0 0 5px;
-  font-size: 13.5px;
+  font-size: calc(13.5px * var(--font-scale));
   color: var(--color-text-strong);
 }
 .rp-algo-sec p {
@@ -1009,7 +1009,7 @@ function exportExcel(): void {
 }
 .rp-algo-formula {
   font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--font-scale));
   background: var(--color-surface-2);
   border: 1px solid var(--color-border-2);
   border-radius: 8px;
@@ -1019,12 +1019,12 @@ function exportExcel(): void {
 }
 .rp-algo-why {
   color: var(--color-text-3);
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--font-scale));
 }
 .rp-algo-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--font-scale));
   margin-top: 4px;
 }
 .rp-algo-table th,
@@ -1045,7 +1045,7 @@ function exportExcel(): void {
   border: 1px solid var(--color-border-2);
   border-radius: 8px;
   color: var(--color-text-3);
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--font-scale));
 }
 .grand td {
   position: sticky;
