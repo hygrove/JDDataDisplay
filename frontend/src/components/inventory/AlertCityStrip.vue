@@ -112,14 +112,14 @@ function onThreshold(c: AlertCityStat, e: Event): void {
   transition: background 0.2s;
 }
 .name {
-  font-size: 13.5px;
+  font-size: calc(13.5px * var(--font-scale));
   font-weight: 700;
   color: var(--color-text-strong);
 }
 .th-row {
   display: flex;
   align-items: center;
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--font-scale));
   color: var(--color-text-4);
 }
 .th-label {
@@ -128,7 +128,7 @@ function onThreshold(c: AlertCityStat, e: Event): void {
   gap: 5px;
   /* 13px：原继承 .th-row 的 11.5px 偏小；抬到与输入框数值同档即可，
      不必抢表头（14px）的层级。 */
-  font-size: 13px;
+  font-size: calc(13px * var(--font-scale));
   font-weight: 700;
   color: var(--color-text-2);
   white-space: nowrap;
@@ -144,7 +144,7 @@ function onThreshold(c: AlertCityStat, e: Event): void {
      才有明确轮廓。（:focus 态特异度更高，仍是品牌蓝） */
   border: 1px solid var(--color-border-3);
   border-radius: 6px;
-  font-size: 14px;
+  font-size: calc(14px * var(--font-scale));
   text-align: center;
   color: var(--color-text-2);
   font-variant-numeric: tabular-nums;

@@ -637,14 +637,14 @@ onMounted(async () => {
   margin-bottom: 16px;
 }
 .inv-title {
-  font-size: 20px;
+  font-size: calc(20px * var(--font-scale));
   font-weight: 700;
   color: var(--color-text-strong);
   letter-spacing: 0.5px;
 }
 .inv-sub {
   margin-top: 4px;
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--font-scale));
   color: var(--color-text-5);
 }
 /* 视图切换（库存矩阵 / 补货工作台）+ 图例（2026-10 新增） */
@@ -668,7 +668,7 @@ onMounted(async () => {
   background: transparent;
   padding: 7px 16px;
   border-radius: 8px;
-  font-size: 13px;
+  font-size: calc(13px * var(--font-scale));
   color: var(--color-text-3);
   white-space: nowrap;
   transition: background 0.15s, color 0.15s;
@@ -686,7 +686,7 @@ onMounted(async () => {
   align-items: center;
   gap: 5px;
   flex-wrap: wrap;
-  font-size: 12px;
+  font-size: calc(12px * var(--font-scale));
   color: var(--color-text-4);
 }
 .viewtabs-legend .sw {
@@ -730,7 +730,7 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  font-size: 12px;
+  font-size: calc(12px * var(--font-scale));
   color: var(--color-text-4);
 }
 .inv-field select,
@@ -741,7 +741,7 @@ onMounted(async () => {
   border-radius: var(--radius-md);
   background: var(--color-surface);
   color: var(--color-text-2);
-  font-size: 13px;
+  font-size: calc(13px * var(--font-scale));
   outline: none;
   transition: border-color 0.15s, box-shadow 0.15s;
 }
@@ -801,7 +801,7 @@ onMounted(async () => {
   /* 页码按钮变多后窄屏要能换行，避免把右侧的跳转选择器挤出容器 */
   flex-wrap: wrap;
   margin-bottom: 10px;
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--font-scale));
   color: var(--color-text-4);
 }
 .inv-count b {
@@ -830,7 +830,7 @@ onMounted(async () => {
   border-radius: var(--radius-md);
   background: var(--color-surface);
   color: var(--color-text-2);
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--font-scale));
   font-variant-numeric: tabular-nums;
   cursor: pointer;
   transition: border-color 0.15s, color 0.15s, background 0.15s;
@@ -878,7 +878,7 @@ onMounted(async () => {
   border-radius: var(--radius-md);
   background: var(--color-surface);
   color: var(--color-text-2);
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--font-scale));
   outline: none;
   cursor: pointer;
   transition: border-color 0.15s, box-shadow 0.15s;
@@ -896,12 +896,12 @@ onMounted(async () => {
   border: 1px solid #fecaca;
   border-radius: var(--radius-md);
   padding: 10px 12px;
-  font-size: 13px;
+  font-size: calc(13px * var(--font-scale));
   margin-bottom: 12px;
 }
 .inv-loading {
   margin-top: 12px;
-  font-size: 13px;
+  font-size: calc(13px * var(--font-scale));
   color: var(--color-text-5);
 }
 </style>

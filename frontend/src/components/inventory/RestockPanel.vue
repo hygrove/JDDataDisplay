@@ -635,7 +635,7 @@ function exportExcel(): void {
   align-items: center;
   gap: 14px;
   flex-wrap: wrap;
-  font-size: 13px;
+  font-size: calc(13px * var(--font-scale));
   color: var(--color-text-3);
 }
 .rp-param {
@@ -656,7 +656,7 @@ function exportExcel(): void {
   border: 2px solid var(--color-border-3);
   border-radius: var(--radius-md, 8px);
   /* 输入框里的数据字号与容器字号同步放大（16px），避免框大字小 */
-  font-size: 16px;
+  font-size: calc(16px * var(--font-scale));
   color: var(--color-text);
   background: var(--color-surface);
   font-variant-numeric: tabular-nums;
@@ -673,7 +673,7 @@ function exportExcel(): void {
   box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
 }
 .rp-formula {
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--font-scale));
   color: var(--color-text-3);
   background: var(--color-surface-2);
   border: 1px dashed var(--color-border-3);
@@ -687,7 +687,7 @@ function exportExcel(): void {
   gap: 10px;
 }
 .rp-export-msg {
-  font-size: 12px;
+  font-size: calc(12px * var(--font-scale));
   color: var(--color-text-3);
 }
 .rp-btn {
@@ -700,7 +700,7 @@ function exportExcel(): void {
   border: 1px solid var(--color-border-2);
   background: var(--color-surface);
   color: var(--color-text-2);
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--font-scale));
   cursor: pointer;
   transition: border-color 0.15s, color 0.15s, background 0.15s;
 }
@@ -732,14 +732,14 @@ function exportExcel(): void {
   border: 1px solid #fecaca;
   border-radius: var(--radius-md, 8px);
   padding: 10px 12px;
-  font-size: 13px;
+  font-size: calc(13px * var(--font-scale));
   margin-bottom: 12px;
 }
 .rp-loading,
 .rp-empty {
   padding: 26px 0;
   text-align: center;
-  font-size: 13px;
+  font-size: calc(13px * var(--font-scale));
   color: var(--color-text-5);
   background: var(--color-surface);
   border: 1px dashed var(--color-border-2);
@@ -757,7 +757,7 @@ function exportExcel(): void {
 .rp-table {
   border-collapse: collapse;
   width: 100%;
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--font-scale));
 }
 /* 表头字号 12px → 14px：与库存矩阵表表头（InventoryMatrixTable 的 .th，14px）
    对齐，两个视图的列名层级一致（2026-10 补货工作台模式视觉统一）。 */
@@ -767,7 +767,7 @@ function exportExcel(): void {
   z-index: 2;
   background: var(--color-brand-tint, #eff6ff);
   color: var(--color-brand-dark, #1d4ed8);
-  font-size: 14px;
+  font-size: calc(14px * var(--font-scale));
   font-weight: 700;
   padding: 9px 10px;
   border-bottom: 2px solid var(--color-brand-border-2, #dbeafe);
@@ -800,7 +800,7 @@ function exportExcel(): void {
 }
 .sku {
   display: block;
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--font-scale));
   color: var(--color-text-3);
 }
 /* 视图切换：城市视图 / SKU 视图（同一份计算的两种装配） */
@@ -815,7 +815,7 @@ function exportExcel(): void {
   border: 0;
   background: transparent;
   padding: 6px 12px;
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--font-scale));
   color: var(--color-text-2);
   cursor: pointer;
 }
@@ -847,7 +847,7 @@ function exportExcel(): void {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale));
   color: var(--color-text-3);
 }
 .product {
@@ -858,7 +858,7 @@ function exportExcel(): void {
   flex-wrap: wrap;
   gap: 4px 8px;
   margin-top: 2px;
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale));
   color: var(--color-text-3);
 }
 .ident .shelf {
@@ -866,19 +866,19 @@ function exportExcel(): void {
 }
 .erp {
   font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--font-scale));
   color: var(--color-text-2);
   white-space: nowrap;
 }
 .qty {
   font-weight: 700;
   color: var(--color-brand-dark, #1d4ed8);
-  font-size: 13.5px;
+  font-size: calc(13.5px * var(--font-scale));
 }
 .group-row td {
   background: var(--color-surface-2);
   color: var(--color-text-3);
-  font-size: 12px;
+  font-size: calc(12px * var(--font-scale));
   font-weight: 600;
   letter-spacing: 0.5px;
 }
@@ -894,7 +894,7 @@ function exportExcel(): void {
   display: inline-block;
   padding: 1px 9px;
   border-radius: 999px;
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale));
   font-weight: 600;
 }
 .st-alert {
@@ -1057,11 +1057,11 @@ function exportExcel(): void {
 }
 .grand .qty {
   color: #fff;
-  font-size: 14px;
+  font-size: calc(14px * var(--font-scale));
 }
 .grand-sub {
   font-weight: 400;
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale));
   opacity: 0.85;
 }
 </style>

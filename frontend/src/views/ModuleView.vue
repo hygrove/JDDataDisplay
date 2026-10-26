@@ -694,7 +694,7 @@ async function exportXlsx() {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 14px;
+  font-size: calc(14px * var(--font-scale));
   color: var(--color-text-3);
 }
 .search {
@@ -702,7 +702,7 @@ async function exportXlsx() {
   border-radius: var(--radius-md);
   padding: 8px 12px;
   width: 240px;
-  font-size: 14px;
+  font-size: calc(14px * var(--font-scale));
   transition: border-color 0.15s, box-shadow 0.15s;
 }
 .search:focus {
@@ -717,7 +717,7 @@ async function exportXlsx() {
   flex-wrap: wrap;
 }
 .status {
-  font-size: 13px;
+  font-size: calc(13px * var(--font-scale));
   color: var(--color-text-5);
 }
 .status.ok {
@@ -731,7 +731,7 @@ async function exportXlsx() {
   /* 扩大点击区域：由 8px 16px 加到 12px 22px，并保证 44px 最小高度（移动端易点） */
   padding: 12px 22px;
   min-height: 44px;
-  font-size: 15px;
+  font-size: calc(15px * var(--font-scale));
   /* 图标 + 文字横向居中，间距交给 gap（不用 margin，换行时不会错位） */
   display: inline-flex;
   align-items: center;
@@ -848,7 +848,7 @@ async function exportXlsx() {
   color: var(--color-brand-darker);
   padding: 10px 14px;
   border-radius: var(--radius-md);
-  font-size: 13px;
+  font-size: calc(13px * var(--font-scale));
 }
 /* ---------- SPU 单元网格（单日模式） ---------- */
 .spu-grid {
@@ -880,7 +880,7 @@ async function exportXlsx() {
   border-bottom: 1px dashed var(--color-divider);
 }
 .spu-name {
-  font-size: 16px;
+  font-size: calc(16px * var(--font-scale));
   font-weight: 600;
   color: var(--color-text-strong);
   margin-bottom: 6px;
@@ -893,7 +893,7 @@ async function exportXlsx() {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
-  font-size: 13px;
+  font-size: calc(13px * var(--font-scale));
   color: var(--color-text-4);
 }
 .spu-meta .m-spu {
@@ -937,7 +937,7 @@ async function exportXlsx() {
   align-items: center;
   gap: 6px;
   color: var(--color-brand);
-  font-size: 14px;
+  font-size: calc(14px * var(--font-scale));
   font-weight: 500;
   cursor: pointer;
   white-space: nowrap;
@@ -983,7 +983,7 @@ async function exportXlsx() {
 }
 .no-img {
   color: var(--color-text-6);
-  font-size: 14px;
+  font-size: calc(14px * var(--font-scale));
 }
 /* 网格卡图片 180×180 */
 .spu-card .spu-img {
@@ -1007,7 +1007,7 @@ async function exportXlsx() {
   gap: 12px;
   padding: 5px 0;
   border-bottom: 1px solid var(--color-divider);
-  font-size: 14px;
+  font-size: calc(14px * var(--font-scale));
 }
 .metric-row:last-child {
   border-bottom: none;
@@ -1055,7 +1055,7 @@ async function exportXlsx() {
   color: var(--color-text-5);
 }
 .metrics-empty {
-  font-size: 13px;
+  font-size: calc(13px * var(--font-scale));
   color: var(--color-text-5);
   padding: 8px 0;
 }
@@ -1119,7 +1119,7 @@ async function exportXlsx() {
   margin-top: 6px;
   padding-top: 8px;
   border-top: 1px dashed var(--color-divider);
-  font-size: 13px;
+  font-size: calc(13px * var(--font-scale));
 }
 .spu-row-head .spu-avg .avg-row {
   display: flex;
@@ -1140,7 +1140,7 @@ async function exportXlsx() {
 .spu-row-head .spu-avg .avg-value {
   color: var(--color-text-strong);
   font-weight: 400;
-  font-size: 13px;
+  font-size: calc(13px * var(--font-scale));
   font-variant-numeric: tabular-nums;
   text-align: right;
 }
@@ -1157,12 +1157,12 @@ async function exportXlsx() {
   gap: 5px;
   color: var(--color-text-strong);
   font-weight: 400;
-  font-size: 13px;
+  font-size: calc(13px * var(--font-scale));
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 .spu-row-head .spu-avg .avg-tag {
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale));
   color: var(--color-text-5);
 }
 .spu-matrix-wrap {
@@ -1176,7 +1176,7 @@ async function exportXlsx() {
 }
 .spu-matrix {
   border-collapse: collapse;
-  font-size: 14px;
+  font-size: calc(14px * var(--font-scale));
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -1202,7 +1202,7 @@ async function exportXlsx() {
   background: var(--color-bg);
   color: var(--color-text-2);
   font-weight: 700;
-  font-size: 13px;
+  font-size: calc(13px * var(--font-scale));
   letter-spacing: 0.2px;
   border-bottom: 2px solid var(--color-divider);
   z-index: 1;
@@ -1249,7 +1249,7 @@ async function exportXlsx() {
 .empty-state {
   padding: 40px;
   text-align: center;
-  font-size: 15px;
+  font-size: calc(15px * var(--font-scale));
   color: var(--color-text-5);
 }
 /* 空态插画：纯装饰性元素，用低透明度弱化存在感，避免与提示文案抢视觉焦点。
@@ -1271,7 +1271,7 @@ async function exportXlsx() {
 }
 .loading-more {
   text-align: center;
-  font-size: 14px;
+  font-size: calc(14px * var(--font-scale));
   color: var(--color-text-5);
   padding: 12px;
 }

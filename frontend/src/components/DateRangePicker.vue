@@ -784,7 +784,7 @@ function applyLastWeek() {
   border-radius: var(--radius-pill);
   background: transparent;
   color: var(--color-text-3);
-  font-size: 12px;
+  font-size: calc(12px * var(--font-scale));
   padding: 5px 12px;
   cursor: pointer;
   transition: color 0.15s, background 0.15s;
@@ -800,7 +800,7 @@ function applyLastWeek() {
   gap: 3px;
 }
 .drp-quick .qm-month .qm-caret {
-  font-size: 9px;
+  font-size: calc(9px * var(--font-scale));
   color: var(--color-text-5);
 }
 .drp-quick .qm-month.active {
@@ -844,7 +844,7 @@ function applyLastWeek() {
   background: transparent;
   border-radius: var(--radius-md);
   color: var(--color-text-2);
-  font-size: 12px;
+  font-size: calc(12px * var(--font-scale));
   cursor: pointer;
   transition: background 0.12s, color 0.12s;
 }
@@ -869,7 +869,7 @@ function applyLastWeek() {
   border: 1px solid var(--color-border-2);
   border-radius: var(--radius-md);
   padding: 7px 10px;
-  font-size: 13px;
+  font-size: calc(13px * var(--font-scale));
   color: var(--color-text-2);
   background: var(--color-surface);
   cursor: pointer;
@@ -888,11 +888,11 @@ function applyLastWeek() {
   color: var(--color-text-5);
 }
 .drp-icon {
-  font-size: 13px;
+  font-size: calc(13px * var(--font-scale));
 }
 .caret {
   color: var(--color-text-5);
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale));
 }
 .drp-backdrop {
   position: fixed;
@@ -926,7 +926,7 @@ function applyLastWeek() {
   background: var(--color-surface);
   color: var(--color-text-3);
   cursor: pointer;
-  font-size: 15px;
+  font-size: calc(15px * var(--font-scale));
   line-height: 1;
 }
 .drp-head .nav:hover {
@@ -934,7 +934,7 @@ function applyLastWeek() {
   color: var(--color-brand);
 }
 .drp-head .mlabel {
-  font-size: 13px;
+  font-size: calc(13px * var(--font-scale));
   font-weight: 600;
   color: var(--color-text-strong);
   flex: 1;
@@ -955,7 +955,7 @@ function applyLastWeek() {
 }
 .drp-week span {
   text-align: center;
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale));
   color: var(--color-text-5);
   padding: 2px 0;
 }
@@ -964,7 +964,7 @@ function applyLastWeek() {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 12px;
+  font-size: calc(12px * var(--font-scale));
   color: var(--color-text-2);
   border-radius: var(--radius-md);
   cursor: pointer;
@@ -1013,7 +1013,7 @@ function applyLastWeek() {
   background: none;
   border: none;
   color: var(--color-brand);
-  font-size: 12px;
+  font-size: calc(12px * var(--font-scale));
   cursor: pointer;
   padding: 4px 6px;
 }
@@ -1021,7 +1021,7 @@ function applyLastWeek() {
   text-decoration: underline;
 }
 .drp-foot .tip {
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale));
   color: var(--color-text-5);
 }
 @media (max-width: 640px) {

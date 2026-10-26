@@ -243,7 +243,7 @@ function cellValue(row: Row, col: ColumnDef): string {
   display: flex;
   align-items: center;
   padding: 12px 10px;
-  font-size: 13px;
+  font-size: calc(13px * var(--font-scale));
   font-weight: 600;
   color: var(--color-text-3);
   user-select: none;
@@ -269,7 +269,7 @@ function cellValue(row: Row, col: ColumnDef): string {
   color: var(--color-brand);
 }
 .arrow {
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale));
   margin-left: 3px;
 }
 .gt-virt {
@@ -292,7 +292,7 @@ function cellValue(row: Row, col: ColumnDef): string {
   flex: none;
   box-sizing: border-box;
   padding: 8px 10px;
-  font-size: 14px;
+  font-size: calc(14px * var(--font-scale));
   color: var(--color-text);
   overflow: hidden;
 }
@@ -310,7 +310,7 @@ function cellValue(row: Row, col: ColumnDef): string {
   padding: 14px;
   text-align: center;
   color: var(--color-text-5);
-  font-size: 13px;
+  font-size: calc(13px * var(--font-scale));
 }
 /* ---------- 右侧固定列（表头与表体共用同一套实现） ---------- */
 .gt-th.sticky {
