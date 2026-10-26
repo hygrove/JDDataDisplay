@@ -47,6 +47,7 @@
 ## 2. 单一事实来源（SSOT）
 
 - **指标（明细/推广）**：后端 `sources/base.py:LONG_COLUMNS` 收 16 个可累加原始列；比率（`conversion_rate`/`avg_price`/`roi` 等）不入长表，由 `transforms.compute_metrics` **先求和再相除**，保证行/店/日/区间四层一致。⚠️ 分母依赖 `date` 的指标在 `aggregate(df,["shop"])` 时须在端点内单独分组算。
+- **聚合行序必须确定**：`transforms.aggregate` / `build_summary` 的 `group_by`/`unique` 全部带 `maintain_order=True`——polars 默认行序随线程调度漂移（同进程两次调用都不同），ADR-0012 后 summary 每次请求重算，去掉它图表会在两次刷新间重排。⛔ 别当「冗余参数」删掉。
 - **指标（前端）**：`frontend/src/metrics.ts:METRICS` 唯一事实来源；新增指标**三处同步**：①`models.py` ②`metrics.ts` spec ③`types.ts`；勾选态存 `localStorage jd.metric-config.v1`。
 - **库存指标**：唯一来源 `backend/jobs/inventory_metrics.py`（identity/per_city/national + 可见/可聚合/锁定）；前端矩阵列与勾选面板由 `/api/inventory/meta` **动态构建，不写死**。
 - **列投影**：按**列名白名单**投影（不按列位置；生产原表 2000+ 列乱序，"前 22 列是固定列"纯属巧合）。

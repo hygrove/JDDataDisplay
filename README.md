@@ -16,7 +16,8 @@
 - 数据导出：一键把当前筛选条件下的**全量**数据导出为 xlsx（每 SPU 一块、图片嵌入纵向居中、比率类总计标橙、数值保留 2 位小数）
 - 库存管理（`/inventory`）：8 城现货/采购/出库/周转矩阵表（独立宽表 `inventory_daily`，182 列按列名白名单投影；指标配置驱动，勾选面板扩展列；率值型不合计）
   - 库存预警：城市级阈值三档判定（健康/在途/预警，阈值表可配）+ 补货量建议（销速 × 安全天数 + 覆盖窗口，扣减现货与在途）
-  - **可信销速三级估计**（ADR-0010）：有货天数 ≥7 天直算；0<有货天数<7 天**收缩估算**（标 `≈`）；有货天数 ≤0 → 销速 0（宁可不建议，不凭空估）
+  - **可信销速三级估计**（ADR-0010）：有货天数 ≥6 天直算；0<有货天数<6 天**收缩估算**（标 `≈`）；有货天数 ≤0 → 销速 0（宁可不建议，不凭空估）
+  - **缺口关注标记**（ADR-0011）：覆盖率（有货天数 ÷ 窗口天数）+ 估算缺货损失双锚判定，页面状态列旁亮紫色「关注」徽章（鼠标移入给出缺货天数与损失件数）；导出的 xlsx 同列保留徽章配色与**单元格批注**（Excel 的悬停提示），「估算缺货损失」列写完整说明句（「周期14 天仅 3 天有货（缺货 11 天），估算缺货损失 15.6 件」）
   - **补货导出搬到后端**（ADR-0008）：xlsx 由 openpyxl 生成，**内嵌商品图缩略图**（SheetJS 做不到）；一个工作簿含城市 sheet + SKU sheet，与页面共用同一套装配逻辑（所见即所得）
   - **ERP 编码独立成表** `erp_map`（ADR-0009）：与库存快照解耦，源表损坏时跳过写入而非覆盖好数据；未登记显示「--」而非 0
   - 结构分布卡：SKU 覆盖 / 上下柜 / 三级类目 / 销售员四维度（带店铺拆分）；库存 SKU 图片按 SKU 取图（与 POP 的 SPU 取图链路独立）
@@ -40,14 +41,14 @@ JDDataDisplay/
 │   ├── requirements.txt
 │   ├── app/
 │   │   ├── main.py            # FastAPI：静态托管 + SPA 回退（no-store）+ 图片挂载
-│   │   ├── api.py             # /api 路由 + 缓存 + 分页/过滤/排序 + xlsx 导出
+│   │   ├── api.py             # /api 路由（DB 直查，ADR-0012）+ 分页/过滤/排序 + xlsx 导出
 │   │   ├── analysis.py        # 单品分析：节假日口径、工作日/节假日对比、洞察文案
-│   │   └── data/              # 批处理产物（JSON / images / app.db，运行时生成，非源码）
+│   │   └── data/              # 运行时产物（app.db / images / status.json，非源码）
 │   └── jobs/                  # 批处理（ETL 层）
 │       ├── config.py          # 路径/重试/参数，全环境变量可覆盖
 │       ├── models.py          # Pydantic 模型（前后端字段事实来源）
 │       ├── transforms.py      # Polars 清洗/聚合（比率「先求和再相除」）
-│       ├── pipeline.py        # 模块管线 + 注册表（加模块改这里）
+│       ├── pipeline.py        # SPU 图片同步 + 模块注册表（加模块在这里登记）
 │       ├── run_batch.py       # 批处理入口（重试逻辑保留，默认关闭）
 │       ├── db.py              # SQLite 持久化层（长表 + 源文件哈希增量追踪）
 │       ├── make_thumbs.py     # SPU 图片多尺寸缩略图（AVIF + WebP）
@@ -84,7 +85,6 @@ JDDataDisplay/
 │   ├── tray_launcher.py     # 同进程托盘启动器（pystray 主线程 + uvicorn 子线程，单实例锁）
 │   ├── refresh_data.py      # 跨平台数据刷新入口（计划任务 / cron / Docker 通用）
 │   ├── setup_sample.py      # 把 sample_data/ 样例铺到 ResourceData/（异地克隆首次部署用）
-│   ├── gen_fake_data.py     # 生成 10 万行量级假数据压测
 │   ├── install_tasks.bat / uninstall_tasks.bat # Windows 计划任务（每日刷新 + 开机自启）
 │   ├── start_uvicorn.bat / stop_uvicorn.bat   # 前台启动 / 停止（调试用）
 │   └── refresh_daily.ps1    # 每日刷新脚本（薄启动器，转调 refresh_data.py）
@@ -187,60 +187,23 @@ cd backend
 ..\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-### 6. 压测（10 万行验证）
-
-```bash
-.venv\Scripts\python.exe scripts/gen_fake_data.py            # 默认 10 万行
-.venv\Scripts\python.exe scripts/gen_fake_data.py --rows 500000
-```
-
-左侧导航会出现「压测假数据」模块。验证点：表格滚动流畅（虚拟滚动只渲染可视行）、翻页接口毫秒级返回、图表只画聚合点。
-注意：每次正式批处理（run_batch / 手动刷新）会以注册表为准重写 manifest.json，压测模块会从导航消失，重新跑一遍 gen_fake_data.py 即可恢复。
-
 ## 数据格式
 
-### 明细 JSON（`backend/app/data/modules/pop_spu_detail.json`）
+### 明细长表（`backend/app/data/app.db` 的 `daily_detail` 表）
 
-层级结构：**店铺 → SPU → 日期 → 指标**。
+行结构：一行 = 一个 (日期, 店铺, SPU)，`UNIQUE(date, shop, spu)`。
 
-```json
-{
-  "module_id": "pop_spu_detail",
-  "date_range": ["2026-08-14", "2026-09-13"],
-  "shops": {
-    "官方旗舰店": {
-      "shop": "官方旗舰店",
-      "spus": {
-        "10028007135350": {
-          "spu": "10028007135350",
-          "spu_name": "钻芯 净水器家用直饮RO反渗透纯水机…",
-          "category": "净水器",
-          "image": "/images/10028007135350.png",
-          "dates": {
-            "2026-09-13": {
-              "visitors": 329, "buyers": 8, "items": 8, "amount": 4916.0,
-              "promotion_cost": null, "promotion_amount": null,
-              "conversion_rate": 0.0243, "roi": null, "promotion_ratio": null
-            }
-          }
-        }
-      }
-    }
-  }
-}
-```
-
-指标口径：
-
-- 常规指标直接取源表：访客数←商品访客数，成交人数←成交客户数，成交商品件数、成交金额同名；
-- 计算指标：**转化率 = 成交人数 / 访客数**，**ROI = 推广成交金额 / 推广费**，**推广占比 = 推广费 / 成交金额**；分母为 0 或源数据缺失时为 `null`，前端展示 `--`；
-- 汇总一律「先求和再算比率」，避免比率直接平均的统计错误。
+- 只存 16 个**可累加**原始列（访客 / 成交 / 金额 / 推广 / 退款…），比率指标**不入库**；
+- 比率（转化率 / 客单价 / ROI / 推广占比 / 搜索点击率）由 `transforms.compute_metrics`
+  在**查询时**按「先求和再相除」派生——分母为 0 或源数据缺失时为 `null`，前端展示 `--`；
+- 汇总一律「先求和再算比率」，避免比率直接平均的统计错误；
+- API 每次请求经 `SqliteSource` 直查该表（ADR-0012，与库存模块同款），摄入落库即生效，
+  无中间 JSON 文件、无内存缓存。
 
 ### 其他文件
 
-- `manifest.json`：模块清单（模块 id、店铺列表、日期范围、SPU 数、行数、更新时间）——前端启动时先拉它渲染导航；
-- `modules/{id}.summary.json`：图表用预聚合（店铺×日期趋势、店铺内 TOP10 SPU、店铺汇总），几百~几千点，绝不画原始明细；
-- `status.json`：批处理状态（上次运行时间、成败、尝试次数、耗时、消息）。
+- `status.json`：批处理状态（上次运行时间、成败、尝试次数、耗时、消息）；
+- `images/` + `thumbs/`：SPU 原图与多尺寸缩略图（批处理幂等同步生成）。
 
 ### API
 
@@ -316,10 +279,9 @@ server {
 | 约束 | 实现 |
 |---|---|
 | 不整模块推给前端 | `/rows` 强制分页（默认 300，上限 500 行/页），表格滚动到底自动拉下一页 |
-| 图表不画原始点 | 图表只用 summary 预聚合结果（几百~几千点） |
-| 内存不堆全模块 | Pinia store 离开页面 `reset()`；后端模块缓存按需加载、手动刷新后清空 |
+| 图表不画原始点 | 图表只用 summary 聚合结果（几百~几千点，查询时现算） |
+| 内存不堆全模块 | Pinia store 离开页面 `reset()`；后端无缓存、DB 直查（ADR-0012），数据量显著增长后再按需加 API 层缓存 |
 | 首屏不加载全部代码 | vue-router 懒加载模块视图（ModuleView 单独分包，ECharts 按需引入） |
-| 10 万行验证 | `scripts/gen_fake_data.py` 已验证：10 万行模块分页接口毫秒级返回 |
 
 > Web Worker（超大 JSON 解析放后台线程）当前数据量用不到，代码未引入；单模块接近 10 万行且前端需要做重过滤时再加，预留位置：`frontend/src/workers/`。
 
