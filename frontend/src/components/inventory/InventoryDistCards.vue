@@ -232,7 +232,7 @@ function onShopClick(shop: string): void {
   flex-wrap: wrap;
 }
 .dc-title {
-  font-size: 12px;
+  font-size: calc(12px * var(--font-scale));
   font-weight: 600;
   color: var(--color-text-2);
   display: inline-flex;
@@ -258,19 +258,19 @@ function onShopClick(shop: string): void {
 }
 /* 汇总数字：不加粗、缩小（2026-10 反馈：21px/700 太大太重） */
 .dc-num {
-  font-size: 16px;
+  font-size: calc(16px * var(--font-scale));
   font-weight: 500;
   color: var(--color-text);
   line-height: 1.2;
   font-variant-numeric: tabular-nums;
 }
 .dc-tag {
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale));
   color: var(--color-text-3);
   white-space: nowrap;
 }
 .dc-unit {
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--font-scale));
   color: var(--color-text-3);
   white-space: nowrap;
 }
@@ -279,7 +279,7 @@ function onShopClick(shop: string): void {
   display: grid;
   grid-template-columns: var(--cols);
   gap: 1px 8px;
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--font-scale));
   font-variant-numeric: tabular-nums;
   border-top: 1px dashed var(--color-border-2);
   padding-top: 7px;

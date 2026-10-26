@@ -1027,13 +1027,13 @@ const hasAnyData = computed(() => Object.values(aggMap.value).some((v) => v !== 
   outline-offset: -2px;
 }
 .mc-title {
-  font-size: 14px;
+  font-size: calc(14px * var(--font-scale));
   font-weight: 600;
   color: var(--color-text-strong);
 }
 /* 动作召唤标签：收起时明示可点，展开后自动消失（内容已展开，再提示就冗余）。 */
 .mc-cta {
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--font-scale));
   font-weight: 500;
   color: var(--color-brand);
   background: var(--color-brand-tint);
@@ -1043,7 +1043,7 @@ const hasAnyData = computed(() => Object.values(aggMap.value).some((v) => v !== 
   line-height: 1.4;
 }
 .mc-hint {
-  font-size: 12px;
+  font-size: calc(12px * var(--font-scale));
   color: var(--color-text-4);
 }
 .mc-hint-dim {
@@ -1088,7 +1088,7 @@ const hasAnyData = computed(() => Object.values(aggMap.value).some((v) => v !== 
 .mc-collapse-hint {
   flex: 0 0 auto;
   margin-right: 6px;
-  font-size: 12px;
+  font-size: calc(12px * var(--font-scale));
   line-height: 1;
   color: var(--color-text-4);
   user-select: none;
@@ -1147,11 +1147,11 @@ const hasAnyData = computed(() => Object.values(aggMap.value).some((v) => v !== 
   border-bottom: 1px solid var(--color-bg);
 }
 .mc-plabel {
-  font-size: 12px;
+  font-size: calc(12px * var(--font-scale));
   color: var(--color-text-4);
 }
 .mc-chip {
-  font-size: 12px;
+  font-size: calc(12px * var(--font-scale));
   color: var(--color-text-3);
   background: var(--color-surface);
   border: 1px solid var(--color-divider);
@@ -1174,7 +1174,7 @@ const hasAnyData = computed(() => Object.values(aggMap.value).some((v) => v !== 
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font-size: 12px;
+  font-size: calc(12px * var(--font-scale));
   color: var(--color-text-3);
   margin-left: auto;
   cursor: pointer;
@@ -1183,7 +1183,7 @@ const hasAnyData = computed(() => Object.values(aggMap.value).some((v) => v !== 
    这样它的黄色底也不会显得像另一个独立容器） */
 .mc-warn {
   margin: 10px 18px 0 var(--mc-inset);
-  font-size: 12px;
+  font-size: calc(12px * var(--font-scale));
   color: #b45309;
   background: #fffbeb;
   border: 1px solid #fde68a;
@@ -1199,7 +1199,7 @@ const hasAnyData = computed(() => Object.values(aggMap.value).some((v) => v !== 
 .mc-loading {
   padding: 24px 0;
   text-align: center;
-  font-size: 12px;
+  font-size: calc(12px * var(--font-scale));
   color: var(--color-text-4);
 }
 /* 表格脚注：解释 pt（百分点）与两列口径。
@@ -1207,7 +1207,7 @@ const hasAnyData = computed(() => Object.values(aggMap.value).some((v) => v !== 
    原样式太小太淡、贴在灰底上几乎读不清（用户截图反馈） */
 .mc-foot {
   margin: 8px 18px 0 var(--mc-inset);
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--font-scale));
   line-height: 1.8;
   color: var(--color-text-3);
 }
@@ -1237,7 +1237,7 @@ const hasAnyData = computed(() => Object.values(aggMap.value).some((v) => v !== 
    缩进只作用于文字 —— 故 padding 用「左缩进 + 右18px」的写法，
    右侧留白仅是为了最后一个月份列不贴框右边，底色仍铺满。 */
 .mc-hrow {
-  font-size: 12px;
+  font-size: calc(12px * var(--font-scale));
   font-weight: 600;
   color: var(--color-text);
   background: var(--color-surface-2);
@@ -1261,7 +1261,7 @@ const hasAnyData = computed(() => Object.values(aggMap.value).some((v) => v !== 
   width: 160px;
   padding-left: 0;
   text-align: left;
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--font-scale));
   color: var(--color-text-2);
   font-weight: 500;
   display: flex;
@@ -1269,7 +1269,7 @@ const hasAnyData = computed(() => Object.values(aggMap.value).some((v) => v !== 
   gap: 4px;
 }
 .mc-th {
-  font-size: 12px;
+  font-size: calc(12px * var(--font-scale));
   font-weight: 600;
   color: var(--color-text);
 }
@@ -1313,7 +1313,7 @@ const hasAnyData = computed(() => Object.values(aggMap.value).some((v) => v !== 
   align-items: center;
   justify-content: center;
   text-align: center;
-  font-size: 14px;
+  font-size: calc(14px * var(--font-scale));
   color: var(--color-text-2);
   font-variant-numeric: tabular-nums;
 }
@@ -1322,11 +1322,11 @@ const hasAnyData = computed(() => Object.values(aggMap.value).some((v) => v !== 
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  font-size: 12px;
+  font-size: calc(12px * var(--font-scale));
 }
 .mc-th-sub {
   display: block;
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale));
   color: var(--color-text-4);
   font-weight: 400;
   margin-top: 2px;
@@ -1356,7 +1356,7 @@ const hasAnyData = computed(() => Object.values(aggMap.value).some((v) => v !== 
   bottom: 26px;
   max-width: calc(100% - 12px);
   text-align: center;
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--font-scale));
   line-height: 1.3;
   font-variant-numeric: tabular-nums;
   z-index: 2;
@@ -1404,7 +1404,7 @@ const hasAnyData = computed(() => Object.values(aggMap.value).some((v) => v !== 
 }
 /* 分组标题行（「商品明细表」等）：同样底色铺满、文字缩进 */
 .mc-grouprow {
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale));
   color: var(--color-text-3);
   background: var(--color-bg);
   font-weight: 500;
@@ -1437,19 +1437,19 @@ const hasAnyData = computed(() => Object.values(aggMap.value).some((v) => v !== 
   line-height: 1.5;
 }
 .mc-exp-metric {
-  font-size: 16px;
+  font-size: calc(16px * var(--font-scale));
   font-weight: 600;
   /* 用 --color-up（涨的语义绿）而非 --color-success：后者 #10b981 偏青绿，
      与页面里表示「涨」的绿不是同一个色，同一屏出现两种绿会像两套语义。 */
   color: var(--color-up);
 }
 .mc-exp-meta {
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--font-scale));
   font-weight: 400;
   color: var(--color-text-3);
 }
 .mc-exp-empty {
-  font-size: 12px;
+  font-size: calc(12px * var(--font-scale));
   color: var(--color-text-5);
   margin: 0;
 }

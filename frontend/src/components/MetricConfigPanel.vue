@@ -212,7 +212,7 @@ onBeforeUnmount(() => {
   border: 1px solid var(--color-border-2);
   border-radius: var(--radius-md);
   padding: 7px 12px;
-  font-size: 13px;
+  font-size: calc(13px * var(--font-scale));
   color: var(--color-text-2);
   cursor: pointer;
   transition: border-color 0.15s, color 0.15s, box-shadow 0.15s;
@@ -224,10 +224,10 @@ onBeforeUnmount(() => {
   box-shadow: 0 0 0 3px rgba(225, 37, 27, 0.08);
 }
 .mc-ico {
-  font-size: 13px;
+  font-size: calc(13px * var(--font-scale));
 }
 .mc-count {
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale));
   color: var(--color-text-5);
   background: var(--color-bg);
   border-radius: var(--radius-xl);
@@ -256,13 +256,13 @@ onBeforeUnmount(() => {
   border-bottom: 1px solid var(--color-bg);
 }
 .mc-title {
-  font-size: 14px;
+  font-size: calc(14px * var(--font-scale));
   font-weight: 600;
   color: var(--color-text-strong);
 }
 .mc-sub {
   margin-top: 4px;
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--font-scale));
   color: var(--color-text-5);
   line-height: 1.6;
 }
@@ -271,7 +271,7 @@ onBeforeUnmount(() => {
   border: none;
   color: var(--color-text-5);
   cursor: pointer;
-  font-size: 13px;
+  font-size: calc(13px * var(--font-scale));
   padding: 2px 4px;
 }
 .mc-close:hover {
@@ -286,7 +286,7 @@ onBeforeUnmount(() => {
   background: var(--color-surface-3);
 }
 .mc-actions-label {
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--font-scale));
   color: var(--color-text-5);
   margin-right: 2px;
 }
@@ -295,7 +295,7 @@ onBeforeUnmount(() => {
   border: 1px solid var(--color-border-2);
   border-radius: 5px;
   padding: 4px 10px;
-  font-size: 12px;
+  font-size: calc(12px * var(--font-scale));
   color: var(--color-text-3);
   cursor: pointer;
   transition: border-color 0.15s, color 0.15s;
@@ -323,12 +323,12 @@ onBeforeUnmount(() => {
   margin-bottom: 8px;
 }
 .mc-group-title {
-  font-size: 13px;
+  font-size: calc(13px * var(--font-scale));
   font-weight: 600;
   color: var(--color-text-2);
 }
 .mc-group-hint {
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale));
   color: var(--color-text-6);
 }
 .mc-items {
@@ -342,7 +342,7 @@ onBeforeUnmount(() => {
   gap: 7px;
   padding: 5px 8px;
   border-radius: var(--radius-md);
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--font-scale));
   color: var(--color-text-3);
   cursor: pointer;
   user-select: none;
@@ -376,7 +376,7 @@ onBeforeUnmount(() => {
   padding: 10px 14px;
   border-top: 1px solid var(--color-bg);
   background: var(--color-surface-3);
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--font-scale));
   color: var(--color-text-5);
 }
 .mc-done {
@@ -385,7 +385,7 @@ onBeforeUnmount(() => {
   border: none;
   border-radius: var(--radius-md);
   padding: 6px 14px;
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--font-scale));
   cursor: pointer;
 }
 .mc-done:hover {

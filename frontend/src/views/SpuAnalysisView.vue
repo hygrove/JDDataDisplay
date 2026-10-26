@@ -837,7 +837,7 @@ function goBack() {
   border: 1px solid var(--color-border-2);
   border-radius: var(--radius-md);
   padding: 7px 14px;
-  font-size: 13px;
+  font-size: calc(13px * var(--font-scale));
   color: var(--color-text-2);
   cursor: pointer;
   transition: border-color 0.15s, color 0.15s;
@@ -850,7 +850,7 @@ function goBack() {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 13px;
+  font-size: calc(13px * var(--font-scale));
   color: var(--color-text-3);
 }
 .error {
@@ -858,11 +858,11 @@ function goBack() {
   color: var(--color-brand-darker);
   padding: 10px 14px;
   border-radius: var(--radius-md);
-  font-size: 13px;
+  font-size: calc(13px * var(--font-scale));
 }
 .loading {
   color: var(--color-text-4);
-  font-size: 14px;
+  font-size: calc(14px * var(--font-scale));
   padding: 40px;
   text-align: center;
 }
@@ -891,10 +891,10 @@ function goBack() {
   align-items: center;
   justify-content: center;
   color: var(--color-text-6);
-  font-size: 12px;
+  font-size: calc(12px * var(--font-scale));
 }
 .hero-name {
-  font-size: 17px;
+  font-size: calc(17px * var(--font-scale));
   font-weight: 600;
   color: var(--color-text-strong);
   margin-bottom: 8px;
@@ -905,7 +905,7 @@ function goBack() {
   display: flex;
   gap: 14px;
   flex-wrap: wrap;
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--font-scale));
   color: var(--color-text-3);
 }
 /* 商品名可能很长（几十字的标题），不限宽会把后面的内容挤出可视区；
@@ -951,7 +951,7 @@ function goBack() {
   opacity: 1;
 }
 .card-title {
-  font-size: 12px;
+  font-size: calc(12px * var(--font-scale));
   color: var(--color-text-3);
   margin-bottom: 6px;
   white-space: nowrap;
@@ -1008,25 +1008,25 @@ function goBack() {
   min-width: 0;
 }
 .ctitle2 {
-  font-size: 13.5px;
+  font-size: calc(13.5px * var(--font-scale));
   color: var(--color-text-2);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .ctag {
-  font-size: 10.5px;
+  font-size: calc(10.5px * var(--font-scale));
   color: var(--color-text-5);
   margin-top: 1px;
 }
 .csumlab {
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale));
   color: var(--color-text-5);
   letter-spacing: 0.5px;
   margin-bottom: 4px;
 }
 .cval {
-  font-size: 26px;
+  font-size: calc(26px * var(--font-scale));
   font-weight: 400;
   color: var(--color-text-strong);
   font-variant-numeric: tabular-nums;
@@ -1037,7 +1037,7 @@ function goBack() {
   color: var(--color-text-5);
 }
 .csub {
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale));
   color: var(--color-text-4);
   margin-top: 5px;
   font-variant-numeric: tabular-nums;
@@ -1051,12 +1051,12 @@ function goBack() {
   margin-top: 5px;
 }
 .cplab {
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--font-scale));
   color: var(--color-text-4);
   white-space: nowrap;
 }
 .cpnum {
-  font-size: 16px;
+  font-size: calc(16px * var(--font-scale));
   font-weight: 400;
   color: var(--color-text-strong);
   font-variant-numeric: tabular-nums;
@@ -1075,12 +1075,12 @@ function goBack() {
   border-top: 1px solid var(--color-border-4);
 }
 .cavglab {
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--font-scale));
   color: var(--color-text-4);
   white-space: nowrap;
 }
 .cavgval {
-  font-size: 20px;
+  font-size: calc(20px * var(--font-scale));
   font-weight: 400;
   color: var(--color-brand);
   font-variant-numeric: tabular-nums;
@@ -1090,7 +1090,7 @@ function goBack() {
   color: var(--color-text-5);
 }
 .cavgsub {
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale));
   color: var(--color-text-5);
   margin-top: 2px;
   font-variant-numeric: tabular-nums;
@@ -1099,7 +1099,7 @@ function goBack() {
   grid-column: 1 / -1;
   padding: 22px;
   text-align: center;
-  font-size: 13px;
+  font-size: calc(13px * var(--font-scale));
   color: var(--color-text-4);
   border: 1px dashed var(--color-divider);
   border-radius: var(--radius-xl);
@@ -1119,14 +1119,14 @@ function goBack() {
 }
 .chart-box h3 {
   margin: 0 0 6px;
-  font-size: 14px;
+  font-size: calc(14px * var(--font-scale));
   color: var(--color-text-2);
   display: flex;
   justify-content: space-between;
   align-items: baseline;
 }
 .hint {
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale));
   font-weight: 400;
   color: var(--color-text-4);
 }
@@ -1134,14 +1134,14 @@ function goBack() {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale));
   font-weight: 400;
   color: var(--color-danger);
 }
 .threshold-input {
   width: 52px;
   padding: 2px 4px;
-  font-size: 12px;
+  font-size: calc(12px * var(--font-scale));
   color: var(--color-text-2);
   border: 1px solid var(--color-brand-border);
   border-radius: var(--radius-sm);
@@ -1171,14 +1171,14 @@ function goBack() {
 }
 .compare-box h3 {
   margin: 0;
-  font-size: 14px;
+  font-size: calc(14px * var(--font-scale));
   color: var(--color-text-2);
 }
 .cmp-legend {
   display: flex;
   align-items: center;
   gap: 18px;
-  font-size: 12px;
+  font-size: calc(12px * var(--font-scale));
   color: var(--color-text-3);
   flex: none;
 }
@@ -1216,7 +1216,7 @@ function goBack() {
   max-width: 100%;
 }
 .cmp-label {
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--font-scale));
   /* 行高归一：与 .bar-val 同样处理，标签高度不再受字体度量影响 */
   line-height: 1.4;
   color: var(--color-text-3);
@@ -1253,7 +1253,7 @@ function goBack() {
   flex: none;
 }
 .bar-val {
-  font-size: 12px;
+  font-size: calc(12px * var(--font-scale));
   /* 显式行高而非 normal：normal 会随字体回退变化，导致上方间距漂移 */
   line-height: 16px;
   color: var(--color-text-2);
@@ -1288,7 +1288,7 @@ function goBack() {
   background: linear-gradient(180deg, var(--color-link-2), var(--color-link));
 }
 .bar-cap {
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale));
   line-height: 16px;
   color: var(--color-text-4);
 }
@@ -1326,7 +1326,7 @@ function goBack() {
   to { transform: rotate(360deg); }
 }
 .pl-text {
-  font-size: 14px;
+  font-size: calc(14px * var(--font-scale));
   color: var(--color-text-3);
   letter-spacing: 0.5px;
 }
@@ -1343,7 +1343,7 @@ function goBack() {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
+  font-size: calc(12px * var(--font-scale));
   color: var(--color-text-4);
 }
 .mini-spin {

@@ -8,7 +8,12 @@ import { createApp } from "vue";
 import { createPinia } from "pinia";
 import App from "./App.vue";
 import { router } from "./router";
+import { readStoredScale } from "./stores/uiPrefs";
 import "./style.css";
+
+// 挂载前把缩放系数写进 CSS 变量：首屏即按用户上次选的档位渲染，
+// 避免先按标准档（--font-scale:1）出字、挂载后再跳档导致的闪烁。
+document.documentElement.style.setProperty("--font-scale", String(readStoredScale()));
 
 /**
  * 创建并挂载整个应用。

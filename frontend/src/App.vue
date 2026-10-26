@@ -5,6 +5,7 @@ import { useRoute, useRouter } from "vue-router";
 import { useModuleStore } from "./stores/module";
 import { useUiStore } from "./stores/ui";
 import { fetchManifest } from "./api";
+import SettingsControl from "./components/SettingsControl.vue";
 
 const store = useModuleStore();
 const ui = useUiStore();
@@ -148,10 +149,11 @@ function onShopClick(shop: string) {
         </a>
       </div>
 
-      <div class="sider-foot">
-        <div v-if="store.currentModule" class="meta">
-          SPU {{ store.currentModule.spu_count }} · 行 {{ store.currentModule.row_count }}
-        </div>
+      <!-- 设置入口：侧栏底部独立一行（方案①）。
+           放在 logo 行内会挤压「JD 数据平台」文字，故独立成行。
+           margin-top:auto 把它推到底部，即使上方导航变长也始终贴底。 -->
+      <div class="sider-actions">
+        <SettingsControl />
       </div>
 
       <img class="sider-watermark" src="/navbar-background.svg" alt="" />
@@ -229,7 +231,7 @@ function onShopClick(shop: string) {
   to { transform: rotate(360deg); }
 }
 .nl-text {
-  font-size: 14px;
+  font-size: calc(14px * var(--font-scale));
   color: var(--color-text-3);
   letter-spacing: 0.5px;
 }
@@ -237,7 +239,7 @@ function onShopClick(shop: string) {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 17px;
+  font-size: calc(17px * var(--font-scale));
   font-weight: 700;
   color: var(--color-brand);
   padding: 4px 10px 16px;
@@ -255,7 +257,7 @@ function onShopClick(shop: string) {
   overflow: auto;
 }
 .nav-title {
-  font-size: 12px;
+  font-size: calc(12px * var(--font-scale));
   color: var(--color-text-5);
   padding: 0 10px 8px;
 }
@@ -263,7 +265,7 @@ function onShopClick(shop: string) {
   display: block;
   padding: 9px 10px;
   border-radius: var(--radius-md);
-  font-size: 14px;
+  font-size: calc(14px * var(--font-scale));
   color: var(--color-text-2);
   text-decoration: none;
   cursor: pointer;
@@ -278,14 +280,10 @@ function onShopClick(shop: string) {
   font-weight: 600;
   box-shadow: inset 3px 0 0 var(--color-brand);
 }
-.sider-foot {
-  border-top: 1px solid var(--color-bg);
+/* 设置入口容器：贴侧栏底部（logo 行内放不下，见 .sider-actions 注释） */
+.sider-actions {
+  margin-top: auto;
   padding-top: 10px;
-}
-.meta {
-  font-size: 12px;
-  color: var(--color-text-5);
-  padding: 0 10px;
 }
 .main {
   flex: 1;

@@ -12,6 +12,7 @@
 //   两套链路彼此独立，本表只用 SKU 这套。
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { THUMB_SIZE, invThumb } from "../../modules/inventory";
+import { useUiPrefsStore } from "../../stores/uiPrefs";
 import type {
   InventoryFilters,
   InventoryFilterOptions,
@@ -376,22 +377,24 @@ const NAME_LINE_LH = 1.5;    // CSS .name-text line-height
 const INFO_LINE_LH = 1.7;    // CSS .info-line line-height（上柜/类目/SPU/销售员）
 const INFO_META_LINES = 4;   // 除名称外的身份字段行数
 const IMG_CONTENT_H = 120;   // CSS .imgbox 高度（产品图列，行高下限）
-const BASE_FS = 12.5;        // CSS .mt font-size，em 行高换算基准
+const uiPrefs = useUiPrefsStore();
+/** CSS .mt font-size 的实际值（= 12.5px × 缩放系数），em 行高换算基准。 */
+const BASE_FS = computed<number>(() => 12.5 * uiPrefs.scale);
 const nameLineClamp = computed<number>(() => {
   const N = props.cities.length;
   let metricH = 0;
   for (const m of props.visibleMetrics) {
     if (m.kind === "per_city") {
-      metricH = Math.max(metricH, (m.aggregatable ? N + 1 : N) * CITYLINE_LH * BASE_FS);
+      metricH = Math.max(metricH, (m.aggregatable ? N + 1 : N) * CITYLINE_LH * BASE_FS.value);
     } else if (m.key === "nat_slow") {
-      metricH = Math.max(metricH, N * CITYLINE_LH * BASE_FS);
+      metricH = Math.max(metricH, N * CITYLINE_LH * BASE_FS.value);
     } else {
-      metricH = Math.max(metricH, INFO_LINE_LH * BASE_FS);
+      metricH = Math.max(metricH, INFO_LINE_LH * BASE_FS.value);
     }
   }
   const otherH = Math.max(IMG_CONTENT_H, metricH);
-  const avail = otherH - INFO_META_LINES * INFO_LINE_LH * BASE_FS;
-  const lines = Math.floor(avail / (NAME_LINE_LH * BASE_FS));
+  const avail = otherH - INFO_META_LINES * INFO_LINE_LH * BASE_FS.value;
+  const lines = Math.floor(avail / (NAME_LINE_LH * BASE_FS.value));
   return Math.max(3, Math.min(12, lines));
 });
 
@@ -1143,7 +1146,7 @@ async function copySku(sku: string): Promise<void> {
   border-spacing: 0;
   width: max-content;
   min-width: 100%;
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--font-scale));
 }
 /* ---- 表头 ---- */
 /* 全表头（含左侧 3 个冻结列）统一用品牌蓝：
@@ -1164,7 +1167,7 @@ async function copySku(sku: string): Promise<void> {
   z-index: 2;
   background: var(--color-surface-head, #dbeafe);
   color: var(--color-brand);
-  font-size: 14px;
+  font-size: calc(14px * var(--font-scale));
   font-weight: 700;
   letter-spacing: 0.2px;
   text-align: center;
@@ -1266,7 +1269,7 @@ async function copySku(sku: string): Promise<void> {
   border-radius: var(--radius-pill);
   background: var(--color-brand);
   color: #fff;
-  font-size: 9px;
+  font-size: calc(9px * var(--font-scale));
   line-height: 13px;
   text-align: center;
   font-variant-numeric: tabular-nums;
@@ -1278,7 +1281,7 @@ async function copySku(sku: string): Promise<void> {
   vertical-align: middle;
 }
 .th-pop-hint {
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale));
   color: var(--color-brand);
   cursor: help;
 }
@@ -1313,7 +1316,7 @@ async function copySku(sku: string): Promise<void> {
   justify-content: space-between;
   gap: 12px;
   line-height: 1.8;
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--font-scale));
   color: var(--color-text-2);
   font-variant-numeric: tabular-nums;
 }
@@ -1335,7 +1338,7 @@ async function copySku(sku: string): Promise<void> {
   padding-top: 5px;
   background: var(--color-surface);
   border-top: 1px solid var(--color-border-4);
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale));
   color: var(--color-text-5);
 }
 /* ---- 单元格 ---- */
@@ -1396,7 +1399,7 @@ async function copySku(sku: string): Promise<void> {
   align-items: center;
   justify-content: center;
   gap: 3px;
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale));
   color: var(--color-text-5);
   background: var(--color-surface-2);
   line-height: 1.2;
@@ -1447,7 +1450,7 @@ async function copySku(sku: string): Promise<void> {
   margin: 0 auto;
 }
 .pic-zoom-cap {
-  font-size: 12px;
+  font-size: calc(12px * var(--font-scale));
   line-height: 1.7;
   color: var(--color-text-3);
   text-align: center;
@@ -1630,7 +1633,7 @@ async function copySku(sku: string): Promise<void> {
   flex: 0 0 34px;
   width: 34px;
   text-align: center;
-  font-size: 10.5px;
+  font-size: calc(10.5px * var(--font-scale));
   font-weight: 600;
   line-height: 1.7;
 }
@@ -1698,7 +1701,7 @@ async function copySku(sku: string): Promise<void> {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   box-shadow: 0 8px 24px rgba(15, 23, 42, 0.18);
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--font-scale));
   line-height: 1.8;
   color: var(--color-text-2);
   font-variant-numeric: tabular-nums;
@@ -1724,7 +1727,7 @@ async function copySku(sku: string): Promise<void> {
   margin-top: 4px;
   padding-top: 4px;
   border-top: 1px solid var(--color-border-4);
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale));
   color: var(--color-text-5);
 }
 /* ---- 信息列筛选面板 ---- */
@@ -1738,7 +1741,7 @@ async function copySku(sku: string): Promise<void> {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   box-shadow: 0 8px 24px rgba(15, 23, 42, 0.16);
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--font-scale));
   color: var(--color-text-2);
 }
 .filter-head {
@@ -1751,7 +1754,7 @@ async function copySku(sku: string): Promise<void> {
   flex: none;
 }
 .filter-title {
-  font-size: 13px;
+  font-size: calc(13px * var(--font-scale));
   font-weight: 600;
   color: var(--color-text-strong);
 }
@@ -1798,7 +1801,7 @@ async function copySku(sku: string): Promise<void> {
   margin-bottom: 6px;
 }
 .filter-group-title {
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--font-scale));
   font-weight: 600;
   color: var(--color-text-strong);
 }
@@ -1806,7 +1809,7 @@ async function copySku(sku: string): Promise<void> {
   background: none;
   border: none;
   padding: 0;
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--font-scale));
   color: var(--color-text-5);
   cursor: pointer;
 }
@@ -1849,7 +1852,7 @@ async function copySku(sku: string): Promise<void> {
   white-space: nowrap;
 }
 .filter-empty {
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--font-scale));
   color: var(--color-text-5);
   padding: 2px 0;
 }
@@ -1868,7 +1871,7 @@ async function copySku(sku: string): Promise<void> {
   border: 1px solid var(--color-border-2);
   border-radius: var(--radius-sm);
   padding: 4px 10px;
-  font-size: 12px;
+  font-size: calc(12px * var(--font-scale));
   color: var(--color-text-3);
   cursor: pointer;
 }
@@ -1882,7 +1885,7 @@ async function copySku(sku: string): Promise<void> {
   border: none;
   border-radius: var(--radius-sm);
   padding: 5px 14px;
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--font-scale));
   cursor: pointer;
 }
 .filter-apply:hover {
@@ -1923,7 +1926,7 @@ async function copySku(sku: string): Promise<void> {
   display: inline-block;
   padding: 1px 8px;
   border-radius: var(--radius-pill);
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale));
   line-height: 1.6;
 }
 .tag.up {
