@@ -10,6 +10,16 @@
   - 「按城市」：城市分组头 → 数据行 → 每组小计 → 8 城总计（与城市视图同构）；
   - 「按 SKU」：明细长表，一行一个 SKU × 城市（与 SKU 视图同构，身份列逐行重复）。
 
+页面上的「关注」徽章（断货 / 缺口两档已合并为一个「关注」）与它的说明句在导出里
+也要看得见：
+  - 徽章 → 「关注」列用紫色字 + 浅紫底标出（页面 .st-gap 同色）；
+  - 说明句 → 「估算缺货损失」列写全句（「周期14 天仅 3 天有货（缺货 11 天），
+    估算缺货损失 15.6 件」），同时挂进「关注」单元格的**批注**（鼠标悬停即见，
+    Excel 没有 title 属性）；批注文案与页面 title 逐字同口径，见 _gap_detail_text。
+
+列序（两个 sheet 一致）：… 周期有货天数（带周期）→ 目标库存 → 建议补货量 →
+预计可售天数 → 状态 → 估算缺货损失 → 关注。
+
 ERP 编码缺失时导出写 0（下游模板要一个占位值）；页面上显示「--」——
 两处差异是有意的，见 docs/adr/0009-erp-mapping-separate-table.md。
 """
@@ -22,11 +32,13 @@ from pathlib import Path
 from typing import Any
 
 from openpyxl import Workbook
+from openpyxl.comments import Comment
 from openpyxl.drawing.image import Image as XLImage
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 from ..jobs import config
+from ..jobs.alert_rules import GAP_FLAG
 
 # 导出里图片的显示尺寸（像素）与商品图列宽（Excel 列宽单位）
 PIC_PX = 64
@@ -45,6 +57,13 @@ _GROUP_FONT = Font(bold=True, color="1F2937")
 
 # 状态徽章文案（与前端展示一致：alert→预警 / incoming→在途 / 其余→健康）
 _STATUS_TEXT = {"alert": "预警", "incoming": "在途", "healthy": "健康"}
+
+# 缺口关注徽章样式（与页面 .st-gap 同色：violet-700 字 #6d28d9 + 浅紫底 #f5f3ff）
+_GAP_FILL = PatternFill("solid", fgColor="F5F3FF")
+_GAP_FONT = Font(bold=True, color="6D28D9")
+
+# 单元格批注（Excel 里承接页面 title 悬浮说明）的作者名
+_COMMENT_AUTHOR = "补货清单"
 
 
 def _status_text(status: Any) -> str:
@@ -116,6 +135,80 @@ def _text_cell(value: Any) -> str:
     """文本单元格：缺失写页面同款占位符「—」（前端 orEmpty 口径）。"""
     text = str(value or "").strip()
     return text if text else EMPTY
+
+
+def _to_float(value: Any) -> float:
+    """数值兜底解析：非数 / 非有限值 → 0（与前端 ``Number.isFinite(x) ? Number(x) : 0`` 同口径）。"""
+    try:
+        n = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    return n if math.isfinite(n) else 0.0
+
+
+def _js_num(value: Any) -> str:
+    """按 JS ``String(number)`` 的口径把数值转成文本（悬浮说明里要用）。
+
+    JS 里 ``1.0`` 就是 ``1``（模板字符串得到 "1"），Python 的 ``f"{1.0}"`` 会得到
+    "1.0"——页面与 Excel 的说明文字因此会差一截。这里统一成 JS 口径：
+    整数值不带小数点，非整数值用最短往返表示（与 V8 一致）。
+    """
+    n = _to_float(value)
+    if n == int(n) and abs(n) < 1e16:
+        return str(int(n))
+    return repr(n)
+
+
+def _gap_detail_text(flag: Any, lost_sales: Any, avail: Any, window: Any) -> str:
+    """缺口关注说明句（页面悬浮说明与导出说明列共用同一句文案）。
+
+    形如「周期14 天仅 3 天有货（缺货 11 天），估算缺货损失 15.6 件」：
+    把"周期多长、其中几天有货、缺了几天、损失几件"一次说清，运营不用再回查
+    其它列去拼上下文（2026-10-26 用户诉求：估算缺货损失列要更详细）。
+
+    与前端 ``modules/inventory.ts:gapFlagTitle`` **逐字同口径**（两边各有断言锁住）。
+
+    Args:
+        flag: 关注档位（服务端判定；空 = 不关注）。
+        lost_sales: 估算缺货损失（件）。
+        avail: 窗口有货天数。
+        window: 窗口天数。
+
+    Returns:
+        str: 说明句；不关注的行返回空串（不留空白说明）。
+    """
+    if not str(flag or "").strip():
+        return ""
+    w = _to_float(window)
+    a = _to_float(avail)
+    loss = _to_float(lost_sales)
+    stockout = max(0.0, w - a)
+    return (
+        f"周期{_js_num(w)} 天仅 {_js_num(a)} 天有货（缺货 {_js_num(stockout)} 天），"
+        f"估算缺货损失 {_js_num(loss)} 件"
+    )
+
+
+def _mark_gap_cell(ws: Any, row_idx: int, col_idx: int, row: dict[str, Any], window: Any) -> None:
+    """给「关注」单元格写徽章文案 + 紫色样式 + 悬停说明批注。
+
+    @remarks
+    页面上的关注标记是紫色徽章（``st-gap``）；导出只写纯文本看不出是"标记"，
+    所以这里补紫色字 + 浅紫底，并把说明句搬进批注（Excel 的悬停提示）。
+    档位文案统一为「关注」（原「断货 / 缺口」两档合并，见 alert_rules.GAP_FLAG）；
+    不关注的行不写文案、不套样式、不写批注（与页面"不渲染徽章"一致）。
+    """
+    cell = ws.cell(row=row_idx, column=col_idx)
+    if not str(row.get("gap_flag") or "").strip():
+        cell.value = ""
+        return
+    cell.value = GAP_FLAG
+    cell.fill = _GAP_FILL
+    cell.font = _GAP_FONT
+    cell.alignment = Alignment(horizontal="center", vertical="center")
+    detail = _gap_detail_text(row.get("gap_flag"), row.get("lost_sales"), row.get("avail"), window)
+    if detail:
+        cell.comment = Comment(detail, _COMMENT_AUTHOR, height=90, width=340)
 
 
 def _pic_file(sku: Any) -> Path | None:
@@ -231,14 +324,19 @@ def _set_wrap(ws: Any, row_idx: int, col_idx: int) -> None:
 def _city_sheet(wb: Workbook, payload: dict[str, Any]) -> None:
     """「按城市」sheet：分组头 → 数据行 → 每组小计 → 8 城总计。"""
     ws = wb.create_sheet("按城市")
+    window = payload["params"]["window"]
     headers = [
         "商品图", "SKU编码", "商品名称", "店铺", "上下柜状态", "三级类目",
         "SPU编码", "销售员名称", "ERP编码", "现货", "在途", "日均销速",
-        "周期有货天数", "目标库存", "建议补货量", "状态", "预计可售天数",
+        # 表头里带上周期：这个列的数值只是"有货天数"，脱离周期看不出好坏
+        f"周期有货天数（{window}日窗）", "目标库存", "建议补货量", "预计可售天数",
+        "状态", "估算缺货损失", "关注",
     ]
-    widths = [PIC_COL_WIDTH, 16, 34, 10, 10, 14, 18, 12, 18, 8, 8, 10, 10, 10, 12, 8, 12]
+    widths = [PIC_COL_WIDTH, 16, 34, 10, 10, 14, 18, 12, 18, 8, 8, 10, 16, 10, 12, 12, 8, 48, 10]
     _write_header(ws, headers, widths)
     name_col = headers.index("商品名称") + 1
+    gap_col = headers.index("关注") + 1
+    detail_col = headers.index("估算缺货损失") + 1
 
     row_idx = 2
     for group in payload["city_groups"]:
@@ -271,14 +369,19 @@ def _city_sheet(wb: Workbook, payload: dict[str, Any]) -> None:
                 _display_number(r.get("avail")),
                 _display_number(r.get("target")),
                 _display_number(r.get("qty")),
-                _status_text(r.get("status")),
                 _display_days(r.get("sellable_days")),
+                _status_text(r.get("status")),
+                # 关注说明句：亮灯行写全句，不关注的行留空（不留"0 件"的噪音）
+                _gap_detail_text(r.get("gap_flag"), r.get("lost_sales"), r.get("avail"), window),
+                "",
             ]
             for col, value in enumerate(values, start=1):
                 ws.cell(row=row_idx, column=col, value=value)
             _set_wrap(ws, row_idx, name_col)
+            _set_wrap(ws, row_idx, detail_col)
             ws.row_dimensions[row_idx].height = _row_height_for_name(r.get("sku_name"))
             _add_picture(ws, row_idx, 1, r.get("sku"))
+            _mark_gap_cell(ws, row_idx, gap_col, r, window)
             row_idx += 1
         sub = ws.cell(
             row=row_idx,
@@ -308,14 +411,19 @@ def _sku_sheet(wb: Workbook, payload: dict[str, Any]) -> None:
     商品图放在**第一列**：看图识货是这张表的主要用途，图在最左一列时不用横向滚动。
     """
     ws = wb.create_sheet("按SKU")
+    window = payload["params"]["window"]
     headers = [
         "商品图", "商品名称", "SKU编码", "店铺", "上下柜状态", "三级类目",
         "ERP编码", "销售员名称", "SPU编码", "城市", "现货", "在途", "日均销速",
-        "周期有货天数", "目标库存", "建议补货量", "状态", "预计可售天数",
+        # 表头里带上周期：这个列的数值只是"有货天数"，脱离周期看不出好坏
+        f"周期有货天数（{window}日窗）", "目标库存", "建议补货量", "预计可售天数",
+        "状态", "估算缺货损失", "关注",
     ]
-    widths = [PIC_COL_WIDTH, 34, 16, 10, 10, 14, 18, 12, 18, 8, 8, 8, 10, 10, 10, 12, 8, 12]
+    widths = [PIC_COL_WIDTH, 34, 16, 10, 10, 14, 18, 12, 18, 8, 8, 8, 10, 16, 10, 12, 12, 8, 48, 10]
     _write_header(ws, headers, widths)
     name_col = headers.index("商品名称") + 1
+    gap_col = headers.index("关注") + 1
+    detail_col = headers.index("估算缺货损失") + 1
 
     row_idx = 2
     for r in payload["rows"]:
@@ -336,14 +444,19 @@ def _sku_sheet(wb: Workbook, payload: dict[str, Any]) -> None:
             _display_number(r.get("avail")),
             _display_number(r.get("target")),
             _display_number(r.get("qty")),
-            _status_text(r.get("status")),
             _display_days(r.get("sellable_days")),
+            _status_text(r.get("status")),
+            # 关注说明句：亮灯行写全句，不关注的行留空（不留"0 件"的噪音）
+            _gap_detail_text(r.get("gap_flag"), r.get("lost_sales"), r.get("avail"), window),
+            "",
         ]
         for col, value in enumerate(values, start=1):
             ws.cell(row=row_idx, column=col, value=value)
         _set_wrap(ws, row_idx, name_col)
+        _set_wrap(ws, row_idx, detail_col)
         ws.row_dimensions[row_idx].height = _row_height_for_name(r.get("sku_name"))
         _add_picture(ws, row_idx, 1, r.get("sku"))
+        _mark_gap_cell(ws, row_idx, gap_col, r, window)
         row_idx += 1
 
 

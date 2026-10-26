@@ -14,6 +14,14 @@ export const EMPTY = "—";
 export const NOT_REGISTERED = "--";
 
 /**
+ * 缺口关注徽章文案（2026-10-26 用户拍板：断货 / 缺口两档合并为一个「关注」）。
+ *
+ * 与后端 `backend/jobs/alert_rules.py:GAP_FLAG` 同名同义：服务端判定"要不要关注"，
+ * 文案只有这一处，两边不各写各的。
+ */
+export const GAP_FLAG_TEXT = "关注";
+
+/**
  * 由原图路径推导缩略图路径。
  *
  * @param pic - 原图访问路径（形如 `/inv-pics/jpzy/100080186911.jpg`）；空值返回空串。
@@ -111,4 +119,84 @@ export function sellableDaysText(value: number | null | undefined): string {
  */
 export function shelfText(value: string | null | undefined): string {
   return orEmpty(value);
+}
+
+/**
+ * 周期有货天数单元格的附加类：收缩估算行给琥珀色。
+ *
+ * @param kind - 销速估计方式（none/measured/shrunk）。
+ * @returns 类名映射。
+ */
+export function availCellClass(kind: string | null | undefined): { "avail-low": boolean } {
+  return { "avail-low": (kind ?? "") === "shrunk" };
+}
+
+/**
+ * 收缩估算行的悬浮说明：把"为什么是 ≈"讲清楚。
+ *
+ * @param kind - 销速估计方式；非 shrunk 返回 undefined（不渲染 title）。
+ * @param avail - 窗口有货天数。
+ * @param credMin - 可信最少有货天数（低于它走收缩估算）。
+ * @param refWindow - 参照窗天数。
+ * @returns 说明文本或 undefined。
+ */
+export function availTitle(
+  kind: string | null | undefined,
+  avail: number | null | undefined,
+  credMin: number | null | undefined,
+  refWindow: number | null | undefined,
+): string | undefined {
+  if ((kind ?? "") !== "shrunk") return undefined;
+  const cm = Number.isFinite(credMin) ? Number(credMin) : 0;
+  const rw = Number.isFinite(refWindow) ? Number(refWindow) : 0;
+  const a = Number.isFinite(avail) ? Number(avail) : 0;
+  return `窗口内仅 ${a} 天有货（不足可信门槛 ${cm} 天），直算销速会把积压爆发当常态；已按 ${rw} 日参照周期收缩估算（销速前的 ≈ 即收缩值）`;
+}
+
+/**
+ * 库存缺口关注徽章的显示判定：档位 → 文案与样式类。
+ *
+ * @remarks
+ * 档位由服务端判定（后端 alert_rules.stockout_gap：覆盖率 + 缺货损失双锚），
+ * 这里只做展示映射：空档位不渲染徽章；徽章文案**统一为「关注」**
+ * （2026-10-26 用户拍板：原「断货 / 缺口」两档合并为一个标签），
+ * 严重程度由悬浮说明里的"缺货天数 / 损失件数"量化，不再用不同文案区分。
+ *
+ * @param flag - 档位（服务端判定；空 = 不关注）。
+ * @returns 文案与类名；无档位时返回 null。
+ */
+export function gapFlagMeta(
+  flag: string | null | undefined,
+): { text: string; cls: string } | null {
+  const text = (flag ?? "").trim();
+  if (!text) return null;
+  return { text: GAP_FLAG_TEXT, cls: "st-gap" };
+}
+
+/**
+ * 缺口关注徽章的悬浮说明：把"缺了多少"讲清楚。
+ *
+ * @remarks
+ * 文案与导出 xlsx 的「估算缺货损失」列**逐字同口径**
+ * （后端 restock_export._gap_detail_text）：两边各有一条断言锁住，防止口径漂移。
+ *
+ * @param flag - 档位；无档位返回 undefined（不渲染 title）。
+ * @param lostSales - 估算缺货损失（件）。
+ * @param avail - 窗口有货天数。
+ * @param window - 窗口天数。
+ * @returns 说明文本或 undefined。
+ */
+export function gapFlagTitle(
+  flag: string | null | undefined,
+  lostSales: number | null | undefined,
+  avail: number | null | undefined,
+  window: number | null | undefined,
+): string | undefined {
+  const text = (flag ?? "").trim();
+  if (!text) return undefined;
+  const w = Number.isFinite(window) ? Number(window) : 0;
+  const a = Number.isFinite(avail) ? Number(avail) : 0;
+  const loss = Number.isFinite(lostSales) ? Number(lostSales) : 0;
+  const stockout = Math.max(0, w - a);
+  return `周期${w} 天仅 ${a} 天有货（缺货 ${stockout} 天），估算缺货损失 ${loss} 件`;
 }

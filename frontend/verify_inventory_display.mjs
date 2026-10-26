@@ -3,7 +3,11 @@
 // 运行：npm run verify:inventory
 import {
   THUMB_SIZE,
+  availCellClass,
+  availTitle,
   erpText,
+  gapFlagMeta,
+  gapFlagTitle,
   invThumb,
   invThumbChain,
   invThumbSrcSet,
@@ -64,6 +68,40 @@ eq(sellableDaysText(null), "—", "天数缺值(null)");
 // 上下柜状态
 eq(shelfText("上架"), "上架", "上下柜原样");
 eq(shelfText(null), "—", "上下柜缺值");
+
+// 周期有货天数单元格的附加类（收缩估算行琥珀色）
+eq(availCellClass("shrunk"), { "avail-low": true }, "收缩行标琥珀色");
+eq(availCellClass("measured"), { "avail-low": false }, "直算行不标色");
+eq(availCellClass(null), { "avail-low": false }, "缺销速方式不标色");
+
+// 收缩估算行的悬浮说明（阈值来自服务端参数，前端不写死）
+eq(
+  availTitle("shrunk", 1, 6, 30),
+  "窗口内仅 1 天有货（不足可信门槛 6 天），直算销速会把积压爆发当常态；已按 30 日参照周期收缩估算（销速前的 ≈ 即收缩值）",
+  "收缩行悬浮说明",
+);
+eq(availTitle("measured", 14, 6, 30), undefined, "直算行不渲染悬浮说明");
+eq(availTitle(null, null, null, null), undefined, "缺参数不渲染悬浮说明");
+
+// 库存缺口关注徽章（档位来自服务端判定；文案统一为「关注」）
+eq(gapFlagMeta("关注"), { text: "关注", cls: "st-gap" }, "关注徽章");
+eq(gapFlagMeta("断货"), { text: "关注", cls: "st-gap" }, "旧档位也统一显示「关注」");
+eq(gapFlagMeta("缺口"), { text: "关注", cls: "st-gap" }, "旧档位也统一显示「关注」");
+eq(gapFlagMeta(""), null, "无档位不渲染徽章");
+eq(gapFlagMeta(null), null, "null 档位不渲染徽章");
+eq(gapFlagMeta("  "), null, "空白档位不渲染徽章");
+eq(
+  gapFlagTitle("关注", 83.6, 1, 14),
+  "周期14 天仅 1 天有货（缺货 13 天），估算缺货损失 83.6 件",
+  "关注悬浮说明",
+);
+eq(
+  gapFlagTitle("关注", 15.6, 3, 14),
+  "周期14 天仅 3 天有货（缺货 11 天），估算缺货损失 15.6 件",
+  "关注悬浮说明（与导出说明列同口径）",
+);
+eq(gapFlagTitle("", 83.6, 1, 14), undefined, "无档位不渲染悬浮说明");
+eq(gapFlagTitle(null, null, null, null), undefined, "缺参数不渲染悬浮说明");
 
 console.log(`\n通过 ${pass} / 失败 ${fail}`);
 if (fail > 0) process.exit(1);

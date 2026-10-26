@@ -629,6 +629,14 @@ export interface RestockParams {
   safety: number;
   /** 销速窗口天数（7/14/30，默认 14） */
   window: number;
+  /** 可信最少有货天数：不足则销速按参照收缩（页面标 ≈） */
+  cred_min: number;
+  /** 突发封顶倍数：短窗销速最多放大参照销速的多少倍 */
+  burst_cap: number;
+  /** 参照窗天数（收缩估算的历史基准） */
+  ref_window: number;
+  /** 销速算法演示算例（后端用真实函数算出，对话框只渲染不算） */
+  algo_example: Record<string, number> | null;
 }
 
 /**
@@ -663,12 +671,16 @@ export interface RestockRow {
   purchase: number;
   /** 窗口出库件数（销速的分子；=0 表示该窗口没有任何出库记录） */
   out: number;
-  /** 有效日均销速（件/天；有货天数不足 7 天时为 30 日参照收缩估算值，页面标 ≈） */
+  /** 有效日均销速（件/天；有货天数不足可信门槛时为 30 日参照收缩估算值，页面标 ≈） */
   velocity: number;
   /** 窗口有货天数（销速的分母；0 = 整窗缺货，无销速依据） */
   avail: number;
   /** 销速估计方式：none=无依据(0) / measured=直接测得 / shrunk=收缩估算 */
   velocity_kind: "none" | "measured" | "shrunk";
+  /** 库存缺口关注档位（""=不关注 / "关注"），覆盖率 + 缺货损失双锚判定 */
+  gap_flag: string;
+  /** 估算缺货损失（件）：缺货期被压住的需求 = 销速 × 缺货天数 */
+  lost_sales: number;
   /** 目标库存（销速 × days × (1+safety)，取整） */
   target: number;
   /** 建议补货量（target − 现货 − 在途，向上取整） */

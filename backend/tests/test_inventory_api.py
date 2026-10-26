@@ -338,6 +338,157 @@ class TestRestockExport(unittest.TestCase):
             "GET 与 POST 的 SKU sheet 行数必须一致",
         )
 
+    def test_gap_detail_text_matches_page(self):
+        """导出说明列 / 批注的文字必须与页面 title 逐字一致（前端 gapFlagTitle 同口径）。"""
+        from backend.app import restock_export
+
+        self.assertEqual(
+            restock_export._gap_detail_text("关注", 83.6, 1, 14),
+            "周期14 天仅 1 天有货（缺货 13 天），估算缺货损失 83.6 件",
+            "关注说明句",
+        )
+        self.assertEqual(
+            restock_export._gap_detail_text("关注", 15.6, 3, 14),
+            "周期14 天仅 3 天有货（缺货 11 天），估算缺货损失 15.6 件",
+            "关注说明句（运营给的样例口径）",
+        )
+        self.assertEqual(
+            restock_export._gap_detail_text("", 83.6, 1, 14),
+            "",
+            "不关注的行不写说明",
+        )
+        # 整数天数不能写成 "1.0"（JS 的 String(1) 是 "1"，页面如此）
+        self.assertEqual(restock_export._js_num(1.0), "1")
+        self.assertEqual(restock_export._js_num(0), "0")
+        self.assertEqual(restock_export._js_num(83.6), "83.6")
+
+    def test_export_gap_flag_cell_has_badge_and_hover_note(self):
+        """「关注」列要像页面徽章一样被标出，说明句进「估算缺货损失」列并挂成批注。
+
+        页面：状态列旁的紫色「关注」徽章 + title 悬浮说明；
+        导出：同一列写成紫色字 + 浅紫底 + 批注（Excel 的悬停提示），
+        「估算缺货损失」列写全句（周期 / 有货天数 / 缺货天数 / 损失件数）。
+        """
+        import io
+
+        import openpyxl
+
+        from backend.app import restock_export
+
+        def _row(**kw) -> dict:
+            base = {
+                "sku": "TEST-SKU-1",
+                "sku_name": "测试商品",
+                "shop": "测试店",
+                "city": "北京",
+                "category": "测试类目",
+                "shelf_status": "在架",
+                "spu": "TEST-SPU-1",
+                "seller": "张三",
+                "erp_code": "E001",
+                "sellable_days": 3.5,
+                "stock": 1,
+                "purchase": 0,
+                "out": 20,
+                "velocity": 6.43,
+                "avail": 1,
+                "velocity_kind": "measured",
+                "gap_flag": "关注",
+                "lost_sales": 83.6,
+                "target": 70,
+                "qty": 60,
+                "status": "alert",
+            }
+            base.update(kw)
+            return base
+
+        flagged = _row()
+        plain = _row(sku="TEST-SKU-2", gap_flag="", lost_sales=0.0)
+        payload = {
+            "date": "2026-10-26",
+            "params": {"days": 9, "safety": 0.2, "window": 14},
+            "rows": [flagged, plain],
+            "city_groups": [
+                {
+                    "city": "北京",
+                    "code": "bj",
+                    "threshold": 10,
+                    "rows": [flagged],
+                    "subtotal": 60,
+                }
+            ],
+            "grand_total": 60,
+            "sku_count": 1,
+        }
+        detail_text = "周期14 天仅 1 天有货（缺货 13 天），估算缺货损失 83.6 件"
+        wb = openpyxl.load_workbook(io.BytesIO(restock_export.build_workbook(payload)))
+        for sheet_name in ("按SKU", "按城市"):
+            ws = wb[sheet_name]
+            head = [c.value for c in ws[1]]
+            self.assertIn("关注", head, f"{sheet_name} 缺「关注」列")
+            self.assertIn("估算缺货损失", head, f"{sheet_name} 缺「估算缺货损失」列")
+            # 周期必须写在表头里：这个列的数值只是"有货天数"，脱离周期看不出好坏
+            avail_head = [h for h in head if isinstance(h, str) and h.startswith("周期有货天数")]
+            self.assertEqual(len(avail_head), 1, f"{sheet_name} 应有且仅有一个「周期有货天数」列")
+            self.assertIn("14", avail_head[0], f"{sheet_name} 周期有货天数表头必须带周期：{avail_head[0]}")
+            # 「预计可售天数」排在「状态」前面
+            self.assertLess(
+                head.index("预计可售天数"),
+                head.index("状态"),
+                f"{sheet_name} 预计可售天数必须在状态列之前",
+            )
+            gap_col = head.index("关注") + 1
+            detail_col = head.index("估算缺货损失") + 1
+            # 按城市 sheet 第 1 行是城市分组头，数据行从第 2 行起；这里按文案定位，不写死行号
+            flagged_cells = [
+                ws.cell(row=i, column=gap_col)
+                for i in range(2, ws.max_row + 1)
+                if (ws.cell(row=i, column=gap_col).value or "") == "关注"
+            ]
+            self.assertEqual(len(flagged_cells), 1, f"{sheet_name} 应有且仅有一个亮灯行")
+            cell = flagged_cells[0]
+            color = (cell.font.color.rgb if cell.font and cell.font.color else "") or ""
+            self.assertTrue(
+                str(color).endswith("6D28D9"),
+                f"{sheet_name} 关注徽章字色必须是页面同款紫色：{color}",
+            )
+            self.assertTrue(
+                str(cell.fill.fgColor.rgb or "").endswith("F5F3FF"),
+                f"{sheet_name} 关注徽章底色必须是页面同款浅紫",
+            )
+            self.assertIsNotNone(cell.comment, f"{sheet_name} 关注徽章缺悬停批注")
+            self.assertEqual(
+                cell.comment.text,
+                detail_text,
+                f"{sheet_name} 批注文案与页面 title 不一致",
+            )
+            # 说明句写在「估算缺货损失」列（运营诉求：要一眼看出缺了几天、损失几件）
+            self.assertEqual(
+                ws.cell(row=cell.row, column=detail_col).value,
+                detail_text,
+                f"{sheet_name} 估算缺货损失列必须写完整说明句",
+            )
+        # 无档位的行不套样式、不写批注、不写说明（与页面"不渲染徽章"一致）
+        sku_ws = wb["按SKU"]
+        head = [c.value for c in sku_ws[1]]
+        gap_col = head.index("关注") + 1
+        detail_col = head.index("估算缺货损失") + 1
+        sku_col = head.index("SKU编码") + 1
+        plain_cells = [
+            sku_ws.cell(row=i, column=gap_col)
+            for i in range(2, sku_ws.max_row + 1)
+            if sku_ws.cell(row=i, column=sku_col).value == "TEST-SKU-2"
+        ]
+        self.assertEqual(len(plain_cells), 1, "应有一行无档位的 SKU")
+        plain_cell = plain_cells[0]
+        self.assertEqual(plain_cell.value or "", "", "无档位不该写文案")
+        self.assertIsNone(plain_cell.comment, "无档位不该写悬停批注")
+        self.assertEqual(
+            sku_ws.cell(row=plain_cell.row, column=detail_col).value or "",
+            "",
+            "无档位不该写说明句",
+        )
+
 
     def test_export_failure_returns_attachment_instead_of_json(self):
         """导出失败也必须返回附件。
@@ -399,6 +550,180 @@ class TestExportDisplayRounding(unittest.TestCase):
         self.assertEqual(restock_export._text_cell(None), "—")
         self.assertEqual(restock_export._text_cell("  "), "—")
         self.assertEqual(restock_export._text_cell("北京"), "北京")
+
+
+class TestMatrixExport(unittest.TestCase):
+    """矩阵导出：两个 sheet + 指标列随「指标配置」勾选变化。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.client = TestClient(app)
+
+    def _export(self, query: str = ""):
+        import io
+
+        import openpyxl
+
+        resp = self.client.post(f"/api/inventory/matrix/export{query}")
+        self.assertEqual(resp.status_code, 200, resp.text)
+        self.assertIn("spreadsheetml", resp.headers.get("content-type", ""))
+        self.assertIn("attachment", resp.headers.get("content-disposition", ""))
+        self.assertIn("no-store", resp.headers.get("cache-control", ""), "导出不能被浏览器缓存")
+        return openpyxl.load_workbook(io.BytesIO(resp.content))
+
+    def test_workbook_has_two_sheets_and_identity_columns(self):
+        wb = self._export("?date=2026-10-20")
+        self.assertEqual(wb.sheetnames, ["按SKU", "按城市"], "sheet 顺序：按SKU 在前、按城市 在后")
+        sku_head = [c.value for c in wb["按SKU"][1]]
+        city_head = [c.value for c in wb["按城市"][1]]
+        for key in ("商品图", "商品名称", "SKU编码", "SPU编码", "店铺", "上下柜状态", "三级类目", "ERP编码", "销售员名称"):
+            self.assertIn(key, sku_head, f"按SKU sheet 缺身份列：{key}")
+        for key in ("SKU编码", "商品名称", "店铺", "三级类目", "SPU编码", "销售员名称", "ERP编码"):
+            self.assertIn(key, city_head, f"按城市 sheet 缺身份列：{key}")
+        self.assertIn("城市", sku_head, "按SKU sheet 必须有城市列")
+        # 嵌图不需要加高行高（图片浮网格之上），所以两个 sheet 都嵌图且行高仍统一
+        self.assertGreater(len(wb["按SKU"]._images), 0, "按SKU sheet 应嵌入商品图")
+        self.assertGreater(len(wb["按城市"]._images), 0, "按城市 sheet 应嵌入商品图")
+
+    def test_merged_cells_are_centered(self):
+        """合并单元格的内容必须居中（水平 + 垂直）。
+
+        不设对齐时 openpyxl 默认底部对齐：合并区比内容高时文字沉底，
+        正是用户反馈的现象（2026-10-26）。
+        """
+        wb = self._export("?date=2026-10-20&metrics=city_stock,nat_slow")
+        for name in ("按SKU", "按城市"):
+            ws = wb[name]
+            checked = 0
+            for rng in ws.merged_cells.ranges:
+                cell = ws.cell(row=rng.min_row, column=rng.min_col)
+                if cell.value in (None, ""):
+                    continue
+                self.assertEqual(cell.alignment.horizontal, "center", f"{name} {rng} 未水平居中")
+                self.assertEqual(cell.alignment.vertical, "center", f"{name} {rng} 未垂直居中")
+                checked += 1
+            self.assertGreater(checked, 0, f"{name} 没有可校验的合并单元格")
+
+    def test_sku_sheet_rows_uniform_height(self):
+        """按SKU sheet 块内行高一律一致：首行（北京）不许比其它城市行高。
+
+        原先照搬补货导出的 52pt（图片独占一行），用户反馈"第一行太高"（2026-10-26）；
+        现在统一 ROW_HEIGHT，同时**仍然嵌图**——图片浮在网格之上，不必给它加高行高。
+        """
+        from backend.app import matrix_export
+
+        wb = self._export("?date=2026-10-20&metrics=city_stock")
+        ws = wb["按SKU"]
+        for block_start in range(2, 20, 9):
+            heights = [ws.row_dimensions[r].height for r in range(block_start, block_start + 9)]
+            self.assertEqual(len(set(heights)), 1, f"块 {block_start} 行高不一致：{heights}")
+            self.assertEqual(heights[0], matrix_export.ROW_HEIGHT)
+
+    def test_metric_columns_follow_selection(self):
+        """勾选决定列：只选 city_stock 时不该出现其它指标列（模版只演示几个指标的泛化）。"""
+        wb = self._export("?date=2026-10-20&metrics=city_stock")
+        head = [c.value for c in wb["按SKU"][1]]
+        self.assertIn("现货库存", head)
+        self.assertNotIn("采购未到货", head)
+        self.assertNotIn("全国滞销件数", head)
+        # 全国指标同样可勾选（单列，不按城市展开）
+        wb2 = self._export("?date=2026-10-20&metrics=nat_slow")
+        head2 = [c.value for c in wb2["按SKU"][1]]
+        self.assertIn("全国滞销件数", head2)
+        self.assertNotIn("现货库存", head2)
+
+    def test_default_columns_match_default_visible(self):
+        from backend.jobs.inventory_metrics import METRICS
+
+        wb = self._export("?date=2026-10-20")
+        head = [c.value for c in wb["按SKU"][1]]
+        for m in METRICS:
+            if m["locked"]:
+                continue
+            if m["default_visible"]:
+                self.assertIn(m["title"], head, f"默认勾选指标缺列：{m['title']}")
+            else:
+                self.assertNotIn(m["title"], head, f"未勾选指标不该出现：{m['title']}")
+
+    def test_unknown_metric_key_ignored(self):
+        wb = self._export("?date=2026-10-20&metrics=__nope__,city_stock")
+        head = [c.value for c in wb["按SKU"][1]]
+        self.assertIn("现货库存", head, "合法 key 不受非法 key 牵连")
+
+    def test_sku_sheet_row_count_matches_matrix_rows(self):
+        rows = self.client.get("/api/inventory/rows?date=2026-10-20&page_size=500").json()["rows"]
+        if not rows:
+            self.skipTest("库存库暂无矩阵行")
+        wb = self._export("?date=2026-10-20&metrics=city_stock")
+        ws = wb["按SKU"]
+        # 每个矩阵行 = 8 个城市行 + 1 行合计
+        self.assertEqual(ws.max_row - 1, len(rows) * 9, "按SKU sheet 行数必须与矩阵行数一致")
+
+    def test_filters_match_matrix_rows(self):
+        """筛选口径必须与 /rows 一致（导出的是当前筛选下的全量矩阵行）。"""
+        total = self.client.get(
+            "/api/inventory/rows?keyword=%E6%BB%A4%E8%8A%AF&date=2026-10-20&page_size=1"
+        ).json()["total"]
+        if not total:
+            self.skipTest("当前库存库没有命中该关键词的矩阵行")
+        wb = self._export("?date=2026-10-20&keyword=%E6%BB%A4%E8%8A%AF&metrics=city_stock")
+        self.assertEqual(wb["按SKU"].max_row - 1, total * 9, "导出行数必须与矩阵筛选结果一致")
+
+    def test_city_sheet_groups_have_subtotals(self):
+        rows = self.client.get("/api/inventory/rows?date=2026-10-20&page_size=500").json()["rows"]
+        if not rows:
+            self.skipTest("库存库暂无矩阵行")
+        wb = self._export("?date=2026-10-20&metrics=city_stock")
+        ws = wb["按城市"]
+        head = [c.value for c in ws[1]]
+        stock_col = head.index("现货库存") + 1
+        # 行结构：1 行表头 + 8 城 × (分组头 + N 行 + 小计) + 1 行总计
+        self.assertEqual(ws.max_row, 1 + 8 * (len(rows) + 2) + 1, "按城市 sheet 行数不符合分组结构")
+        # 每个小计行的现货库存列必须是数字（率值列不合计的规则另见 aggregatable 测试）
+        subtotal_rows = [i for i in range(2, ws.max_row + 1) if ws.cell(row=i, column=2).value == "小计"]
+        self.assertEqual(len(subtotal_rows), 8, "8 个分组各一个小计行")
+        for i in subtotal_rows:
+            self.assertIsInstance(
+                ws.cell(row=i, column=stock_col).value,
+                (int, float),
+                f"第 {i} 行小计必须是数字",
+            )
+
+    def test_ratio_metrics_not_totaled(self):
+        """率值指标（预计可售天数）不参与合计行——与矩阵表 tfoot 同口径。"""
+        wb = self._export("?date=2026-10-20&metrics=city_sellable_days")
+        ws = wb["按SKU"]
+        head = [c.value for c in ws[1]]
+        days_col = head.index("预计可售天数") + 1
+        # 合计行（每块第 10 行）：城市列写「合计」，率值列必须留空
+        for block_start in range(2, min(ws.max_row, 20) + 1, 9):
+            total_row = block_start + 8
+            self.assertEqual(ws.cell(row=total_row, column=10).value, "合计")
+            self.assertIn(
+                ws.cell(row=total_row, column=days_col).value,
+                (None, ""),
+                "预计可售天数不该出现在合计行",
+            )
+
+    def test_export_supports_get_for_native_browser_download(self):
+        """GET 也要能导出（前端用 <a href> 触发浏览器原生下载）。"""
+        resp = self.client.get("/api/inventory/matrix/export?date=2026-10-20&metrics=city_stock")
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("attachment", resp.headers.get("content-disposition", ""))
+        self.assertIn("no-store", resp.headers.get("cache-control", ""))
+
+    def test_failure_returns_attachment_txt(self):
+        """生成失败也必须返回附件：否则浏览器会把当前页面导航到错误页。"""
+        from unittest import mock
+
+        with mock.patch(
+            "backend.app.matrix_export.build_workbook",
+            side_effect=RuntimeError("模拟生成失败"),
+        ):
+            resp = self.client.get("/api/inventory/matrix/export?date=2026-10-20")
+        self.assertEqual(resp.status_code, 500)
+        self.assertIn("attachment", resp.headers.get("content-disposition", ""))
+        self.assertIn("导出失败", resp.content.decode("utf-8"))
 
 
 if __name__ == "__main__":

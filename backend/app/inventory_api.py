@@ -27,6 +27,7 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
 from pydantic import BaseModel
 
+from . import matrix_export
 from . import restock_export
 from ..jobs import db as jobdb
 from ..jobs import erp_map as erp_map_mod
@@ -39,13 +40,18 @@ from ..jobs.alert_rules import (
     DEFAULT_SAFETY,
     DEFAULT_THRESHOLD,
     DEFAULT_WINDOW,
+    BURST_CAP,
+    CRED_MIN_DAYS,
     REF_WINDOW,
     VELOCITY_NONE,
     alert_status,
     clamp_params,
     credible_velocity,
     is_offshelf,
+    reference_velocity,
     restock_qty,
+    stockout_gap,
+    velocity_example,
 )
 from ..jobs.inventory_metrics import CITIES, CITY_CODES, METRICS
 
@@ -666,7 +672,7 @@ def get_alerts_summary(
     """8 城预警汇总：每城阈值、红/黄/绿计数与建议补货合计（默认参数）。
 
     计数口径：下柜 SKU 完全排除；建议补货合计按默认参数（9 天 / 20% / 14 日），
-    销速与补货清单同口径（有货天数不足 7 天时按 30 日参照收缩，见 alert_rules）。
+    销速与补货清单同口径（有货天数不足可信门槛时按 30 日参照收缩，见 alert_rules）。
     返回的 cities 顺序与 CITIES（前端 meta.cities）一致，city=中文名、code=城市码。
     """
     thresholds = _threshold_map()
@@ -776,6 +782,10 @@ def _restock_long_rows(
                 continue  # 该城没有任何数据，不占一行
             velocity, velocity_kind = credible_velocity(out, avail, out_ref, avail_ref)
             qty = restock_qty(velocity, days, safety, stock, purchase)
+            # 缺口关注：整窗缺货（有货天数 0）时损失率改用参照销速——损失不是 0，
+            # 而是被完全截断的需求
+            v_ref = reference_velocity(out_ref, avail_ref, REF_WINDOW)
+            gap_flag, lost_sales = stockout_gap(avail, window, velocity, v_ref)
             rows.append({
                 "sku": row.get("sku"),
                 "sku_name": row.get("sku_name"),
@@ -794,6 +804,8 @@ def _restock_long_rows(
                 "velocity": round(velocity, 2),
                 "avail": avail,
                 "velocity_kind": velocity_kind,
+                "gap_flag": gap_flag,
+                "lost_sales": lost_sales,
                 "target": round(velocity * days * (1 + safety)),
                 "qty": qty,
                 "status": alert_status(thresholds[code], stock, purchase),
@@ -856,7 +868,17 @@ def _restock_payload(
         grand_total += subtotal
     return {
         "date": snap,
-        "params": {"days": d, "safety": s, "window": w},
+        "params": {
+            "days": d,
+            "safety": s,
+            "window": w,
+            # 销速算法阈值与演示算例：前端「销速算法说明」对话框原样展示，
+            # 数字由后端真实函数算出（不复制公式），阈值只有一个来源
+            "cred_min": CRED_MIN_DAYS,
+            "burst_cap": BURST_CAP,
+            "ref_window": REF_WINDOW,
+            "algo_example": velocity_example(d, s),
+        },
         "rows": sku_rows,
         "city_groups": groups,
         "grand_total": grand_total,
@@ -886,6 +908,8 @@ class RestockRowModel(BaseModel):
     velocity: float = 0
     avail: float = 0
     velocity_kind: str = VELOCITY_NONE
+    gap_flag: str = ""
+    lost_sales: float = 0
     target: int = 0
     qty: int = 0
     status: str = "healthy"
@@ -897,6 +921,10 @@ class RestockParamsModel(BaseModel):
     days: float
     safety: float
     window: int
+    cred_min: int = CRED_MIN_DAYS
+    burst_cap: float = BURST_CAP
+    ref_window: int = REF_WINDOW
+    algo_example: Optional[dict[str, float]] = None
 
 
 class RestockCityGroupModel(BaseModel):
@@ -950,7 +978,7 @@ def get_restock(
     下柜 SKU 完全排除；合计口径与前端展示一致。None/越界参数被夹回默认值；
     非数字串由 Query 类型验证拦下（422）。关键词过滤与矩阵表共用同一套口径。
     每行含 avail（窗口有货天数）与 velocity_kind（销速估计方式）：有货天数不足
-    7 天时销速按 30 日参照收缩估算（kind=shrunk），防积压爆发把销速顶上天。
+    可信门槛时销速按 30 日参照收缩估算（kind=shrunk），防积压爆发把销速顶上天。
     """
     v = view if view in ("city", "sku") else "city"
     payload = _restock_payload(shop, date, keyword, days, safety, window)
@@ -1021,6 +1049,119 @@ def export_restock(
             headers={"Content-Disposition": disposition, "Cache-Control": "no-store"},
         )
     filename = f"补货清单_{payload['date']}.xlsx"
+    disposition = f"attachment; filename*=UTF-8''{quote(filename)}"
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": disposition,
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+def _resolve_export_metrics(metrics: Optional[str]) -> list[dict]:
+    """把查询串里的指标 key 解析成 meta 顺序的指标列表（矩阵导出的列定义）。
+
+    Args:
+        metrics: 逗号分隔的指标 key（前端「指标配置」勾选）；空 = 用后端默认勾选
+            （default_visible 且非锁定，与矩阵表开屏列一致）。
+
+    Returns:
+        list[dict]: 指标定义（保持 METRICS 顺序，不含 identity——身份列由导出内置）。
+        非法 / 锁定 key 直接忽略：勾选态存前端 localStorage，版本漂移时不能让导出挂掉。
+    """
+    if not metrics or not metrics.strip():
+        return [m for m in METRICS if not m["locked"] and m["default_visible"]]
+    wanted = {k.strip() for k in metrics.split(",") if k.strip()}
+    return [m for m in METRICS if m["key"] in wanted and not m["locked"]]
+
+
+def _matrix_export_payload(
+    shop: Optional[str],
+    date: Optional[str],
+    keyword: Optional[str],
+    category: Optional[str],
+    seller: Optional[str],
+    shelf_status: Optional[str],
+    sort_by: Optional[str],
+    sort_order: str,
+    metrics: Optional[str],
+) -> dict[str, Any]:
+    """装配矩阵导出 payload：筛选/排序口径与 /rows **完全一致**，只是不分页。
+
+    @remarks
+    合计（totals / city_totals）取全量筛选结果，与矩阵表 tfoot 同源；
+    ERP 编码走映射表（与补货清单同一函数），库里不写 0、导出写 0（下游模板占位）。
+    """
+    data = _query_rows(shop, date)
+    data = _filter_keyword(data, keyword)
+    data = _filter_multi(data, "category", _split_multi(category))
+    data = _filter_multi(data, "seller", _split_multi(seller))
+    data = _filter_multi(data, "shelf_status", _split_multi(shelf_status))
+    data = _sort_rows(data, sort_by, sort_order)
+    return {
+        "rows": data,
+        "metrics": _resolve_export_metrics(metrics),
+        "cities": CITIES,
+        "totals": _compute_totals(data),
+        "city_totals": _compute_city_totals(data),
+        "erp_codes": _erp_codes(data),
+    }
+
+
+@router.api_route(
+    "/matrix/export",
+    methods=["GET", "POST"],
+    response_class=Response,
+    responses={
+        200: {
+            "content": {
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {}
+            },
+            "description": "库存矩阵 xlsx（含「按SKU」与「按城市」两个 sheet + 商品图；指标列随指标配置勾选变化）",
+        }
+    },
+)
+def export_matrix(
+    shop: Optional[str] = Query(None, description="店铺名；空=全部店铺"),
+    date: Optional[str] = Query(None, description="快照日期 YYYY-MM-DD；空=全部日期"),
+    keyword: Optional[str] = Query(None, description="SKU / 商品名称 / SPU 模糊搜索（口径与矩阵表一致）"),
+    category: Optional[str] = Query(None, description="三级类目；多个用逗号分隔，空=不限"),
+    seller: Optional[str] = Query(None, description="销售员；多个用逗号分隔，空=不限"),
+    shelf_status: Optional[str] = Query(None, description="上下柜状态；多个用逗号分隔，空=不限"),
+    sort_by: Optional[str] = Query(None, description="排序指标 key（口径与矩阵表一致）；空=不排序"),
+    sort_order: str = Query("desc", description="排序方向：desc（默认） / asc"),
+    metrics: Optional[str] = Query(
+        None, description="逗号分隔的指标 key（指标配置勾选）；空=后端默认勾选（default_visible）",
+    ),
+) -> Response:
+    """导出库存矩阵（xlsx，两个 sheet + 商品图嵌入，指标列随勾选变化）。
+
+    @remarks
+    - 同时支持 GET 与 POST：GET 供浏览器**原生下载**（<a href> 直连，文件名取自
+      Content-Disposition），POST 供程序化调用（测试、脚本）。参数全在查询串里。
+    - 筛选 / 排序口径与 /rows 一致但**不分页**：导出的是当前筛选下的全量矩阵行。
+    - 指标列由 `metrics` 决定（前端「指标配置」勾选）；身份列恒导出。
+    - 失败也返回附件（错误说明 txt + 500）：前端用 <a href> 触发下载，普通 JSON
+      错误会把当前页面导航走，筛选状态全丢（与补货导出同一约定）。
+    """
+    try:
+        payload = _matrix_export_payload(
+            shop, date, keyword, category, seller, shelf_status, sort_by, sort_order, metrics,
+        )
+        content = matrix_export.build_workbook(payload)
+    except Exception as e:  # noqa: BLE001 —— 导出失败要给出可读说明，而不是 500 页面
+        message = f"库存矩阵导出失败：{type(e).__name__}: {e}\n"
+        filename = f"矩阵导出失败_{date or '最新'}.txt"
+        disposition = f"attachment; filename*=UTF-8''{quote(filename)}"
+        return Response(
+            content=message.encode("utf-8"),
+            status_code=500,
+            media_type="text/plain; charset=utf-8",
+            headers={"Content-Disposition": disposition, "Cache-Control": "no-store"},
+        )
+    filename = f"库存矩阵_{date or '最新'}.xlsx"
     disposition = f"attachment; filename*=UTF-8''{quote(filename)}"
     return Response(
         content=content,

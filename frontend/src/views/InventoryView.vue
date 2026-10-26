@@ -10,6 +10,7 @@ import {
   fetchInventoryMeta,
   fetchInventoryRows,
   fetchInventorySlowCities,
+  inventoryMatrixExportUrl,
   putAlertThresholds,
 } from "../api";
 import { useInventoryMetricsStore } from "../stores/inventoryMetrics";
@@ -323,6 +324,54 @@ function onKeys(v: string[]): void {
   metricsStore.set(v);
 }
 
+/** 导出中 / 导出提示（与补货工作台导出同一套状态机）。 */
+const exporting = ref(false);
+const exportMsg = ref<string | null>(null);
+
+/**
+ * 导出矩阵表格（xlsx，两个 sheet + 商品图）。
+ *
+ * @remarks
+ * 走**浏览器原生下载**（GET + `<a href>`，与补货工作台导出同一套路）：
+ * - 文件名由后端 Content-Disposition 决定（前端不必猜最新快照日期）；
+ * - 失败时后端也返回附件（错误说明 txt），浏览器只会下载，不会把当前页面导航走，
+ *   用户的筛选状态不会丢；
+ * - 指标列 = 当前「指标配置」勾选（chosenKeys），筛选 / 排序与页面一致，
+ *   导出的是当前筛选下的全量行（不受当页 50 条限制）。
+ */
+function exportMatrix(): void {
+  if (exporting.value) return;
+  exporting.value = true;
+  exportMsg.value = null;
+  try {
+    const a = document.createElement("a");
+    a.href = inventoryMatrixExportUrl({
+      shop: shop.value,
+      date: date.value,
+      keyword: keyword.value,
+      category: filters.value.category,
+      seller: filters.value.seller,
+      shelf_status: filters.value.shelf_status,
+      sort_by: sort.value.key ?? undefined,
+      sort_order: sort.value.order ?? "desc",
+      metrics: chosenKeys.value,
+    });
+    a.rel = "noopener";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    exportMsg.value = "已发起导出：浏览器将下载「库存矩阵_*.xlsx」（指标列 = 当前勾选，含「按SKU」与「按城市」两个 sheet）";
+  } catch (e) {
+    exportMsg.value = "导出失败：" + String(e);
+  } finally {
+    // 原生下载是异步的（浏览器自己下载），按钮很快恢复；留一小段防连点。
+    window.setTimeout(() => (exporting.value = false), 800);
+    if (exportMsg.value && exportMsg.value.startsWith("已发起导出")) {
+      window.setTimeout(() => (exportMsg.value = null), 4000);
+    }
+  }
+}
+
 /**
  * 概览卡点击店铺 → 联动店铺筛选（只联动店铺这一层）。
  *
@@ -408,6 +457,17 @@ onMounted(async () => {
             :keys="chosenKeys"
             @update:keys="onKeys"
           />
+          <span v-if="exportMsg" class="inv-export-msg" data-testid="matrix-export-msg">{{ exportMsg }}</span>
+          <button
+            class="inv-export-btn"
+            :disabled="!data || !data.total || exporting"
+            data-testid="matrix-export-btn"
+            title="导出当前筛选下的全量矩阵（指标列 = 指标配置勾选）"
+            @click="exportMatrix"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>
+            {{ exporting ? "导出中…" : "导出表格" }}
+          </button>
         </div>
       </div>
 
@@ -696,6 +756,43 @@ onMounted(async () => {
 .inv-tools {
   display: flex;
   align-items: center;
+  gap: 10px;
+}
+/* 矩阵导出按钮：与筛选控件同高（34px），主色蓝实心（与视图切换 .on 同一套蓝色语言），
+   图标用内联 SVG（禁用 emoji 当图标，与补货工作台导出按钮同款下载图标）。 */
+.inv-export-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 14px;
+  border: 1px solid var(--color-brand);
+  border-radius: var(--radius-md);
+  background: var(--color-brand);
+  color: #fff;
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.inv-export-btn svg {
+  width: 14px;
+  height: 14px;
+}
+.inv-export-btn:hover:not(:disabled) {
+  background: var(--color-brand-dark);
+  border-color: var(--color-brand-dark);
+}
+.inv-export-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+/* 导出提示：与按钮同行的轻量反馈，4 秒后自动消失（逻辑见 exportMatrix） */
+.inv-export-msg {
+  font-size: 12px;
+  color: var(--color-text-3);
+  max-width: 320px;
 }
 .inv-table-meta {
   display: flex;

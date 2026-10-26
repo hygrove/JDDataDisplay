@@ -339,6 +339,55 @@ export function fetchInventoryRows(q: InventoryRowsQuery): Promise<InventoryPage
 }
 
 /**
+ * 构建库存矩阵导出的 URL（GET，供 `<a href>` 浏览器原生下载，与补货导出同一套路）。
+ *
+ * @remarks
+ * - 筛选 / 排序参数与 `fetchInventoryRows` 同口径，导出的是当前筛选下的**全量**行
+ *   （不受分页影响）；`metrics` 即「指标配置」勾选的指标 key，决定导出的指标列。
+ * - 文件名由后端 `Content-Disposition` 决定（前端不必猜最新快照日期）；
+ *   失败时后端也返回附件（错误说明 txt），浏览器只会下载、不会导航走页面。
+ *
+ * @param {object} q - 查询参数；metrics 必填（空数组 = 只用后端默认勾选）。
+ * @returns {string} 完整的导出 URL（含 /api 前缀与查询串）。
+ * @example
+ * ```ts
+ * const url = inventoryMatrixExportUrl({
+ *   shop: "家配", date: "2026-10-18", keyword: "滤芯",
+ *   sort_by: "city_stock", sort_order: "desc",
+ *   metrics: ["city_stock", "nat_slow"],
+ * });
+ * const a = document.createElement("a");
+ * a.href = url; a.click(); // 触发原生下载
+ * ```
+ */
+export function inventoryMatrixExportUrl(q: {
+  shop?: string;
+  date?: string;
+  keyword?: string;
+  category?: string[];
+  seller?: string[];
+  shelf_status?: string[];
+  sort_by?: string;
+  sort_order?: "asc" | "desc";
+  metrics: string[];
+}): string {
+  const params = new URLSearchParams();
+  if (q.shop) params.set("shop", q.shop);
+  if (q.date) params.set("date", q.date);
+  if (q.keyword) params.set("keyword", q.keyword);
+  // 多选筛选：后端按逗号分隔解析（与 fetchInventoryRows 一致）
+  if (q.category?.length) params.set("category", q.category.join(","));
+  if (q.seller?.length) params.set("seller", q.seller.join(","));
+  if (q.shelf_status?.length) params.set("shelf_status", q.shelf_status.join(","));
+  if (q.sort_by) {
+    params.set("sort_by", q.sort_by);
+    params.set("sort_order", q.sort_order ?? "desc");
+  }
+  if (q.metrics.length) params.set("metrics", q.metrics.join(","));
+  return `${BASE}/inventory/matrix/export?${params.toString()}`;
+}
+
+/**
  * 拉取库存 KPI 聚合（供顶部卡片）。
  *
  * @param {string} [shop] - 店铺过滤；留空 = 全部店铺。

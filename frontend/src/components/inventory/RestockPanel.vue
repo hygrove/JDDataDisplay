@@ -4,16 +4,21 @@
 //
 // 数据口径（与后端 backend.jobs.alert_rules 对齐）：
 //   建议量 = 可信销速 × 覆盖天数 × (1+安全系数) − 现货 − 在途；
-//   可信销速：有货天数 ≥ 7 → 窗口出库÷有货天数；0 < 有货天数 < 7 → 按 30 日
-//   参照收缩估算（velocity_kind=shrunk，销速前标 ≈、有货天数琥珀色悬浮说明）
+//   可信销速：有货天数 ≥ 可信门槛（params.cred_min，默认 6）→ 窗口出库÷有货天数；
+//   0 < 有货天数 < 可信门槛 → 按 30 日参照收缩估算（velocity_kind=shrunk，
+//   销速前标 ≈、有货天数琥珀色悬浮说明；点「销速算法说明」看推导）
 // 只展示建议量 > 0 的行；下柜 SKU 完全排除。
 // 参数变化 / 父级 shop/date/keyword 变化时重拉（销速窗口切换立即生效；
 // 关键词的防抖在父级做，面板拿到的已是提交后的值）。
-import { onMounted, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { fetchRestockList } from "../../api";
 import {
   THUMB_SIZE,
+  availCellClass,
+  availTitle,
   erpText,
+  gapFlagMeta,
+  gapFlagTitle,
   invThumbChain,
   invThumbSrcSet,
   orEmpty,
@@ -135,17 +140,36 @@ function statusMeta(s: RestockRow["status"]): { text: string; cls: string } {
   return { text: "健康", cls: "st-healthy" };
 }
 
-/** 周期有货天数单元格的附加类：收缩估算行给琥珀色（一眼看出销速不是直算值）。 */
-function availCellClass(r: RestockRow): { "avail-low": boolean } {
-  return { "avail-low": r.velocity_kind === "shrunk" };
+/** 销速算法说明对话框是否打开。 */
+const showAlgo = ref(false);
+
+/** 对话框用的参数与演示算例（数字全由后端真实函数算出，这里只渲染不计算）。 */
+const algo = computed(() => {
+  const p = data.value?.params;
+  return {
+    credMin: p?.cred_min ?? 0,
+    burstCap: p?.burst_cap ?? 0,
+    refWindow: p?.ref_window ?? 0,
+    days: p?.days ?? 0,
+    safety: p?.safety ?? 0,
+    windowDays: p?.window ?? 0,
+    ex: (p?.algo_example ?? {}) as Record<string, number>,
+  };
+});
+
+/** 取算例里的一个数字（缺失显示占位符）。 */
+function ex(key: string): string {
+  const v = algo.value.ex[key];
+  return v === undefined ? "—" : fmt(v);
 }
 
-/** 收缩估算行的悬浮说明；非收缩行返回 undefined（不渲染 title）。 */
-function availTitle(r: RestockRow): string | undefined {
-  if (r.velocity_kind !== "shrunk") return undefined;
-  // 文案中的「7 天 / 30 日」与后端 alert_rules.CRED_MIN_DAYS / REF_WINDOW 对应
-  return "窗口内有货天数不足 7 天，直算销速会把积压爆发当常态；已按 30 日参照周期收缩估算（销速前的 ≈ 即收缩值）";
+/** Esc 关闭对话框。 */
+function onKeydown(e: KeyboardEvent): void {
+  if (e.key === "Escape") showAlgo.value = false;
 }
+
+onMounted(() => window.addEventListener("keydown", onKeydown));
+onUnmounted(() => window.removeEventListener("keydown", onKeydown));
 
 /** 当前是否没有任何行（空态提示）。 */
 const empty = ref(false);
@@ -223,9 +247,19 @@ function exportExcel(): void {
             <option :value="30">30 日</option>
           </select>
         </label>
+        <button
+          class="rp-btn rp-btn-info"
+          data-testid="restock-algo-btn"
+          :disabled="!data"
+          title="查看销速算法说明（为什么会出现 ≈）"
+          @click="showAlgo = true"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg>
+          销速算法说明
+        </button>
         <span class="rp-formula">
           建议量 = 周期内出库件数 ÷ 周期内有货天数 × 期望库存覆盖天数 × (1 + 安全系数) − 现货库存 − 在途库存；
-          有货天数不足 7 天时销速按 30 日参照周期收缩估算（销速前标 ≈）
+          有货天数不足 {{ algo.credMin }} 天时销速按 {{ algo.refWindow }} 日参照周期收缩估算（销速前标 ≈）
         </span>
         <span class="rp-formula">
           举例：近14日出库件数70件，近14日有货天数7天(平均每天出库70÷7=10件)，期望库存覆盖天数7天，安全系数20%，现货库存5件， 在途库存2件，则建议补货量 = 70 ÷ 7 × 7 × (1 + 20%) − 5 − 2 = 77件
@@ -335,14 +369,23 @@ function exportExcel(): void {
               <td class="num">{{ (r.velocity_kind === "shrunk" ? "≈" : "") + fmt(r.velocity) }} 件/天</td>
               <td
                 class="num"
-                :class="availCellClass(r)"
-                :title="availTitle(r)"
+                :class="availCellClass(r.velocity_kind)"
+                :title="availTitle(r.velocity_kind, r.avail, algo.credMin, algo.refWindow)"
                 data-testid="restock-avail-days"
               >{{ fmt(r.avail) }}</td>
               <td class="num">{{ fmt(r.target) }}</td>
               <td class="num qty">+{{ fmt(r.qty) }}</td>
               <td class="num" data-testid="restock-sellable-days">{{ sellableDaysText(r.sellable_days) }}</td>
-              <td><span class="st" :class="statusMeta(r.status).cls">{{ statusMeta(r.status).text }}</span></td>
+              <td>
+                <span class="st" :class="statusMeta(r.status).cls">{{ statusMeta(r.status).text }}</span>
+                <span
+                  v-if="gapFlagMeta(r.gap_flag)"
+                  class="st"
+                  :class="gapFlagMeta(r.gap_flag)?.cls"
+                  :title="gapFlagTitle(r.gap_flag, r.lost_sales, r.avail, data.params.window)"
+                  data-testid="restock-gap-flag"
+                >{{ gapFlagMeta(r.gap_flag)?.text }}</span>
+              </td>
             </tr>
           </tbody>
         </template>
@@ -415,14 +458,23 @@ function exportExcel(): void {
             <td class="num">{{ (r.velocity_kind === "shrunk" ? "≈" : "") + fmt(r.velocity) }} 件/天</td>
             <td
               class="num"
-              :class="availCellClass(r)"
-              :title="availTitle(r)"
+              :class="availCellClass(r.velocity_kind)"
+              :title="availTitle(r.velocity_kind, r.avail, algo.credMin, algo.refWindow)"
               data-testid="restock-avail-days"
             >{{ fmt(r.avail) }}</td>
             <td class="num">{{ fmt(r.target) }}</td>
             <td class="num qty">+{{ fmt(r.qty) }}</td>
             <td class="num" data-testid="restock-sellable-days">{{ sellableDaysText(r.sellable_days) }}</td>
-            <td><span class="st" :class="statusMeta(r.status).cls">{{ statusMeta(r.status).text }}</span></td>
+            <td>
+              <span class="st" :class="statusMeta(r.status).cls">{{ statusMeta(r.status).text }}</span>
+              <span
+                v-if="gapFlagMeta(r.gap_flag)"
+                class="st"
+                :class="gapFlagMeta(r.gap_flag)?.cls"
+                :title="gapFlagTitle(r.gap_flag, r.lost_sales, r.avail, data.params.window)"
+                data-testid="restock-gap-flag"
+              >{{ gapFlagMeta(r.gap_flag)?.text }}</span>
+            </td>
           </tr>
         </tbody>
         <tfoot>
@@ -433,6 +485,132 @@ function exportExcel(): void {
           </tr>
         </tfoot>
       </table>
+    </div>
+
+    <!-- 销速算法说明对话框：讲清 ≈ 是怎么算出来的（数字全由后端真实函数算出） -->
+    <div
+      v-if="showAlgo && data"
+      class="rp-modal"
+      data-testid="restock-algo-modal"
+      @click.self="showAlgo = false"
+    >
+      <div class="rp-modal-box" role="dialog" aria-modal="true" aria-label="销速算法说明">
+        <div class="rp-modal-head">
+          <h3>销速算法说明（为什么会出现 ≈）</h3>
+          <button
+            class="rp-modal-close"
+            data-testid="restock-algo-close"
+            aria-label="关闭"
+            @click="showAlgo = false"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+          </button>
+        </div>
+        <div class="rp-modal-body">
+          <section class="rp-algo-sec">
+            <h4>为什么不能直接「出库 ÷ 有货天数」</h4>
+            <p>
+              有货天数很少时直算会爆表：示例里 14 日窗只有 {{ ex("avail") }} 天有货、这几天出了
+              {{ ex("out") }} 件，直算 {{ ex("out") }} ÷ {{ ex("avail") }} =
+              <b>{{ ex("v_raw") }} 件/天</b>，目标库存被顶到 <b>{{ ex("target_raw") }} 件</b>——
+              因为那唯一一天是补货到仓后的爆发日，里面混着整个缺货期积压的需求。
+            </p>
+            <p class="rp-algo-why">
+              真实销速被夹在两个界之间：<b>{{ ex("v_floor") }}</b>（按日历摊薄，低估）
+              ≤ 真实销速 ≤ <b>{{ ex("v_raw") }}</b>（全速运转，高估）。
+              页面上的 <b>≈</b> 表示「收缩估算值」：按下面三步算出来的保守估计，不是直算。
+            </p>
+          </section>
+
+          <section class="rp-algo-sec">
+            <h4>第 1 步 · 算参照销速（分母垫底）</h4>
+            <div class="rp-algo-formula">
+              v_ref = {{ algo.refWindow }} 日出库 ÷ max({{ algo.refWindow }} 日有货天数, {{ algo.refWindow / 2 }})
+            </div>
+            <p>
+              示例：{{ ex("out_ref") }} ÷ max({{ ex("avail_ref") }}, {{ algo.refWindow / 2 }})
+              = {{ ex("out_ref") }} ÷ {{ algo.refWindow / 2 }} ≈ <b>{{ ex("v_ref") }} 件/天</b>
+            </p>
+            <p class="rp-algo-why">
+              为什么：参照窗自己也只断断续续有货，直算 {{ ex("out_ref") }} ÷ {{ ex("avail_ref") }}
+              会踩一模一样的坑（那几天同样有爆发成分）。所以无论实际有货几天，最多按半个参照窗摊——
+              得到一个「偏保守、但没被爆发污染」的基准。
+            </p>
+          </section>
+
+          <section class="rp-algo-sec">
+            <h4>第 2 步 · 给短窗销速封顶（突发封顶）</h4>
+            <div class="rp-algo-formula">
+              v_short' = min(短窗销速, v_ref × {{ algo.burstCap }})
+            </div>
+            <p>
+              示例：min({{ ex("v_raw") }}, {{ ex("v_ref") }} × {{ algo.burstCap }} = {{ ex("v_capped") }})
+              = <b>{{ ex("v_capped") }}</b>
+            </p>
+            <p class="rp-algo-why">
+              为什么：补货日可能真热卖（真实需求 + 积压释放叠加），但再猛也不能当常态——
+              最多允许放大到参照销速的 {{ algo.burstCap }} 倍。封顶砍掉的是"积压假象"，
+              留下的是"确实有点热销"的信号。
+            </p>
+          </section>
+
+          <section class="rp-algo-sec">
+            <h4>第 3 步 · 按可信度加权（credibility 思想）</h4>
+            <div class="rp-algo-formula">
+              w = 有货天数 ÷ {{ algo.credMin }}　→　v = w × v_short' + (1 − w) × v_ref
+            </div>
+            <p>
+              示例：w = {{ ex("avail") }} ÷ {{ algo.credMin }} ≈
+              <b>{{ fmt((algo.ex["w"] ?? 0) * 100) }}%</b>　→　v ≈ <b>{{ ex("v") }} 件/天</b>
+            </p>
+            <p class="rp-algo-why">
+              为什么：这是保险精算里的可信度思想——"新证据只占一成分量，其余信历史基准"。
+              可信门槛 {{ algo.credMin }} 天：样本越少越信基准（有货 1 天只信
+              {{ fmt(100 / algo.credMin) }}%，有货 {{ algo.credMin }} 天就全信短窗、不再掺基准）。
+            </p>
+          </section>
+
+          <section class="rp-algo-sec">
+            <h4>代入补货公式</h4>
+            <p>
+              v × 覆盖天数 × (1 + 安全系数) = {{ ex("v") }} × {{ algo.days }} 天 ×
+              (1 + {{ Math.round(algo.safety * 100) }}%) ≈ <b>{{ ex("target") }} 件</b>
+              <span class="rp-algo-why">（同一份数据直算会给 {{ ex("target_raw") }} 件，差近十倍）</span>
+            </p>
+          </section>
+
+          <section class="rp-algo-sec">
+            <h4>什么时候用哪一档</h4>
+            <table class="rp-algo-table">
+              <thead>
+                <tr><th>窗口内有货天数</th><th>销速怎么算</th><th>页面标记</th></tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>0 天</td>
+                  <td>0（无销速依据，宁可不建议，不凭空估）</td>
+                  <td>无 ≈；不列入补货清单</td>
+                </tr>
+                <tr>
+                  <td>1 ~ {{ algo.credMin - 1 }} 天</td>
+                  <td>收缩估算（上面三步）</td>
+                  <td>销速前标 ≈，有货天数标琥珀色</td>
+                </tr>
+                <tr>
+                  <td>≥ {{ algo.credMin }} 天</td>
+                  <td>直算：窗口出库 ÷ 有货天数</td>
+                  <td>无 ≈</td>
+                </tr>
+              </tbody>
+            </table>
+          </section>
+
+          <section class="rp-algo-sec rp-algo-params">
+            当前参数：可信门槛 {{ algo.credMin }} 天 · 突发封顶 {{ algo.burstCap }} 倍 ·
+            参照窗 {{ algo.refWindow }} 日 · 销速窗口 {{ algo.windowDays }} 日
+          </section>
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -737,11 +915,137 @@ function exportExcel(): void {
   background: #f0fdf4;
   border: 1px solid #bbf7d0;
 }
+/* 缺口关注徽章（紫）：与库存健康三档（绿/琥珀/红）区分开——这里说的是
+   "需求缺口"（缺货损失），不是"库存水位"；文字用 violet-700 #6d28d9
+   保证 11px 小字在浅底上读得清。 */
+.st-gap {
+  color: #6d28d9;
+  background: #f5f3ff;
+  border: 1px solid #ddd6fe;
+  margin-left: 4px;
+}
 /* 周期有货天数：收缩估算行琥珀色提示（与在途徽章同档 #b45309——12.5px 小字
    在浅底上要 -700 档才读得清，见 ai-rules §3 最浅文字可读性规则） */
 .avail-low {
   color: #b45309;
   font-weight: 600;
+}
+
+/* 「销速算法说明」按钮：参数条里的次要动作 */
+.rp-btn-info {
+  height: 34px;
+  align-self: center;
+}
+
+/* 销速算法说明对话框 */
+.rp-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 24px;
+}
+.rp-modal-box {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-2);
+  border-radius: var(--radius-lg, 8px);
+  box-shadow: 0 18px 48px rgba(15, 23, 42, 0.28);
+  width: 100%;
+  max-width: 780px;
+  max-height: 84vh;
+  display: flex;
+  flex-direction: column;
+}
+.rp-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 13px 18px;
+  border-bottom: 1px solid var(--color-divider);
+}
+.rp-modal-head h3 {
+  margin: 0;
+  font-size: 15px;
+  color: var(--color-text-strong);
+}
+.rp-modal-close {
+  border: 0;
+  background: transparent;
+  padding: 4px;
+  cursor: pointer;
+  color: var(--color-text-3);
+  border-radius: 6px;
+  line-height: 0;
+}
+.rp-modal-close:hover {
+  color: var(--color-text-strong);
+  background: var(--color-surface-2);
+}
+.rp-modal-close svg {
+  width: 17px;
+  height: 17px;
+}
+.rp-modal-body {
+  padding: 14px 18px 18px;
+  overflow: auto;
+  font-size: 13px;
+  line-height: 1.75;
+  color: var(--color-text-2);
+}
+.rp-algo-sec {
+  margin-bottom: 15px;
+}
+.rp-algo-sec h4 {
+  margin: 0 0 5px;
+  font-size: 13.5px;
+  color: var(--color-text-strong);
+}
+.rp-algo-sec p {
+  margin: 4px 0;
+}
+.rp-algo-formula {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 12.5px;
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border-2);
+  border-radius: 8px;
+  padding: 7px 10px;
+  margin: 6px 0;
+  color: var(--color-text-2);
+}
+.rp-algo-why {
+  color: var(--color-text-3);
+  font-size: 12.5px;
+}
+.rp-algo-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+  margin-top: 4px;
+}
+.rp-algo-table th,
+.rp-algo-table td {
+  border-bottom: 1px solid var(--color-divider);
+  padding: 6px 8px;
+  text-align: left;
+  vertical-align: top;
+}
+.rp-algo-table th {
+  color: var(--color-text-3);
+  font-weight: 600;
+}
+.rp-algo-params {
+  margin-bottom: 0;
+  padding: 9px 12px;
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border-2);
+  border-radius: 8px;
+  color: var(--color-text-3);
+  font-size: 12.5px;
 }
 .grand td {
   position: sticky;
