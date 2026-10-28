@@ -117,10 +117,17 @@ def _pid_holding_port(port: int) -> "int | None":
     解析失败（如 netstat 不可用）返回 None，交由调用方兜底。
     """
     try:
+        # ⚠️ **不用 text=True**：netstat 的输出在中文 Windows 上是 GBK
+        #    （表头「活动连接」= \xbb\xee\xb6\xaf…），而 text=True 会用 locale 编码
+        #    解码——本机 locale 是 UTF-8 ⇒ UnicodeDecodeError ⇒ 本函数抛异常
+        #    ⇒ 整个 main() 崩掉（表现为「托盘启动器开始」后就没了，真实原因只在
+        #    弹窗里，用户看不到；且只在**端口空闲**这条启动路径上触发）。
+        #    改成字节模式 + errors="replace"：坏字节替换掉即可，而要解析的
+        #    `LISTENING` 与 PID 都是 ASCII，不受影响。
         out = subprocess.run(
-            ["netstat", "-ano"], capture_output=True, text=True,
+            ["netstat", "-ano"], capture_output=True,
             creationflags=CREATE_NO_WINDOW, timeout=5,
-        ).stdout
+        ).stdout.decode("utf-8", errors="replace")
     except Exception:
         return None
     for line in out.splitlines():
@@ -145,11 +152,13 @@ def _image_of(pid: int) -> str:
         str: 映像名小写；取不到时返回空串。
     """
     try:
+        # ⚠️ 同 _pid_holding_port：tasklist 的输出在中文 Windows 上也是 GBK，
+        #    不能用 text=True（会 UnicodeDecodeError）。我们要的映像名是 ASCII。
         out = subprocess.run(
             ["tasklist", "/nh", "/fi", f"PID eq {pid}"],
-            capture_output=True, text=True,
+            capture_output=True,
             creationflags=CREATE_NO_WINDOW, timeout=5,
-        ).stdout
+        ).stdout.decode("utf-8", errors="replace")
         return out.split()[0].lower() if out.strip() else ""
     except Exception:
         return ""

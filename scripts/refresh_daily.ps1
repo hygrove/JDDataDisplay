@@ -69,11 +69,14 @@ if (-not $env:JD_ORGANIZE) { $env:JD_ORGANIZE = "on" }
 # Same reasoning as JD_ORGANIZE above: this scheduled task runs as SYSTEM with its own
 # environment, so the switch must be declared HERE to persist in the scheduling env.
 # This one is IRREVERSIBLE (it permanently deletes older inventory snapshot files and
-# their DB rows - see docs/adr/0013-inventory-snapshot-retention.md), so it is NOT
-# enabled here yet. Keep it "dry-run" until the first real run has been reviewed by
-# a human. To enable after review: set it to "on".
+# their DB rows - see docs/adr/0015-inventory-snapshot-retention.md).
+# ENABLED on 2026-10-28: the first real run was reviewed by a human (dry-run manifest
+# checked: 21 files / 2749 inventory_daily rows / 5418 inventory_city_slow rows, and
+# the POST run re-verified inventory_daily 3148 -> 399 rows with daily_detail unchanged
+# at 867). Before enabling, a backup of the 21 source files was kept in
+# ResourceData/_archive_before_prune_2026-10-28/ and a DB copy next to app.db.
 # Precedence: if JD_INVENTORY_RETENTION already exists (machine/user env), it wins.
-if (-not $env:JD_INVENTORY_RETENTION) { $env:JD_INVENTORY_RETENTION = "dry-run" }
+if (-not $env:JD_INVENTORY_RETENTION) { $env:JD_INVENTORY_RETENTION = "on" }
 
 Write-Log "launcher python=$py"
 Write-Log "launcher JD_ORGANIZE=$($env:JD_ORGANIZE)"
