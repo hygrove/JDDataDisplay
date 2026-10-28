@@ -700,6 +700,25 @@ def _shop_dates(conn) -> dict[str, str]:
         "SELECT shop, MAX(date) AS d FROM inventory_daily GROUP BY shop")}
 
 
+def _shop_dates_in_scope(shop: Optional[str]) -> dict[str, str]:
+    """当前筛选范围内的每店最新日期：{店铺: 日期}。
+
+    Args:
+        shop: 店铺过滤；None = 全部店铺。
+
+    Returns:
+        dict[str, str]: {店铺: 该店最新快照日期}。
+    """
+    conn = _conn()
+    try:
+        all_dates = _shop_dates(conn)
+    finally:
+        conn.close()
+    if shop:
+        return {shop: all_dates[shop]} if shop in all_dates else {}
+    return all_dates
+
+
 def _threshold_map() -> dict[str, float]:
     """读 8 城阈值（城市码 → 阈值）；表缺行（老库）回默认值，保证恒有 8 项。"""
     conn = _conn()
@@ -843,7 +862,10 @@ def get_alerts_summary(
             "restock_total": restock_total,
         })
     return {
+        # `date` = 最新快照日期（**跨店**口径，仅供展示；⛔ 不是"本次计算所用的日期"
+        # ——落后店的计算用的是它自己的日期）。per-shop 的真实日期见 `shop_dates`。
         "date": snap,
+        "shop_dates": _shop_dates_in_scope(shop),
         "cities": cities,
         "params": {"days": DEFAULT_DAYS, "safety": DEFAULT_SAFETY, "window": DEFAULT_WINDOW},
     }
@@ -1002,7 +1024,10 @@ def _restock_payload(
         })
         grand_total += subtotal
     return {
+        # `date` = 最新快照日期（**跨店**口径，仅供展示；⛔ 不是"本次计算所用的日期"
+        # ——落后店的计算用的是它自己的日期）。per-shop 的真实日期见 `shop_dates`。
         "date": snap,
+        "shop_dates": _shop_dates_in_scope(shop),
         "params": {
             "days": d,
             "safety": s,

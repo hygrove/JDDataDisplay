@@ -105,5 +105,12 @@ ORGANIZE_MODE = os.getenv("JD_ORGANIZE", "dry-run")
 INVENTORY_RETENTION_MODE = os.getenv("JD_INVENTORY_RETENTION", "dry-run")
 
 # INVENTORY_KEEP_DAYS：每店保留最近几天的库存快照。默认 1（= 只保留最新一天）。
-# ⚠️ 小于 1 会被回退到 1——保留集永远至少有一天。
-INVENTORY_KEEP_DAYS = int(os.getenv("JD_INVENTORY_KEEP_DAYS", "1"))
+# ⚠️ 解析必须容错：这行是**导入期**求值，写 `int(os.getenv(...))` 遇到非数字
+# 会抛 ValueError ⇒ **整个批处理与 FastAPI 服务在 import 阶段就挂掉**
+# （比"保留天数配错"严重得多）。非法值一律回退 1。
+try:
+    INVENTORY_KEEP_DAYS = int(os.getenv("JD_INVENTORY_KEEP_DAYS", "1"))
+except (TypeError, ValueError):
+    INVENTORY_KEEP_DAYS = 1
+if INVENTORY_KEEP_DAYS < 1:
+    INVENTORY_KEEP_DAYS = 1

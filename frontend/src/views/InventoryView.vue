@@ -183,7 +183,7 @@ const filterOptions = computed<InventoryFilterOptions>(() => {
 /** 拉取 8 城预警汇总（顶部预警条 + 矩阵着色共用）。
  *
  * @remarks
- * 与 loadData 同源筛选（shop/date）；失败不阻断主表（预警条降级为不渲染，
+ * 与 loadData 同源筛选（shop）；失败不阻断主表（预警条降级为不渲染，
  * 矩阵不着色），由 try/catch 吞掉并在下次筛选变化时重试。
  */
 async function loadAlerts(): Promise<void> {
@@ -445,7 +445,7 @@ onMounted(async () => {
     </header>
 
     <!-- 筛选条不再放在这里：矩阵 / 补货两个 pane 各渲染一份，位置随模式不同
-         （矩阵在阈值条下方、补货在模式切换条下方），筛选状态 shop/date/keyword
+         （矩阵在阈值条下方、补货在模式切换条下方），筛选状态 shop/keyword（⛔ 无 date 筛选：各店日期可能不同）
          仍由本组件持有，切 Tab 不丢选择。 -->
 
     <template v-if="activeTab === 'matrix'">
@@ -640,7 +640,7 @@ onMounted(async () => {
           </span>
         </div>
         <!-- 筛选条（2026-10 调整至模式切换条下方）：店铺 / 日期 / 搜索。
-             补货视图无「指标配置」；筛选状态与矩阵 pane 共用父级的 shop/date/keyword。 -->
+             补货视图无「指标配置」；筛选状态与矩阵 pane 共用父级的 shop/keyword（⛔ 无 date 筛选）。 -->
         <div class="inv-toolbar">
           <div class="inv-filters">
             <label class="inv-field">
@@ -866,16 +866,19 @@ onMounted(async () => {
   color: var(--color-text-2);
   font-size: calc(13px * var(--font-scale));
   white-space: nowrap;
+  /* flex item 必须显式 min-width:0（默认 auto=min-content 会撑开定宽列） */
+  min-width: 0;
 }
 .inv-date-list li {
   display: flex;
   align-items: center;
   gap: 4px;
+  min-width: 0;
 }
-/* 落后店：它的快照日期比其它店旧 → 标成琥珀色（与图例的"预警"色 .sw-y 同色系），
-   让"数据偏旧"这件事一眼可见。⚠️ 琥珀色不是文字令牌，不能拿它当正文色。 */
+/* 落后店：它的快照日期比其它店旧 → 标成琥珀色（--color-warn，与图例的"预警"色
+   .sw-y 同色系），让"数据偏旧"这件事一眼可见。⚠️ 走令牌不写魔法色值。 */
 .inv-date-list li.stale {
-  color: #b45309;
+  color: var(--color-warn);
 }
 .inv-date-list li.stale b {
   color: inherit;

@@ -563,7 +563,7 @@ export interface InventoryFilterOptions {
 export interface InventoryRowsQuery {
   /** 店铺名；留空 = 全部店铺 */
   shop?: string;
-  /** 快照日期 YYYY-MM-DD；留空 = 全部日期 */
+  /** 快照日期 YYYY-MM-DD；留空 = 每店各自最新（ADR-0013 per-shop 口径） */
   date?: string;
   /** SKU / 商品名称 / SPU 模糊搜索 */
   keyword?: string;

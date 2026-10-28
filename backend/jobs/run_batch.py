@@ -142,23 +142,20 @@ def run_once() -> BatchStatus:
             # 批处理不再生成 modules/*.json / manifest.json 等 JSON 中间产物。
             db_result = jobdb.ingest_excel_to_db(config.POP_SOURCE_DIR)
             print(f"[db] 摄入：{db_result}")
-            # 库存模块摄入（独立宽表 inventory_daily，不影响现有 POP 链路）
-            inv_result = inventory_mod.ingest_inventory_to_db()
-            print(f"[inventory] 摄入：{inv_result}")
-            # 库存快照淘汰（ADR-0013）：每店只保留最新一份快照，旧的**永久删除**
-            # （源文件 + 入库行 + 哈希记录）。⛔ 失败只告警、不中断本批——
-            # 淘汰失败只是旧快照多留几天，库存数据仍然正确，不该让整天的更新失败。
-            # ⛔ 默认 dry-run（只出清单不动手）：这是不可逆动作，真删须显式开启
-            #    （JD_INVENTORY_RETENTION=on）。
+            # 库存模块摄入（独立宽表 inventory_daily，不影响现有 POP 链路）。
+            # ⚠️ **只摄入保留集内的文件**（ADR-0013）：库存按「每店保留最新一份」
+            #    淘汰旧快照，那些旧文件马上就要被删——没必要为它们付全量解析的代价
+            #    （家配单份 1.66MB / 2000+ 列宽表）。
+            #    保留集由 inventory_retention 探测得出（只读，不删任何东西）。
             try:
-                ret_result = retention_mod.run()
-                print(f"[inventory-retention] {ret_result['mode']}：保留 "
-                      f"{sum(len(v) for v in ret_result['decision'].keep.values())} 份，"
-                      f"待删 {len(ret_result['decision'].drop)} 份，"
-                      f"已删文件 {ret_result['stats'].get('deleted_files', 0)} 份")
-            except Exception as e:  # noqa: BLE001 —— 淘汰失败绝不拖垮批处理
-                print(f"[inventory-retention] 快照淘汰失败（已跳过，不影响本批）："
+                keep_files = retention_mod.plan_keep_set()
+                inv_result = inventory_mod.ingest_inventory_to_db(only_files=keep_files)
+                print(f"[inventory] 摄入：{inv_result}（保留集 {len(keep_files)} 份）")
+            except Exception as e:  # noqa: BLE001 —— 保留集探测失败则退回全量摄入
+                print(f"[inventory] 保留集探测失败（退回全量摄入，不影响本批）："
                       f"{type(e).__name__}: {e}")
+                inv_result = inventory_mod.ingest_inventory_to_db()
+                print(f"[inventory] 摄入：{inv_result}")
             # ERP 编码映射（静态对照表 → erp_map）：补货清单要显示 ERP 编码。
             # ⛔ 失败只告警、不中断本批——ERP 映射是展示层的附加信息，
             # 缺了只是补货清单上的 ERP 列显示「--」，不该让整天的数据更新失败。
@@ -180,6 +177,22 @@ def run_once() -> BatchStatus:
                 print(f"[inv_pics] 库存 SKU 缩略图：新增 {thumb_count} 个文件")
             except Exception as e:  # noqa: BLE001 —— 缩略图失败绝不拖垮批处理
                 print(f"[inv_pics] 库存 SKU 缩略图生成失败（已跳过，不影响本批）：{type(e).__name__}: {e}")
+            # 库存快照淘汰（ADR-0013）：每店只保留最新一份快照，旧的**永久删除**
+            # （源文件 + 入库行 + 哈希记录）。⛔ 失败只告警、不中断本批——
+            # 淘汰失败只是旧快照多留几天，库存数据仍然正确，不该让整天的更新失败。
+            # ⛔ 默认 dry-run（只出清单不动手）：这是不可逆动作，真删须显式开启
+            #    （JD_INVENTORY_RETENTION=on）。
+            # ⚠️ 放在**批处理尾**：淘汰末尾会跑 VACUUM（重写整个库、需要独占锁），
+            #    放最后能让它的持锁窗口落在批处理的非并发时段，冲突概率最低。
+            try:
+                ret_result = retention_mod.run()
+                print(f"[inventory-retention] {ret_result['mode']}：保留 "
+                      f"{sum(len(v) for v in ret_result['decision'].keep.values())} 份，"
+                      f"待删 {len(ret_result['decision'].drop)} 份，"
+                      f"已删文件 {ret_result['stats'].get('deleted_files', 0)} 份")
+            except Exception as e:  # noqa: BLE001 —— 淘汰失败绝不拖垮批处理
+                print(f"[inventory-retention] 快照淘汰失败（已跳过，不影响本批）："
+                      f"{type(e).__name__}: {e}")
             # SPU 原图同步 + 多尺寸缩略图（幂等）：POP 链路里批处理唯一的文件产物
             pipeline.sync_images()
             registry = pipeline.default_registry()

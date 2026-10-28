@@ -179,12 +179,17 @@ def scenario_keep_set(tmp: Path) -> None:
 
 
 def scenario_broken_not_deleted(tmp: Path) -> None:
-    """场景 2：损坏 / 无「时间」列的文件不被删。"""
-    print("\n[2] 损坏文件不删")
+    """场景 2：损坏 / 无「时间」列的文件不被删，**其入库行也不删**。
+
+    ⚠️ 「入库行也不删」是独立于「文件不删」的一条断言：文件留着、行没了，
+    等于把来源拆散删——正是 spec §3 细则 2 要防的。
+    """
+    print("\n[2] 损坏文件不删（文件 + 入库行）")
     src = tmp / "s2"
     src.mkdir()
     _make_xlsx(src / "2026-10-26家配自营库存明细.xlsx", "2026-10-26", "家配")
     _make_xlsx(src / "2026-10-27家配自营库存明细.xlsx", "2026-10-27", "家配")
+    # 损坏文件：文件名带日期 10-28，但表里没有「时间」列
     _make_broken_xlsx(src / "2026-10-28家配自营库存明细.xlsx")
 
     parsed, unparsed = ret.probe(src)
@@ -195,27 +200,60 @@ def scenario_broken_not_deleted(tmp: Path) -> None:
     check(all("2026-10-28" not in f.name for f in dec.drop),
           "损坏文件不在删除集里")
 
+    # 建库：三个日期都有行，验证损坏日期的行也保住
+    db_path = tmp / "s2.db"
+    _setup_db(db_path, [("家配", d, f"sku_{d}") for d in ("2026-10-26", "2026-10-27", "2026-10-28")])
+    _use_db(db_path)
+    rep = ret.run(root=src, mode="on", keep_days=1, report_dir=tmp / "s2rep")
+    st = _read_state(db_path, src)
+    dates_left = sorted({d for (_, d) in st["pairs"]})
+    check("2026-10-28" in dates_left,
+          f"损坏文件的入库行保住了（库内日期：{dates_left}）")
+    check("2026-10-28家配自营库存明细.xlsx" in st["files"],
+          "损坏文件仍在源目录")
+    check("2026-10-26" not in dates_left,
+          f"更早日期的行照删（库内日期：{dates_left}）")
+    check(rep["verify"]["ok"], f"核对通过：{rep['verify'].get('problems')}")
+
 
 def scenario_duplicate_same_day(tmp: Path) -> None:
-    """场景 3：同 (shop, date) 多文件 → 全部保留。"""
+    """场景 3：同 (shop, date) 多文件 → 全部保留（**含旧日期上的多份**）。"""
     print("\n[3] 同店同日多文件")
     src = tmp / "s3"
     src.mkdir()
     _make_xlsx(src / "2026-10-27家配自营库存明细.xlsx", "2026-10-27", "家配")
     _make_xlsx(src / "2026-10-27家配自营库存明细(补).xlsx", "2026-10-27", "家配")
+    # 旧日期上也有两份（分不清哪份是最新的 ⇒ 都保留）
     _make_xlsx(src / "2026-10-26家配自营库存明细.xlsx", "2026-10-26", "家配")
+    _make_xlsx(src / "2026-10-26家配自营库存明细(补).xlsx", "2026-10-26", "家配")
 
     parsed, unparsed = ret.probe(src)
     dec = ret.decide(parsed, unparsed, keep_days=1)
     check("家配" in dec.duplicate_date_shops, "标记出同日多文件的店")
     kept = {f.name for f in dec.keep["家配"]}
-    check(len(kept) == 2, f"同日两份都保留（实际保留 {len(kept)} 份）")
-    check(len(dec.drop) == 1, f"只删更早日期那份（实际待删 {len(dec.drop)}）")
+    check(len(kept) == 4, f"同日两份都保留（保留集共 {len(kept)} 份）")
+    check(len(dec.drop) == 0,
+          f"旧日期上的两份也保留（无法判定哪份最新 ⇒ 都不删），待删 {len(dec.drop)} 份")
+
+    # 入库行也保留
+    db_path = tmp / "s3.db"
+    _setup_db(db_path, [("家配", d, f"sku_{d}") for d in ("2026-10-26", "2026-10-27")])
+    _use_db(db_path)
+    ret.run(root=src, mode="on", keep_days=1, report_dir=tmp / "s3rep")
+    st = _read_state(db_path, src)
+    dates_left = sorted({d for (_, d) in st["pairs"]})
+    check("2026-10-26" in dates_left,
+          f"同日多文件日期的行保住了（库内日期：{dates_left}）")
+    check(len(st["files"]) == 4, f"源目录四份都在（实际 {len(st['files'])}）")
 
 
 def scenario_gate_blocks(tmp: Path) -> None:
-    """场景 4：健康检查不通过 ⇒ 该店零删除。"""
-    print("\n[4] 健康检查门控")
+    """场景 4：健康检查不通过 ⇒ 该店**源文件与入库行都**零删除。
+
+    ⚠️ 断言「DB 行没动」是独立于「源文件没删」的一条：只把店从 `drop` 里剔掉
+    而没同步剔掉待删行 ⇒ 源文件保住了、数据被删空，比不门控更糟。
+    """
+    print("\n[4] 健康检查门控（文件 + 入库行）")
     src = tmp / "s4"
     src.mkdir()
     _make_xlsx(src / "2026-10-26家配自营库存明细.xlsx", "2026-10-26", "家配")
@@ -234,8 +272,17 @@ def scenario_gate_blocks(tmp: Path) -> None:
     finally:
         conn.close()
     check("家配" in dec.gated_shops, "家配被门控拦下")
-    check(len(dec.drop) == 0, f"门控后该店零待删（实际 {len(dec.drop)}）")
+    check(len(dec.drop) == 0, f"门控后该店零待删源文件（实际 {len(dec.drop)}）")
     check("60%" in dec.gated_shops.get("家配", ""), "门控原因写明 60% 阈值")
+
+    # 🔴 关键：该店的入库行也不能被删（门控 = 整体不删）
+    rep = ret.run(root=src, mode="on", keep_days=1, report_dir=tmp / "s4rep")
+    st = _read_state(db_path, src)
+    dates_left = sorted({d for (_, d) in st["pairs"]})
+    check("2026-10-26" in dates_left,
+          f"🔴 门控后旧快照的行保住了（库内日期：{dates_left}）")
+    check(len(st["files"]) == 2, f"门控后源目录两份都在（实际 {len(st['files'])}）")
+    check(rep["verify"]["ok"], f"核对通过：{rep['verify'].get('problems')}")
 
 
 def scenario_execute_and_verify(tmp: Path) -> None:
@@ -279,6 +326,26 @@ def scenario_execute_and_verify(tmp: Path) -> None:
     check(rep2["stats"]["deleted_rows_daily"] == 0,
           f"第二次跑 0 删行（实际 {rep2['stats']['deleted_rows_daily']}）")
     check(rep2["verify"]["ok"], "第二次跑核对仍通过")
+
+    # 删除清单（前置指纹 · 留账不留货）：每条须有 sha256 / 大小 / 删除时间
+    manifest = rep["stats"].get("manifest") or []
+    check(len(manifest) == 4, f"清单 4 条（实际 {len(manifest)}）")
+    check(all(m.get("sha256") for m in manifest), "清单每条都有 sha256 前置指纹")
+    check(all(len(str(m.get("sha256"))) == 64 for m in manifest), "sha256 是完整 64 位摘要")
+    check(all(m.get("deleted_at") for m in manifest), "清单每条都有删除时间")
+    check(all(m.get("deleted") is True for m in manifest), "清单每条都标记已删除")
+    check(all(m.get("size_bytes", 0) > 0 for m in manifest), "清单每条都有大小")
+    # 清单里的 sha256 必须与文件实际哈希一致（删前算的，凭据可信）
+    import hashlib
+    ok_hash = True
+    for m in manifest:
+        src_file = src / str(m["name"])
+        if not src_file.exists():
+            continue
+        h = hashlib.sha256(src_file.read_bytes()).hexdigest()
+        if h != m.get("sha256"):
+            ok_hash = False
+    check(ok_hash, "清单 sha256 与文件实际内容一致（前置指纹可信）")
 
 
 def scenario_self_heal(tmp: Path) -> None:

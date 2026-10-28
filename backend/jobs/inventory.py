@@ -239,23 +239,32 @@ def _replace_file_rows(
         conn.close()
 
 
-def ingest_inventory_to_db(root: Path | None = None) -> dict[str, object]:
+def ingest_inventory_to_db(root: Path | None = None,
+                           only_files: set[str] | None = None) -> dict[str, object]:
     """把库存 xlsx 增量摄入 SQLite（文件级哈希门控）。
 
     Args:
         root: 库存数据源目录；默认 config.INVENTORY_SOURCE_DIR。
+        only_files: 只摄入这些**文件名**（集合）；None = 摄入目录里全部文件。
+            用途（ADR-0013）：库存按「每店保留最新一份」淘汰旧快照时，
+            只该摄入保留集内的文件——省掉对"马上就要被删的旧文件"的全量解析
+            （家配单份 1.66MB / 2000+ 列宽表，每份解析代价不小）。
 
     Returns:
-        dict[str, object]: {changed, files, rows, changed_files, reason}。
+        dict[str, object]: {changed, files, rows, changed_files, reason,
+            shop_rows}。`shop_rows` = {店铺: 本次写入行数}，供健康检查门控使用
+            （门控要判「新快照行数是否够」，不能只看"文件在不在"）。
     """
     from .db import ensure_inventory_schema, get_conn
 
     root = root or config.INVENTORY_SOURCE_DIR
     ensure_inventory_schema()
     files = sorted(p for p in Path(root).glob("*.xlsx") if not p.name.startswith("~$"))
+    if only_files is not None:
+        files = [p for p in files if p.name in only_files]
     if not files:
         return {"changed": False, "files": 0, "rows": 0, "changed_files": 0,
-                "reason": "no_source_files"}
+                "shop_rows": {}, "reason": "no_source_files"}
 
     hashes = {p.name: _sha256(p) for p in files}
     conn = get_conn()
@@ -268,6 +277,7 @@ def ingest_inventory_to_db(root: Path | None = None) -> dict[str, object]:
 
     total_rows = 0
     changed_files = 0
+    shop_rows: dict[str, int] = {}   # 本次各店写入行数（供健康检查门控用）
     for p in files:
         key = p.name
         if key in old and hashes[key] == old[key] and has_rows > 0:
@@ -279,11 +289,15 @@ def ingest_inventory_to_db(root: Path | None = None) -> dict[str, object]:
         _replace_file_rows(shop, date, rows, slow_rows, key, hashes[key])
         total_rows += len(rows)
         changed_files += 1
+        # 该店这一份的入库行数（门控要判「新快照行数是否够」，
+        # 用本次实际写入的行数比用"文件在不在"准确）
+        shop_rows[shop] = shop_rows.get(shop, 0) + len(rows)
 
     return {
         "changed": changed_files > 0,
         "files": len(files),
         "rows": total_rows,
         "changed_files": changed_files,
+        "shop_rows": shop_rows,
         "reason": "ingested" if changed_files else "unchanged",
     }
