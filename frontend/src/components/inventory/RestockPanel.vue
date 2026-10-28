@@ -30,9 +30,9 @@ import type { RestockGroup, RestockListResponse, RestockRow } from "../../types"
 const props = defineProps<{
   /** 店铺过滤（空串 = 全部店铺，与库存矩阵 tab 一致） */
   shop: string;
-  /** 快照日期（空串 = 最新快照） */
-  date: string;
-  /** 关键词过滤（空串 = 不过滤；SKU / 商品名称 / SPU，口径与矩阵表一致） */
+  /**
+   * 关键词过滤（空串 = 不过滤；SKU / 商品名称 / SPU，口径与矩阵表一致）
+   */
   keyword: string;
 }>();
 
@@ -51,14 +51,19 @@ const error = ref<string | null>(null);
 /** 防抖计时句柄。 */
 let timer: number | undefined;
 
-/** 拉取补货清单（参数与 shop/date 一起下发）。 */
+/**
+ * 拉取补货清单（参数与 shop/keyword 一起下发）。
+ *
+ * @remarks
+ * ⛔ **不传 date**：库存按「每店保留自己最新一份」淘汰（ADR-0015），各店日期可能
+ * 不同，跨店单一日期会把落后店筛掉。留空 = 后端按 per-shop 口径各取各的最新。
+ */
 async function load(): Promise<void> {
   loading.value = true;
   error.value = null;
   try {
     data.value = await fetchRestockList({
       shop: props.shop || undefined,
-      date: props.date || undefined,
       keyword: props.keyword || undefined,
       view: view.value,
       params: {
@@ -83,10 +88,10 @@ function scheduleLoad(): void {
   }, 300);
 }
 
-// shop/date/keyword 由父级传入：变化立即重拉（切店铺不该有 300ms 迟滞；
+// shop/keyword 由父级传入：变化立即重拉（切店铺不该有 300ms 迟滞；
 // 关键词的 300ms 防抖在父级做，这里拿到的已是提交后的值）
 watch(
-  () => [props.shop, props.date, props.keyword],
+  () => [props.shop, props.keyword],
   () => void load(),
 );
 // 参数变化：防抖重拉
@@ -202,7 +207,6 @@ function exportExcel(): void {
   try {
     const params = new URLSearchParams();
     if (props.shop) params.set("shop", props.shop);
-    if (props.date) params.set("date", props.date);
     if (props.keyword) params.set("keyword", props.keyword);
     params.set("days", String(days.value));
     params.set("safety", String(safetyPct.value / 100));

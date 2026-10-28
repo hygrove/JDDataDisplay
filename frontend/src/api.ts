@@ -391,7 +391,7 @@ export function inventoryMatrixExportUrl(q: {
  * 拉取库存 KPI 聚合（供顶部卡片）。
  *
  * @param {string} [shop] - 店铺过滤；留空 = 全部店铺。
- * @param {string} [date] - 快照日期；留空 = 全部日期。
+ * @param {string} [date] - 快照日期；留空 = 每店各自最新（ADR-0015 per-shop 口径）。
  * @returns {Promise<InventorySummary>} KPI 聚合。
  * @throws {Error} 接口非 2xx。
  * @example
@@ -411,7 +411,7 @@ export function fetchInventorySummary(shop?: string, date?: string): Promise<Inv
  * 拉取全城市滞销聚合（不限于 8 城）：城市 → 滞销件数，降序。
  *
  * @param {string} [shop] - 店铺过滤；留空 = 全部店铺。
- * @param {string} [date] - 快照日期；留空 = 全部日期。
+ * @param {string} [date] - 快照日期；留空 = 每店各自最新（ADR-0015 per-shop 口径）。
  * @returns {Promise<InventorySlowCity[]>} 每城一项，core=true 为 8 城白名单。
  * @throws {Error} 接口非 2xx。
  * @example
@@ -458,7 +458,7 @@ export function fetchInventoryDistributions(
  * 拉取 8 城预警汇总（每城阈值、红/黄/绿计数、建议补货合计）。
  *
  * @param {string} [shop] - 店铺过滤；留空 = 全部店铺。
- * @param {string} [date] - 快照日期；留空 = 最新快照。
+ * @param {string} [date] - 快照日期；留空 = 每店各自最新（ADR-0015 per-shop 口径）。
  * @returns {Promise<InventoryAlertsSummary>} 8 城汇总（cities 顺序与 meta.cities 一致）。
  * @throws {Error} 接口非 2xx。
  */
@@ -487,7 +487,7 @@ export function putAlertThresholds(
  *
  * @param {object} [q] - 查询与算法参数。
  * @param {string} [q.shop] - 店铺过滤；留空 = 全部店铺。
- * @param {string} [q.date] - 快照日期；留空 = 最新快照。
+ * @param {string} [q.date] - 快照日期；留空 = 每店各自最新（ADR-0015 per-shop 口径）。
  * @param {string} [q.keyword] - 关键词（SKU / 商品名称 / SPU）；留空 = 不过滤。口径与矩阵表一致。
  * @param {"city" | "sku"} [q.view] - 视图：city=按城市分组（默认）/ sku=平铺长表。两者共用同一份计算。
  * @param {RestockParams} [q.params] - 算法参数（days/safety/window）；非法值由后端夹回默认。

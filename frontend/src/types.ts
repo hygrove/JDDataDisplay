@@ -371,6 +371,14 @@ export interface InventoryMeta {
   shops: string[];
   /** 可选快照日期列表（降序） */
   dates: string[];
+  /**
+   * 每店各自最新的快照日期：{店铺: "YYYY-MM-DD"}。
+   *
+   * @remarks
+   * 库存按「每店保留自己最新一份」淘汰（ADR-0015），**各店日期可能不同**——
+   * 某店当天漏下载时它停在上一份。故前端按店分别标注日期，不给跨店单一「数据截至」。
+   */
+  shop_dates: Record<string, string>;
 }
 
 /**
@@ -555,7 +563,7 @@ export interface InventoryFilterOptions {
 export interface InventoryRowsQuery {
   /** 店铺名；留空 = 全部店铺 */
   shop?: string;
-  /** 快照日期 YYYY-MM-DD；留空 = 全部日期 */
+  /** 快照日期 YYYY-MM-DD；留空 = 每店各自最新（ADR-0015 per-shop 口径） */
   date?: string;
   /** SKU / 商品名称 / SPU 模糊搜索 */
   keyword?: string;

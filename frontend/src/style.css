@@ -73,6 +73,11 @@
      改动前该色散落 3 处硬编码（MonthCompareTable 气泡/标题、ModuleView 日均）。 */
   --color-up: #1eb656;
   --color-down: #da2d2d;
+  /* 「注意/警告」语义色（琥珀）：用于「数据偏旧」这类**提示但非错误**的标注。
+     与 --color-danger（危险红，用于错误）刻意区分：库存页「数据截至」里落后于
+     其它店的日期用它标出——它是提醒，不是报错。 */
+  --color-warn: #b45309;
+  --color-warn-2: #f59e0b;
 
   /* 圆角 */
   --radius-xs: 2px;
