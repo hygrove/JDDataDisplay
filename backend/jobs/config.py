@@ -96,3 +96,14 @@ SUMMARY_TOP_N = 10
 #    规模最大的一次不可逆动作，必须先由人工过目再转全自动（ADR-0002 / Q13）。
 #    只有显式设成 on 才会真搬文件。语义与校验见 organize.resolve_mode。
 ORGANIZE_MODE = os.getenv("JD_ORGANIZE", "dry-run")
+
+# ---- 库存快照淘汰（ADR-0013）----
+# INVENTORY_RETENTION_MODE：库存快照淘汰的执行模式，取值 off | dry-run | on。
+# ⚠️ 默认 **dry-run**：这是**不可逆**动作（删源文件 + 删入库行），与 organize 归档
+#    不同——库存快照是商家后台当前时点的导出，历史某天导不出来，删了不可再生。
+#    真删必须显式开启。语义与校验见 inventory_retention.resolve_mode。
+INVENTORY_RETENTION_MODE = os.getenv("JD_INVENTORY_RETENTION", "dry-run")
+
+# INVENTORY_KEEP_DAYS：每店保留最近几天的库存快照。默认 1（= 只保留最新一天）。
+# ⚠️ 小于 1 会被回退到 1——保留集永远至少有一天。
+INVENTORY_KEEP_DAYS = int(os.getenv("JD_INVENTORY_KEEP_DAYS", "1"))

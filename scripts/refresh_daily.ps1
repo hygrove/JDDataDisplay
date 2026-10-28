@@ -65,8 +65,19 @@ if (-not $py) {
 # scheduled run in. Use "off" to skip organizing entirely, "dry-run" to preview only.
 if (-not $env:JD_ORGANIZE) { $env:JD_ORGANIZE = "on" }
 
+# --- Inventory snapshot retention mode -------------------------------------------
+# Same reasoning as JD_ORGANIZE above: this scheduled task runs as SYSTEM with its own
+# environment, so the switch must be declared HERE to persist in the scheduling env.
+# This one is IRREVERSIBLE (it permanently deletes older inventory snapshot files and
+# their DB rows - see docs/adr/0013-inventory-snapshot-retention.md), so it is NOT
+# enabled here yet. Keep it "dry-run" until the first real run has been reviewed by
+# a human. To enable after review: set it to "on".
+# Precedence: if JD_INVENTORY_RETENTION already exists (machine/user env), it wins.
+if (-not $env:JD_INVENTORY_RETENTION) { $env:JD_INVENTORY_RETENTION = "dry-run" }
+
 Write-Log "launcher python=$py"
 Write-Log "launcher JD_ORGANIZE=$($env:JD_ORGANIZE)"
+Write-Log "launcher JD_INVENTORY_RETENTION=$($env:JD_INVENTORY_RETENTION)"
 & $py $script
 $code = $LASTEXITCODE
 Write-Log "launcher exit=$code"

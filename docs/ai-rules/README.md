@@ -42,6 +42,16 @@
 - `{店铺名}_{商品明细|推广数据}_{起}_{止}.{xlsx|csv}`；`shop = path.name.split("_")[0]`；`~$` 前缀锁文件跳过。
 - 数据范围由 `店铺spu登记信息.xlsx` 白名单门控——**改源文件不会自动新增店/SPU**，必须登记。
 
+### 1.5 快照表 vs 长表：两种表语义，别混用
+
+- **约束**：本项目的库存表与 POP 表是**两种不同的表语义**：
+  - `daily_detail`（POP 销售明细）= **长表**，只增不减，⛔ 全项目无 `DELETE FROM daily_detail`（§1.1）。
+  - `inventory_daily` / `inventory_city_slow`（库存）= **快照表**，按 `(shop, date)` 先删后插（ETL `inventory.py:_replace_file_rows` 本来就如此），并按**保留策略**滚动淘汰旧日期。
+- **为什么**：库存快照是「某店某日一次库存状态的完整导出」，全部下游消费（矩阵表 / 补货 / 预警 / 结构分布）只用**单行快照内**的列，⛔ **无任何跨日期聚合**——补货的「近30日出库」「30日有货天数」是**源表自带的列**（`inventory_metrics.CITY_SUFFIXES`），后台导出时已算好。故删旧日期**不会**让任何业务数字算错。
+- **保留策略**：每店保留**自己最新一份**快照（per-shop），旧的**永久删除**（真删，不进回收站）。正常情况三店同日下载 ⇒ 等价于「只保留最新一天」；某店漏下载时该店保留自己上一份，⛔ 不被删空（历史时点商家后台导不出来，删了不可再生）。
+- **推论**：⛔ **不要把「长表只增不减」套到快照表上**，也别把快照表的删旧策略套到长表上。判据是「这张表是不是快照表」，不是「项目里有没有 DELETE」。
+- **论据**：`docs/adr/0013-inventory-snapshot-retention.md`（保留口径、删除顺序自愈论证、与 ADR-0006 回收站语义的边界）。
+
 ---
 
 ## 2. 单一事实来源（SSOT）
@@ -152,9 +162,12 @@
 ## 附录 B：验证脚本清单（改对应模块后必跑）
 
 - **organize 全套**：`backend/jobs/verify_organize*.py`（`make-fixtures`/`snapshot`/`diff`/`selftest`/`env`/`accept <源根>` 等子命令；`accept ResourceData` 一键闸门）。
+- **库存快照淘汰**：`backend/jobs/verify_inventory_retention.py`（`python -m backend.jobs.verify_inventory_retention`）——8 组场景：保留集判定（含落后店降级）、损坏文件不删、同店同日多文件不删、健康检查门控、执行后三集合相等、幂等、**中断自愈**（④-1/④-2 后崩溃重跑收敛）、dry-run 零副作用。全程在临时目录造 fixture，⛔ 不碰生产数据。
 - **前端**：`frontend/verify_month_compare.mjs`、`frontend/verify_agg.mjs`（`npm run verify:month` / `verify:agg`，需 8000 在跑）、`frontend/verify_text_tokens.mjs`（`npm run verify:tokens`，纯静态，**不需 8000**；守最浅文字可读性）。
 - **后端自愈**：改完 `python -c "from backend.app.main import app"`。
 - ⚠️ `verify_all.py` 与 `verify_promo_*` 已在 `78eb10f` 删除，**不要引用**。
+
+> ⚠️ **库存模块的测试需要真实数据**：`backend/tests/test_inventory_api.py` 读 `config.DB_PATH` 指向的库，库为空时 34 个用例会大面积失败（`no such table: inventory_daily`）——那**不是**代码回归，是环境缺数据。跑之前先设 `JD_DB_PATH` 指向有数据的库。
 
 ## 附录 C：不要做的（历史撤销项）
 

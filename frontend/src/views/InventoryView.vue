@@ -66,8 +66,13 @@ const cityCodes = computed<string[]>(() => (alerts.value?.cities ?? []).map((c) 
 
 /** 筛选条件。 */
 const shop = ref("");
-const date = ref("");
-/** 关键词（已提交）：防抖后的值，矩阵表与补货清单共用同一份。 */
+/**
+ * 关键词（已提交）：防抖后的值，矩阵表与补货清单共用同一份。
+ *
+ * @remarks
+ * ⛔ **没有 date 筛选**：库存按「每店保留自己最新一份」淘汰（ADR-0013），各店
+ * 日期可能不同，跨店单一日期会把落后店筛掉。日期以静态标注展示（见 shopDateLabels）。
+ */
 const keyword = ref("");
 /** 关键词输入框的即时值：输入即回显，防抖结束后才提交给后端。 */
 const keywordInput = ref("");
@@ -183,7 +188,7 @@ const filterOptions = computed<InventoryFilterOptions>(() => {
  */
 async function loadAlerts(): Promise<void> {
   try {
-    alerts.value = await fetchInventoryAlerts(shop.value || undefined, date.value || undefined);
+    alerts.value = await fetchInventoryAlerts(shop.value || undefined);
   } catch {
     alerts.value = null;
   }
@@ -206,11 +211,44 @@ async function onThreshold(v: { code: string; threshold: number }): Promise<void
   }
 }
 
-/** 首次加载 meta，并把日期默认设为最新快照。 */
+/** 首次加载 meta。 */
 async function loadMeta(): Promise<void> {
   meta.value = await fetchInventoryMeta();
-  if (!date.value && meta.value.dates.length) date.value = meta.value.dates[0];
 }
+
+/**
+ * 各店最新数据日期的静态标注（ADR-0013 per-shop 保留口径）。
+ *
+ * @remarks
+ * 库存按「每店保留自己最新一份」淘汰，**各店日期可能不同**——某店当天漏下载时
+ * 它停在上一份。这里按店分别标出日期，让「看的是哪天的数据」始终可见；
+ * 若所有店日期一致，只显示一个日期（不重复罗列三个相同的）。
+ * 落后于其它店的日期会标成警告色，因为它意味着该店数据偏旧。
+ */
+const shopDateLabels = computed<{ shop: string; date: string; stale: boolean }[]>(() => {
+  const sd = meta.value?.shop_dates ?? {};
+  const shops = meta.value?.shops ?? [];
+  const items = shops
+    .filter((s) => sd[s])
+    .map((s) => ({ shop: s, date: sd[s], stale: false }));
+  if (!items.length) return [];
+  const newest = items.reduce((a, b) => (a.date >= b.date ? a : b));
+  for (const it of items) it.stale = it.date < newest.date;
+  return items;
+});
+
+/**
+ * 单行日期标注（所有店日期一致时用，省掉三个重复的日期）。
+ *
+ * @remarks
+ * 绝大多数日子三店同日下载 ⇒ 只显示一个日期；只有落后店存在时才展开成逐店列表。
+ */
+const singleDateLabel = computed<string>(() => {
+  const items = shopDateLabels.value;
+  if (!items.length) return "";
+  if (items.every((i) => i.date === items[0].date)) return items[0].date;
+  return "";
+});
 
 /** 拉取明细 + KPI（并行）。筛选/翻页变化时调用。 */
 async function loadData(): Promise<void> {
@@ -218,10 +256,12 @@ async function loadData(): Promise<void> {
   loading.value = true;
   error.value = null;
   try {
+    // ⛔ **不传 date**：库存按「每店保留自己最新一份」淘汰（ADR-0013），各店日期
+    // 可能不同；传一个跨店单一日期会把落后店整个筛掉。留空 = 后端按 per-shop 口径
+    // 各取各的最新（后端 `_query_rows` 的口径，与这里必须同步）。
     const [rows, distData, slow] = await Promise.all([
       fetchInventoryRows({
         shop: shop.value,
-        date: date.value,
         keyword: keyword.value,
         category: filters.value.category,
         seller: filters.value.seller,
@@ -233,10 +273,9 @@ async function loadData(): Promise<void> {
       }),
       fetchInventoryDistributions({
         shop: shop.value,
-        date: date.value,
         keyword: keyword.value,
       }),
-      fetchInventorySlowCities(shop.value, date.value),
+      fetchInventorySlowCities(shop.value),
     ]);
     data.value = rows;
     dist.value = distData;
@@ -349,7 +388,6 @@ function exportMatrix(): void {
     const a = document.createElement("a");
     a.href = inventoryMatrixExportUrl({
       shop: shop.value,
-      date: date.value,
       keyword: keyword.value,
       category: filters.value.category,
       seller: filters.value.seller,
@@ -452,13 +490,18 @@ onMounted(async () => {
               <option v-for="s in meta?.shops ?? []" :key="s" :value="s">{{ s }}</option>
             </select>
           </label>
-          <label class="inv-field">
-            <span>日期</span>
-            <select v-model="date" data-testid="inv-date" @change="onFilterChange">
-              <option value="">全部日期</option>
-              <option v-for="d in meta?.dates ?? []" :key="d" :value="d">{{ d }}</option>
-            </select>
-          </label>
+          <div class="inv-field inv-dates" data-testid="inv-dates">
+            <span>数据截至</span>
+            <!-- 各店日期一致时只显示一个日期；不一致时逐店列出（落后店标警告色） -->
+            <span v-if="singleDateLabel" class="inv-date-single" data-testid="inv-date-single">
+              {{ singleDateLabel }}
+            </span>
+            <ul v-else class="inv-date-list" data-testid="inv-date-list">
+              <li v-for="it in shopDateLabels" :key="it.shop" :class="{ stale: it.stale }">
+                {{ it.shop }} <b>{{ it.date }}</b>
+              </li>
+            </ul>
+          </div>
           <label class="inv-field inv-search">
             <span>搜索</span>
             <input
@@ -607,13 +650,17 @@ onMounted(async () => {
                 <option v-for="s in meta?.shops ?? []" :key="s" :value="s">{{ s }}</option>
               </select>
             </label>
-            <label class="inv-field">
-              <span>日期</span>
-              <select v-model="date" data-testid="inv-date" @change="onFilterChange">
-                <option value="">全部日期</option>
-                <option v-for="d in meta?.dates ?? []" :key="d" :value="d">{{ d }}</option>
-              </select>
-            </label>
+            <div class="inv-field inv-dates" data-testid="inv-dates">
+              <span>数据截至</span>
+              <span v-if="singleDateLabel" class="inv-date-single" data-testid="inv-date-single">
+                {{ singleDateLabel }}
+              </span>
+              <ul v-else class="inv-date-list" data-testid="inv-date-list">
+                <li v-for="it in shopDateLabels" :key="it.shop" :class="{ stale: it.stale }">
+                  {{ it.shop }} <b>{{ it.date }}</b>
+                </li>
+              </ul>
+            </div>
             <label class="inv-field inv-search">
               <span>搜索</span>
               <input
@@ -626,7 +673,7 @@ onMounted(async () => {
             </label>
           </div>
         </div>
-        <RestockPanel :shop="shop" :date="date" :keyword="keyword" />
+        <RestockPanel :shop="shop" :keyword="keyword" />
       </template>
     </div>
 </template>
@@ -786,6 +833,52 @@ onMounted(async () => {
 }
 .inv-search input {
   width: 220px;
+}
+
+/* 数据截至标注（ADR-0013 per-shop 口径）：
+   各店日期一致 → 单个日期；不一致 → 逐店列出，落后店标警告色。 */
+.inv-dates {
+  gap: 6px;
+}
+.inv-date-single {
+  height: 34px;
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  border: 1px solid var(--color-border-2);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text-2);
+  font-size: calc(13px * var(--font-scale));
+  white-space: nowrap;
+}
+.inv-date-list {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  padding: 0 10px;
+  height: 34px;
+  list-style: none;
+  border: 1px solid var(--color-border-2);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text-2);
+  font-size: calc(13px * var(--font-scale));
+  white-space: nowrap;
+}
+.inv-date-list li {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+/* 落后店：它的快照日期比其它店旧 → 标成琥珀色（与图例的"预警"色 .sw-y 同色系），
+   让"数据偏旧"这件事一眼可见。⚠️ 琥珀色不是文字令牌，不能拿它当正文色。 */
+.inv-date-list li.stale {
+  color: #b45309;
+}
+.inv-date-list li.stale b {
+  color: inherit;
 }
 .inv-tools {
   display: flex;
