@@ -34,6 +34,7 @@ from ..jobs import erp_map as erp_map_mod
 from ..jobs import inv_pics
 from ..jobs.alert_rules import (
     ALERT,
+    ALLOWED_WINDOWS,
     HEALTHY,
     INCOMING,
     DEFAULT_DAYS,
@@ -94,8 +95,21 @@ def _filter_keyword(data: list[dict], keyword: Optional[str]) -> list[dict]:
     ]
 
 
-def _query_rows(shop: Optional[str], date: Optional[str]) -> list[dict]:
-    """按 (shop, date) 拉取库存行（返回 dict 列表）。"""
+def _query_rows(shop: Optional[str], date: Optional[str], fields: Optional[tuple[str, ...]] = None) -> list[dict]:
+    """按 (shop, date) 拉取库存行（返回 dict 列表）；fields 指定时只投影这些列。
+
+    为什么需要列投影：inventory_daily 是 184 列宽表，SELECT * 全列拉回实测
+    618ms（2353 行）；只拉 8 个身份列降到 8.5ms。各端点按需传 fields，
+    只有 /rows 与两个导出必须全列（见各调用点注释）。
+
+    Args:
+        shop: 店铺过滤；None = 全部店铺。
+        date: 快照日期；None = 全部日期。
+        fields: 要查询的列名元组；None = SELECT *（全列，旧行为）。
+
+    Returns:
+        list[dict]: 行列表；fields 指定时每行只含这些键。
+    """
     conn = _conn()
     try:
         where = []
@@ -106,13 +120,56 @@ def _query_rows(shop: Optional[str], date: Optional[str]) -> list[dict]:
         if date:
             where.append("date=?")
             params.append(date)
-        sql = "SELECT * FROM inventory_daily"
+        cols = "*" if fields is None else ", ".join(f'"{f}"' for f in fields)
+        sql = f"SELECT {cols} FROM inventory_daily"
         if where:
             sql += " WHERE " + " AND ".join(where)
         cur = conn.execute(sql, params)
         return [dict(r) for r in cur.fetchall()]
     finally:
         conn.close()
+
+
+# 身份列（关键词过滤 / 聚合 / 行下发共用的最小列集）。
+_IDENTITY_FIELDS: tuple[str, ...] = (
+    "date", "shop", "sku", "sku_name", "spu", "category", "seller", "shelf_status",
+)
+
+
+# /summary 的 KPI 指标 key（inventory_metrics 的 key）。
+# 投影列（_summary_fields）与响应装配（get_summary）都由它派生——
+# KPI 增删只改这一处，列与响应自动跟上，不会漂移。
+_SUMMARY_KEYS: tuple[str, ...] = (
+    "city_stock", "city_slow", "city_purchase", "city_out_30", "nat_slow",
+)
+
+
+def _summary_fields() -> tuple[str, ...]:
+    """/summary 的投影列：KPI 指标的 fields + 身份列（total_skus 用行数，不依赖列）。"""
+    fields = set(_IDENTITY_FIELDS)
+    for m in METRICS:
+        if m["key"] in _SUMMARY_KEYS:
+            fields.update(m["fields"])
+    return tuple(sorted(fields))
+
+
+def _alert_fields() -> tuple[str, ...]:
+    """预警 / 补货共用的投影列：8 城 × {stock, purchase, out_w, avail_w, sellable_days} + 身份列。
+
+    ⚠️ 与 _row_city_values 的取数公式同源：那边改用新字段（或 alert_rules 的
+    ALLOWED_WINDOWS / REF_WINDOW 变更），这里必须同步——投影缺列不会报错，
+    而是 get 返回 None → _num 归 0 → 预警 / 补货量静默算错。列名直接从
+    alert_rules 常量派生，就是为了删掉「两处手写同一份清单」的漂移面。
+    """
+    fields = set(_IDENTITY_FIELDS)
+    windows = sorted(set(ALLOWED_WINDOWS) | {REF_WINDOW})
+    for code in CITY_CODES.values():
+        for suf in ("stock", "purchase", "sellable_days"):
+            fields.add(f"{code}_{suf}")
+        for w in windows:
+            fields.add(f"{code}_out_{w}")
+            fields.add(f"{code}_avail_{w}")
+    return tuple(sorted(fields))
 
 
 def _split_multi(value: Optional[str]) -> set[str]:
@@ -252,23 +309,34 @@ def _slow_cities_for(rows: list[dict]) -> dict[tuple[str, str, str], dict[str, f
 
     数据来自 inventory_city_slow 长表（约 70 个城市/仓，不限 8 城白名单），
     供前端在「全国滞销件数」列里按行展示城市拆分。
+
+    查询按 (date, shop) 分组、每组一条 ``sku IN (...)``：原来逐行点查，
+    当页 50 行就是 50 条 SQL；首屏单日多店场景现在只有几条（走
+    idx_inv_city_slow_lookup 的 (date, shop, sku) 前缀）。sku 数受
+    page_size ≤ 500 限制，远低于 SQLite 999 参数上限，无需分批。
     """
     pairs = {(r.get("date"), r.get("shop"), r.get("sku")) for r in rows}
     pairs = {p for p in pairs if p[0] and p[1] and p[2]}
     if not pairs:
         return {}
+    by_ds: dict[tuple[str, str], set[str]] = {}
+    for d, s, k in pairs:
+        by_ds.setdefault((d, s), set()).add(k)
     conn = _conn()
     try:
         out: dict[tuple[str, str, str], dict[str, float]] = {}
-        for d, s, k in pairs:
+        for (d, s), skus in sorted(by_ds.items()):
+            sku_list = sorted(skus)
+            placeholders = ",".join("?" * len(sku_list))
             cur = conn.execute(
-                "SELECT city, slow_units FROM inventory_city_slow WHERE date=? AND shop=? AND sku=?",
-                (d, s, k),
+                "SELECT sku, city, slow_units FROM inventory_city_slow "
+                f"WHERE date=? AND shop=? AND sku IN ({placeholders})",
+                (d, s, *sku_list),
             )
-            cities = {r["city"]: float(r["slow_units"] or 0) for r in cur.fetchall()}
-            cities = {c: v for c, v in cities.items() if v > 0}
-            if cities:
-                out[(d, s, k)] = cities
+            for r in cur.fetchall():
+                v = float(r["slow_units"] or 0)
+                if v > 0:
+                    out.setdefault((d, s, r["sku"]), {})[r["city"]] = v
         return out
     finally:
         conn.close()
@@ -308,6 +376,11 @@ def get_rows(
     排序发生在**分页之前**：作用于当前筛选范围内的全部行（不是当页 50 条），
     sort_by 取指标 key，`city_stock`（现货库存）按该行 8 城合计排序，
     与单元格末行「【合计】」同口径；缺失值恒排末尾。合计行取自全量数据，不受排序影响。
+
+    ⚠️ 本端点必须**全列**查询（不传 fields 投影）：前端「指标配置」勾选切换
+    不重新发请求（行数据要承载全部可勾选指标的字段），且合计 / 排序需要
+    aggregatable 指标的全部 fields。响应体瘦身靠 GZip（184 列 JSON 实测
+    181KB → 11KB），不靠裁列。
     """
     data = _query_rows(shop, date)
     data = _filter_keyword(data, keyword)
@@ -379,20 +452,22 @@ def get_summary(
     date: Optional[str] = Query(None),
 ) -> dict[str, Any]:
     """当前筛选范围的 KPI 聚合（供顶部卡片展示）。"""
-    data = _query_rows(shop, date)
+    # 窄投影：KPI 只用 _SUMMARY_KEYS 指标的 fields（184 列全拉实测 618ms → 约 50ms）
+    data = _query_rows(shop, date, _summary_fields())
     totals = _compute_totals(data)
-    # 取聚合后可读的 KPI（数值已四舍五入）
+    # 取聚合后可读的 KPI（数值已四舍五入）；key 清单见 _SUMMARY_KEYS
     def _num(key: str) -> float:
         v = totals.get(key)
         return v if isinstance(v, (int, float)) else 0.0
 
+    vals = {key: _num(key) for key in _SUMMARY_KEYS}
     return {
         "total_skus": len(data),
-        "stock": _num("city_stock"),          # 现货库存（8 城求和）
-        "slow": _num("city_slow"),            # 滞销件数（8 城求和）
-        "purchase": _num("city_purchase"),    # 采购未到货（8 城求和）
-        "out_30": _num("city_out_30"),        # 近30日出库（8 城求和）
-        "nat_slow": _num("nat_slow"),         # 全国滞销件数
+        "stock": vals["city_stock"],          # 现货库存（8 城求和）
+        "slow": vals["city_slow"],            # 滞销件数（8 城求和）
+        "purchase": vals["city_purchase"],    # 采购未到货（8 城求和）
+        "out_30": vals["city_out_30"],        # 近30日出库（8 城求和）
+        "nat_slow": vals["nat_slow"],         # 全国滞销件数
     }
 
 
@@ -412,7 +487,9 @@ def get_distributions(
     """
     from collections import Counter, defaultdict
 
-    data = _query_rows(shop, date)
+    # 窄投影：本端点只做身份列维度的聚合（keyword 过滤 / 四维度 Counter 全在
+    # 身份列上），184 列全拉纯属浪费（实测 618ms → 8.5ms）。
+    data = _query_rows(shop, date, _IDENTITY_FIELDS)
     if keyword:
         kw = keyword.strip().lower()
         data = [
@@ -681,7 +758,8 @@ def get_alerts_summary(
         snap = date or _latest_date(conn)
     finally:
         conn.close()
-    data = _query_rows(shop, snap)
+    # 窄投影：预警计算只碰 8 城的 stock/purchase/out_w/avail_w（见 _alert_fields）
+    data = _query_rows(shop, snap, _alert_fields())
     cities: list[dict[str, Any]] = []
     for city in CITIES:
         code = CITY_CODES[city]
@@ -845,7 +923,8 @@ def _restock_payload(
         snap = date or _latest_date(conn)
     finally:
         conn.close()
-    data = _filter_keyword(_query_rows(shop, snap), keyword)
+    # 窄投影：补货计算与预警同一套取数口径（_alert_fields 与 _row_city_values 同源）
+    data = _filter_keyword(_query_rows(shop, snap, _alert_fields()), keyword)
     rows = _restock_long_rows(data, thresholds, d, s, w, _erp_codes(data), _sku_pics(data))
     order = {city: i for i, city in enumerate(CITIES)}
     sku_rows = sorted(rows, key=lambda r: (str(r["sku"]), order.get(str(r["city"]), len(order))))
@@ -1093,6 +1172,10 @@ def _matrix_export_payload(
     @remarks
     合计（totals / city_totals）取全量筛选结果，与矩阵表 tfoot 同源；
     ERP 编码走映射表（与补货清单同一函数），库里不写 0、导出写 0（下游模板占位）。
+
+    ⚠️ 与 /rows 同理必须**全列**查询：导出指标列由用户勾选动态决定
+    （metrics 参数），裁列会在换勾选后导出空列。导出不在首屏路径，
+    全列扫描成本可接受。
     """
     data = _query_rows(shop, date)
     data = _filter_keyword(data, keyword)

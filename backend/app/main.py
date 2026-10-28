@@ -19,6 +19,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -38,6 +39,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# GZip 压缩：API JSON 响应的重复列名极多（库存矩阵 50 行 × 184 列实测
+# 181KB → 11KB，16:1）。带内容 hash 的 /assets 静态文件顺带受益；
+# xlsx 导出本身是 zip 容器压不动但无害；minimum_size=1024 跳过小响应。
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 # 业务 API 路由（/api/manifest、/api/module/...、/api/refresh 等）
 app.include_router(api_router)

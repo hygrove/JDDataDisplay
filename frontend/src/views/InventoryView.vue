@@ -14,6 +14,7 @@ import {
   putAlertThresholds,
 } from "../api";
 import { useInventoryMetricsStore } from "../stores/inventoryMetrics";
+import { useUiStore } from "../stores/ui";
 import type {
   InventoryAlertsSummary,
   InventoryDistributions,
@@ -95,6 +96,7 @@ const sort = ref<{ key: string | null; order: "asc" | "desc" | null }>({
 });
 
 const metricsStore = useInventoryMetricsStore();
+const ui = useUiStore();
 
 /**
  * 传给「指标配置」面板与矩阵表的「已勾选非锁定指标 key」。
@@ -383,6 +385,9 @@ function onFilterShop(s: string): void {
 }
 
 onMounted(async () => {
+  // 路由级遮罩交棒（与 SpuAnalysisView 同一套约定）：chunk 已下载解析、
+  // 组件挂载完毕，撤掉全屏遮罩；数据等待期由下方骨架屏（v-if="!data"）接管。
+  ui.setNavigating(false);
   try {
     await loadMeta();
     await loadData();
@@ -406,8 +411,21 @@ onMounted(async () => {
          仍由本组件持有，切 Tab 不丢选择。 -->
 
     <template v-if="activeTab === 'matrix'">
+      <!-- 首屏骨架·上（概览卡区占位）：chunk 挂载后到首批数据返回前显示。
+           原先的反馈只有页面最底部一行「加载中…」小字，位于视口外看不见，
+           用户感知就是「点了没反应」。骨架拆成卡/表两段、插在真实布局的
+           对应位置，中间夹真实的筛选条与 tab 条——骨架严格模拟最终版式。 -->
+      <div v-if="!data && !error" class="skel-cards" data-testid="inv-skeleton" aria-label="库存数据加载中">
+        <div v-for="i in 4" :key="'skc' + i" class="skel-card">
+          <div class="skel-line w40"></div>
+          <div class="skel-line w70"></div>
+          <div class="skel-line w55"></div>
+        </div>
+      </div>
+
       <!-- 概览：4 张结构分布卡（点击店铺名/店铺列头 → 联动下方表格按该店铺过滤） -->
       <InventoryDistCards
+        v-if="dist"
         :dist="dist"
         :activeShop="shop"
         @filter-shop="onFilterShop"
@@ -423,8 +441,9 @@ onMounted(async () => {
       />
 
       <!-- 筛选条（2026-10 调整至阈值条下方）：店铺 / 日期 / 搜索 + 指标配置。
-           「指标配置」只对矩阵表有意义，故仅在矩阵 pane 渲染；筛选状态由父级共享。 -->
-      <div class="inv-toolbar">
+           「指标配置」只对矩阵表有意义，故仅在矩阵 pane 渲染；筛选状态由父级共享。
+           v-if="meta"：meta 未返回前隐藏（下拉还没有选项，渲染空壳不如让位给骨架）。 -->
+      <div v-if="meta" class="inv-toolbar">
         <div class="inv-filters">
           <label class="inv-field">
             <span>店铺</span>
@@ -489,7 +508,22 @@ onMounted(async () => {
 
     <div v-if="error" class="inv-error" data-testid="inv-error">{{ error }}</div>
 
+    <!-- 首屏骨架·下（矩阵表行占位）：与上方卡骨架同条件，插在表格的真实位置，
+         中间的筛选条 / tab 条 meta 一到就真实渲染。 -->
+    <div v-if="!data && !error" class="skel-table" aria-hidden="true">
+      <div v-for="i in 8" :key="'skr' + i" class="skel-row">
+        <div class="skel-thumb"></div>
+        <div class="skel-line w30"></div>
+        <div class="skel-line w45"></div>
+        <div class="skel-line w15"></div>
+        <div class="skel-line w12"></div>
+      </div>
+    </div>
+
     <div v-if="data" class="inv-table-meta" data-testid="inv-table-meta">
+      <!-- 后续加载（翻页/筛选/排序/搜索）的反馈：与页码同行、恒在视口内。
+           首屏等待由上方骨架屏负责，这里只在已有数据刷新时出现。 -->
+      <span v-if="loading" class="inv-loading-pill" data-testid="inv-loading">加载中…</span>
       <span class="inv-count">共 <b>{{ data.total }}</b> 条</span>
       <span class="inv-pagesize" data-testid="inv-page-size-hint">每页 <b>{{ pageSize }}</b> 条</span>
       <span class="inv-pageinfo">第 {{ page }} / {{ totalPages }} 页</span>
@@ -522,8 +556,10 @@ onMounted(async () => {
       </div>
     </div>
 
+    <!-- v-if 含 data：meta 先到 / rows 未到的空窗期不渲染空表（由骨架屏占位）；
+         翻页时 data 保持旧值，表格平滑换页不闪空。 -->
     <InventoryMatrixTable
-      v-if="meta"
+      v-if="meta && data"
       :visibleMetrics="visibleMetrics"
       :cities="meta.cities"
       :rows="data?.rows ?? []"
@@ -539,8 +575,6 @@ onMounted(async () => {
       @update:filters="onFilters"
       @update:sort="onSort"
     />
-
-    <div v-if="loading" class="inv-loading" data-testid="inv-loading">加载中…</div>
       </template>
 
       <!-- 补货工作台：参数可调的采购清单（单 sheet Excel 导出）。
@@ -899,9 +933,96 @@ onMounted(async () => {
   font-size: calc(13px * var(--font-scale));
   margin-bottom: 12px;
 }
-.inv-loading {
-  margin-top: 12px;
-  font-size: calc(13px * var(--font-scale));
-  color: var(--color-text-5);
+/* ---------- 首层骨架（meta/rows 未就绪时的结构占位）---------- */
+/* 灰条只用令牌：surface-2 当灰条底、border-2 当容器描边，不手写魔法灰值。 */
+.skel-cards {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+/* 窄屏降级：4 张卡放不下就折行（与真实概览卡同思路） */
+@media (max-width: 1080px) {
+  .skel-cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+.skel-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-2);
+  border-radius: var(--radius-lg);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.skel-table {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.skel-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 8px 14px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-2);
+  border-radius: var(--radius-md);
+}
+.skel-thumb {
+  width: 44px;
+  height: 44px;
+  flex: none;
+  border-radius: var(--radius-md);
+  background: var(--color-surface-2);
+  animation: skel-pulse 1.2s ease-in-out infinite;
+}
+.skel-line {
+  height: 12px;
+  border-radius: var(--radius-md);
+  background: var(--color-surface-2);
+  animation: skel-pulse 1.2s ease-in-out infinite;
+}
+.skel-line.w70 { width: 70%; }
+.skel-line.w55 { width: 55%; }
+.skel-line.w45 { width: 45%; }
+.skel-line.w40 { width: 40%; }
+.skel-line.w30 { width: 30%; }
+.skel-line.w15 { width: 15%; }
+.skel-line.w12 { width: 12%; }
+/* 呼吸感：只动 opacity（不动布局属性），且尊重系统减动效偏好 */
+@keyframes skel-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .skel-line,
+  .skel-thumb {
+    animation: none;
+  }
+}
+/* ---------- 后续加载反馈（与页码同行，恒在视口内）---------- */
+.inv-loading-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: var(--radius-pill);
+  background: var(--color-brand-tint);
+  color: var(--color-brand);
+  font-size: calc(12px * var(--font-scale));
+  white-space: nowrap;
+}
+.inv-loading-pill::before {
+  content: "";
+  width: 10px;
+  height: 10px;
+  border: 2px solid var(--color-brand-border);
+  border-top-color: var(--color-brand);
+  border-radius: 50%;
+  animation: pill-spin 0.8s linear infinite;
+}
+@keyframes pill-spin {
+  to { transform: rotate(360deg); }
 }
 </style>

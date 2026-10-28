@@ -56,15 +56,19 @@ export const router = createRouter({
   ],
 });
 
-// 路由级加载遮罩：单品分析页是懒加载大 chunk（含 echarts），点击跳转后要等 chunk
-// 下载+解析，这段时间内目标组件还没挂载、自身遮罩不会出现。这里在「跳转一开始」就亮起
-// 全屏遮罩，组件挂载后再由 SpuAnalysisView.onMounted 把 navigating 复位（交棒给页面自身遮罩）。
+// 路由级加载遮罩：两个懒加载大 chunk 的路由，点击跳转后要等 chunk 下载+解析，
+// 这段时间内目标组件还没挂载、自身遮罩不会出现。这里在「跳转一开始」就亮起
+// 全屏遮罩，组件挂载后再由目标视图 onMounted 把 navigating 复位（交棒给页面
+// 自身的骨架屏 / 遮罩）：
+// - spu-analysis：依赖 echarts 的大 chunk；
+// - inventory：库存页 chunk + 首屏数据接口（meta + 三接口并发）。
 //
 // ⚠️ useUiStore() 必须在导航发生的**运行时**调用（此时 Pinia 已装配），
 //    不能放在模块顶层——模块顶层执行时机早于 Pinia 安装，会抛「no active Pinia」。
 router.beforeEach((to) => {
-  // 只对单品分析页点亮：其它导航本来就很快，加遮罩反而会造成闪烁
-  if (to.name === "spu-analysis") {
+  // 只对懒加载大 chunk 的两个路由点亮：其它导航本来就很快，
+  // 加遮罩反而会造成闪烁
+  if (to.name === "spu-analysis" || to.name === "inventory") {
     useUiStore().setNavigating(true);
   }
 });
