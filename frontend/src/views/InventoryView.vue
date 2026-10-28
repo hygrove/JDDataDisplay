@@ -70,7 +70,7 @@ const shop = ref("");
  * 关键词（已提交）：防抖后的值，矩阵表与补货清单共用同一份。
  *
  * @remarks
- * ⛔ **没有 date 筛选**：库存按「每店保留自己最新一份」淘汰（ADR-0013），各店
+ * ⛔ **没有 date 筛选**：库存按「每店保留自己最新一份」淘汰（ADR-0015），各店
  * 日期可能不同，跨店单一日期会把落后店筛掉。日期以静态标注展示（见 shopDateLabels）。
  */
 const keyword = ref("");
@@ -217,7 +217,7 @@ async function loadMeta(): Promise<void> {
 }
 
 /**
- * 各店最新数据日期的静态标注（ADR-0013 per-shop 保留口径）。
+ * 各店最新数据日期的静态标注（ADR-0015 per-shop 保留口径）。
  *
  * @remarks
  * 库存按「每店保留自己最新一份」淘汰，**各店日期可能不同**——某店当天漏下载时
@@ -256,7 +256,7 @@ async function loadData(): Promise<void> {
   loading.value = true;
   error.value = null;
   try {
-    // ⛔ **不传 date**：库存按「每店保留自己最新一份」淘汰（ADR-0013），各店日期
+    // ⛔ **不传 date**：库存按「每店保留自己最新一份」淘汰（ADR-0015），各店日期
     // 可能不同；传一个跨店单一日期会把落后店整个筛掉。留空 = 后端按 per-shop 口径
     // 各取各的最新（后端 `_query_rows` 的口径，与这里必须同步）。
     const [rows, distData, slow] = await Promise.all([
@@ -835,7 +835,7 @@ onMounted(async () => {
   width: 220px;
 }
 
-/* 数据截至标注（ADR-0013 per-shop 口径）：
+/* 数据截至标注（ADR-0015 per-shop 口径）：
    各店日期一致 → 单个日期；不一致 → 逐店列出，落后店标警告色。 */
 .inv-dates {
   gap: 6px;

@@ -246,7 +246,7 @@ def ingest_inventory_to_db(root: Path | None = None,
     Args:
         root: 库存数据源目录；默认 config.INVENTORY_SOURCE_DIR。
         only_files: 只摄入这些**文件名**（集合）；None = 摄入目录里全部文件。
-            用途（ADR-0013）：库存按「每店保留最新一份」淘汰旧快照时，
+            用途（ADR-0015）：库存按「每店保留最新一份」淘汰旧快照时，
             只该摄入保留集内的文件——省掉对"马上就要被删的旧文件"的全量解析
             （家配单份 1.66MB / 2000+ 列宽表，每份解析代价不小）。
 

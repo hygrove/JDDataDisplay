@@ -97,7 +97,7 @@ SUMMARY_TOP_N = 10
 #    只有显式设成 on 才会真搬文件。语义与校验见 organize.resolve_mode。
 ORGANIZE_MODE = os.getenv("JD_ORGANIZE", "dry-run")
 
-# ---- 库存快照淘汰（ADR-0013）----
+# ---- 库存快照淘汰（ADR-0015）----
 # INVENTORY_RETENTION_MODE：库存快照淘汰的执行模式，取值 off | dry-run | on。
 # ⚠️ 默认 **dry-run**：这是**不可逆**动作（删源文件 + 删入库行），与 organize 归档
 #    不同——库存快照是商家后台当前时点的导出，历史某天导不出来，删了不可再生。

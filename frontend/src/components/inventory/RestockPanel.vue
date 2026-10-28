@@ -55,7 +55,7 @@ let timer: number | undefined;
  * 拉取补货清单（参数与 shop/keyword 一起下发）。
  *
  * @remarks
- * ⛔ **不传 date**：库存按「每店保留自己最新一份」淘汰（ADR-0013），各店日期可能
+ * ⛔ **不传 date**：库存按「每店保留自己最新一份」淘汰（ADR-0015），各店日期可能
  * 不同，跨店单一日期会把落后店筛掉。留空 = 后端按 per-shop 口径各取各的最新。
  */
 async function load(): Promise<void> {

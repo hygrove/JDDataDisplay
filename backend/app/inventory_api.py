@@ -103,7 +103,7 @@ def _query_rows(shop: Optional[str], date: Optional[str], fields: Optional[tuple
     只有 /rows 与两个导出必须全列（见各调用点注释）。
 
     ⚠️ **date 为空时的语义 = 每店各自最新**（不是全局最新日期）：
-    库存按「每店保留自己最新一份」淘汰（ADR-0013），落后店的快照日期可能比别的店早。
+    库存按「每店保留自己最新一份」淘汰（ADR-0015），落后店的快照日期可能比别的店早。
     若此处取全局 MAX(date)，落后店会被整个筛掉、从页面上消失。⇒ 空日期时按
     (shop, MAX(date)) 逐店取；显式给了日期才精确匹配该日期。
 
@@ -126,7 +126,7 @@ def _query_rows(shop: Optional[str], date: Optional[str], fields: Optional[tuple
             where.append("date=?")
             params.append(date)
         else:
-            # 每店各自最新：只保留该店日期最大的那份快照（ADR-0013 的 per-shop 口径）
+            # 每店各自最新：只保留该店日期最大的那份快照（ADR-0015 的 per-shop 口径）
             where.append(
                 "date = (SELECT MAX(d2.date) FROM inventory_daily d2 WHERE d2.shop = inventory_daily.shop)"
             )
@@ -356,7 +356,7 @@ def _slow_cities_for(rows: list[dict]) -> dict[tuple[str, str, str], dict[str, f
 def get_meta() -> dict[str, Any]:
     """获取指标配置 + 可选店铺/日期列表（前端首屏拉一次）。
 
-    `shop_dates` 是**每店各自最新**的快照日期（ADR-0013 的 per-shop 保留口径）：
+    `shop_dates` 是**每店各自最新**的快照日期（ADR-0015 的 per-shop 保留口径）：
     某店当天漏下载时它停在上一份，各店日期可能不同 ⇒ 前端按店分别标注，
     不给一个跨店的单一「数据截至」。
     """
@@ -444,7 +444,7 @@ def get_slow_cities(
 
     core=true 表示该城市属于 8 城白名单（前端可高亮）。
 
-    ⚠️ date 为空 = 每店各自最新（ADR-0013 per-shop 口径），与 `_query_rows` 一致。
+    ⚠️ date 为空 = 每店各自最新（ADR-0015 per-shop 口径），与 `_query_rows` 一致。
     """
     conn = _conn()
     try:
@@ -511,7 +511,7 @@ def get_distributions(
     统计口径：以 (店铺, SKU) 为最小单位去重（多日期快照按最新一条取值），
     避免同一 SKU 因多天快照被重复计数；分母 = 当前筛选范围。
 
-    ⚠️ date 为空 = 每店各自最新（ADR-0013 per-shop 口径）。淘汰后每店只有一份
+    ⚠️ date 为空 = 每店各自最新（ADR-0015 per-shop 口径）。淘汰后每店只有一份
     快照，去重逻辑变成恒等变换，但保留它以兼容显式传入 date 的场景。
 
     Returns:
@@ -679,7 +679,7 @@ def _latest_date(conn) -> Optional[str]:
     """inventory_daily 全局最新快照日期（无数据返回 None）。
 
     ⚠️ **只用于展示「数据截至」**，⛔ 不要用它做取数过滤：库存按「每店保留自己最新
-    一份」淘汰（ADR-0013），落后店的日期可能更早；用全局 MAX(date) 过滤会把落后店
+    一份」淘汰（ADR-0015），落后店的日期可能更早；用全局 MAX(date) 过滤会把落后店
     整个筛掉、从页面上消失。取数一律走 `_query_rows` 的 per-shop 口径。
     """
     r = conn.execute("SELECT MAX(date) AS d FROM inventory_daily").fetchone()
@@ -689,7 +689,7 @@ def _latest_date(conn) -> Optional[str]:
 def _shop_dates(conn) -> dict[str, str]:
     """每店各自最新的快照日期：{店铺: 日期}。
 
-    库存按「每店保留自己最新一份」淘汰（ADR-0013），所以各店日期**可能不同**
+    库存按「每店保留自己最新一份」淘汰（ADR-0015），所以各店日期**可能不同**
     ——某店当天漏下载时它停在上一份。页面必须把这件事显示出来，否则用户会以为
     看的是同一天的数据。
 
@@ -825,7 +825,7 @@ def get_alerts_summary(
     thresholds = _threshold_map()
     conn = _conn()
     try:
-        # ⚠️ date 为空 = 每店各自最新（`_query_rows` 的 per-shop 口径，ADR-0013），
+        # ⚠️ date 为空 = 每店各自最新（`_query_rows` 的 per-shop 口径，ADR-0015），
         # ⛔ 不能用全局 MAX(date) 过滤——落后店会被整个筛掉、从页面上消失。
         # `snap` 仅作**展示**用（页面显示「数据截至」），不参与取数过滤。
         snap = date or _latest_date(conn)
@@ -996,7 +996,7 @@ def _restock_payload(
     thresholds = _threshold_map()
     conn = _conn()
     try:
-        # ⚠️ 同 alerts/summary：date 为空 = 每店各自最新（ADR-0013 per-shop 口径），
+        # ⚠️ 同 alerts/summary：date 为空 = 每店各自最新（ADR-0015 per-shop 口径），
         # `snap` 仅用于展示，不参与取数过滤（全局 MAX(date) 会把落后店筛掉）。
         snap = date or _latest_date(conn)
     finally:

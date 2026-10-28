@@ -143,7 +143,7 @@ def run_once() -> BatchStatus:
             db_result = jobdb.ingest_excel_to_db(config.POP_SOURCE_DIR)
             print(f"[db] 摄入：{db_result}")
             # 库存模块摄入（独立宽表 inventory_daily，不影响现有 POP 链路）。
-            # ⚠️ **只摄入保留集内的文件**（ADR-0013）：库存按「每店保留最新一份」
+            # ⚠️ **只摄入保留集内的文件**（ADR-0015）：库存按「每店保留最新一份」
             #    淘汰旧快照，那些旧文件马上就要被删——没必要为它们付全量解析的代价
             #    （家配单份 1.66MB / 2000+ 列宽表）。
             #    保留集由 inventory_retention 探测得出（只读，不删任何东西）。
@@ -177,7 +177,7 @@ def run_once() -> BatchStatus:
                 print(f"[inv_pics] 库存 SKU 缩略图：新增 {thumb_count} 个文件")
             except Exception as e:  # noqa: BLE001 —— 缩略图失败绝不拖垮批处理
                 print(f"[inv_pics] 库存 SKU 缩略图生成失败（已跳过，不影响本批）：{type(e).__name__}: {e}")
-            # 库存快照淘汰（ADR-0013）：每店只保留最新一份快照，旧的**永久删除**
+            # 库存快照淘汰（ADR-0015）：每店只保留最新一份快照，旧的**永久删除**
             # （源文件 + 入库行 + 哈希记录）。⛔ 失败只告警、不中断本批——
             # 淘汰失败只是旧快照多留几天，库存数据仍然正确，不该让整天的更新失败。
             # ⛔ 默认 dry-run（只出清单不动手）：这是不可逆动作，真删须显式开启
