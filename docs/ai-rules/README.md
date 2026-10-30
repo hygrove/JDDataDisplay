@@ -92,7 +92,7 @@
 
 ## 4. 部署与运维（避免"改了不生效"的鬼打墙）
 
-- 🔴 **每晚 20:15 计划任务（`JDViz_DailyRefresh`，SYSTEM）跑的是工作区代码，不是某个 commit** → 未提交的半成品会被当晚任务直接吃到。改动要么尽快提交，要么当天别留半成品过夜。
+- 🔴 **每晚23:15 计划任务（`JDViz_DailyRefresh`，SYSTEM）跑的是工作区代码，不是某个 commit** → 未提交的半成品会被当晚任务直接吃到。改动要么尽快提交，要么当天别留半成品过夜。
 - 🔴 **托盘服务不热重载**：服务进程已把模块载入 `sys.modules`，`POST /api/refresh` 仍在旧代码上跑。验证后端改动要么**重启服务**（启停权归用户），要么用**新进程**直跑（如 `python -m backend.jobs.run_batch`）。
 - ⚠️ 托盘日志文件名在导入期按"启动日"定死 → 查"今天"的访问日志要按**服务启动日**找文件。
 - 🔴 **organize 生产开关设在调度链路，不在服务进程**：开关 `JD_ORGANIZE ∈ off|dry-run|on`（默认 `dry-run`）写在 `scripts/refresh_daily.ps1` 的纯 ASCII 环境变量里（用户/交互式环境变量对 SYSTEM 任务无效）。详见 `docs/organize-go-live.md`。
@@ -166,6 +166,7 @@
 - **前端**：`frontend/verify_month_compare.mjs`、`frontend/verify_agg.mjs`（`npm run verify:month` / `verify:agg`，需 8000 在跑）、`frontend/verify_text_tokens.mjs`（`npm run verify:tokens`，纯静态，**不需 8000**；守最浅文字可读性）。
 - **后端自愈**：改完 `python -c "from backend.app.main import app"`。
 - ⚠️ `verify_all.py` 与 `verify_promo_*` 已在 `78eb10f` 删除，**不要引用**。
+
 
 > ⚠️ **库存模块的测试需要真实数据**：`backend/tests/test_inventory_api.py` 读 `config.DB_PATH` 指向的库，库为空时 34 个用例会大面积失败（`no such table: inventory_daily`）——那**不是**代码回归，是环境缺数据。跑之前先设 `JD_DB_PATH` 指向有数据的库。
 

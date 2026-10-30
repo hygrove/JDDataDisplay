@@ -1,6 +1,6 @@
 # JD 数据平台
 
-电商多店铺经营数据的可视化看板。Python 批处理每天从 Excel/CSV（可扩展 PostgreSQL）采集清洗数据，写入 SQLite 并导出 JSON；FastAPI 单端口托管前端与数据 API；Vue3 前端做表格 + 图表展示。
+电商多店铺经营数据的可视化看板。Python 批处理每天从 Excel/CSV（可扩展 PostgreSQL）采集清洗数据，写入 SQLite（API 直查，无 JSON 中间产物）；FastAPI 单端口托管前端与数据 API；Vue3 前端做表格 + 图表展示。
 
 > 完整使用说明（页面功能逐项、接口清单、维护注意事项、变更记录）见 **[说明文档.md](说明文档.md)**；
 > 新机器从零跑通见 `docs/异地克隆部署指南.md`，SQLite 层设计见 `docs/数据库迁移与架构教学.md`。
@@ -118,7 +118,7 @@ uv pip install -r backend/requirements.txt   # 替代 pip install
 平时你只需要把 `pip install X` 换成 `uv pip install X`，其他习惯不变。
 </details>
 
-### 2. 跑批处理（Excel → SQLite → JSON）
+### 2. 跑批处理（Excel → SQLite）
 
 ```bash
 # 异地克隆首次部署：ResourceData/ 不入 git，先铺样例数据（有真实数据源可跳过）
@@ -128,7 +128,7 @@ uv pip install -r backend/requirements.txt   # 替代 pip install
 ```
 
 - 读取项目内 `ResourceData/数据源表目录/` 下的固定文件夹（不再按最新日期遍历）：含各店铺 `店铺名_商品明细_*.xlsx` 与 `店铺名_推广数据_*.csv`，按 (店铺, 日期, SPU) 去重合并；
-- **先摄入 SQLite**（`backend/app/data/app.db`，按源文件 sha256 增量：源未变则跳过），再从 DB 聚合产出 JSON；
+- **先摄入 SQLite**（`backend/app/data/app.db`，按源文件 sha256 增量：源未变则跳过）；API 直查 DB 聚合，无 JSON 落盘；
 - 清洗聚合后写入 `backend/app/data/`；
 - 同时把 `单品spu图片/*.png` 拷贝到 `backend/app/data/images/`；
 - 结果（成功/失败、耗时、尝试次数）写入 `status.json`。
@@ -215,7 +215,7 @@ cd backend
 | `GET /api/module/{id}/spu/{spu}/analysis` | 单品分析（趋势 / 工作日节假日 / 洞察），支持 `start`+`end` 区间 |
 | `POST /api/module/{id}/export` | 导出当前筛选条件下全量数据为 xlsx（前端「导出数据」按钮） |
 | `GET /api/status` | 批处理状态 |
-| `POST /api/refresh` | 手动重跑批处理（前端「手动刷新」按钮；先摄入 SQLite 再产 JSON） |
+| `POST /api/refresh` | 手动重跑批处理（前端「手动刷新」按钮；先摄入 SQLite） |
 
 ## 如何添加一个新模块（配置驱动，不写重复页面）
 
@@ -251,7 +251,7 @@ cd backend
 ## 部署（生产）
 
 ```
-浏览器 → Nginx（gzip / 静态缓存 / 反代）→ Uvicorn:8000 → data/*.json
+浏览器 → Nginx（gzip / 静态缓存 / 反代）→ Uvicorn:8000 → data/app.db（API 直查）
 ```
 
 Nginx 参考：

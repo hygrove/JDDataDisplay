@@ -33,6 +33,34 @@ def _restock_rows(client: TestClient, query: str = "") -> list[dict]:
     return [row for group in data["groups"] for row in group["rows"]]
 
 
+def _live_date() -> str:
+    """库存库里**当前存在的**快照日期（库里最新的一天）。
+
+    ⚠️ ⛔ 绝不要在测试里硬编码日期：库存按「每店保留最新一份」滚动淘汰旧快照
+    （ADR-0015），一跑真删，旧日期就没了 —— 硬编码的测试会**整片变红**，
+    而那不是代码回归，是测试数据过期（2026-10-28 实测：23 处硬编码 →
+    5 failed + 4 skipped；改成动态取日期后 35 项全过）。
+
+    Returns:
+        str: 库里最新的快照日期；库为空时返回空串。
+    """
+    import sqlite3
+
+    from backend.jobs import config
+
+    db = Path(config.DB_PATH)
+    if not db.exists():
+        return ""
+    conn = sqlite3.connect(str(db))
+    try:
+        row = conn.execute("SELECT MAX(date) FROM inventory_daily").fetchone()
+    except sqlite3.Error:
+        return ""
+    finally:
+        conn.close()
+    return row[0] or ""
+
+
 class TestRestockKeyword(unittest.TestCase):
     """补货清单的关键词过滤。"""
 
@@ -134,10 +162,9 @@ class TestRestockSkuView(unittest.TestCase):
         cls.client = TestClient(app)
 
     def _sku_rows(self) -> list[dict]:
-        resp = self.client.get("/api/inventory/restock?view=sku")
+        resp = self.client.get("/api/inventory/restock")
         self.assertEqual(resp.status_code, 200)
         data = resp.json()
-        self.assertEqual(data["view"], "sku")
         rows = data["rows"]
         if not rows:
             self.skipTest("库存库暂无补货行")
@@ -184,13 +211,17 @@ class TestRestockSkuView(unittest.TestCase):
             self.assertEqual(r["target"], 0, f"none 档目标库存必须为 0：{r}")
 
     def test_two_views_are_the_same_calculation(self):
-        city = self.client.get("/api/inventory/restock?view=city").json()
-        sku = self.client.get("/api/inventory/restock?view=sku").json()
-        self.assertEqual(city["grand_total"], sku["grand_total"], "两视图的建议量合计必须一致")
+        """两种装配同源：城市分组里的行必须能在平铺长表里原样找到。
+
+        2026-10-28 方案 A：接口一次返回两种装配（rows + groups），
+        前端切换视图只做本地装配、不再请求后端——这条断言锁住「两装配同源」，
+        防两套装配各自演化出口径漂移。
+        """
+        data = self.client.get("/api/inventory/restock").json()
         sku_keys = {
-            (str(r["sku"]), r["city"], str(r["shop"]), r["qty"]) for r in sku["rows"]
+            (str(r["sku"]), r["city"], str(r["shop"]), r["qty"]) for r in data["rows"]
         }
-        for group in city["groups"]:
+        for group in data["groups"]:
             for r in group["rows"]:
                 self.assertIn(
                     (str(r["sku"]), group["city"], str(r["shop"]), r["qty"]),
@@ -198,11 +229,32 @@ class TestRestockSkuView(unittest.TestCase):
                     "城市视图里的行必须在 SKU 视图里原样出现",
                 )
 
+    def test_response_carries_both_assemblies(self):
+        """接口一次给全两种装配：rows（平铺长表）+ groups（城市分组）。
+
+        2026-10-28 方案 A：前端切换视图改为本地装配，前提是响应里两种装配都在。
+        少任何一个，切换都会退化成「切了但没数据」——所以这条断言是契约的锁。
+        """
+        resp = self.client.get("/api/inventory/restock")
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertIn("rows", data, "响应必须带平铺长表 rows")
+        self.assertIn("groups", data, "响应必须带城市分组 groups")
+        self.assertIn("sku_count", data, "响应必须带 SKU 个数 sku_count")
+        for group in data["groups"]:
+            for r in group["rows"]:
+                self.assertGreater(r["qty"], 0, "城市分组只应含建议量 > 0 的行")
+        if data["rows"]:
+            self.assertTrue(
+                any(r["qty"] == 0 for r in data["rows"]),
+                "平铺长表应保留建议量为 0 的行",
+            )
+
     def test_offshelf_skus_are_excluded_in_both_views(self):
         sku_rows = self._sku_rows()
-        city = self.client.get("/api/inventory/restock?view=city").json()
+        data = self.client.get("/api/inventory/restock").json()
         rows = list(sku_rows)
-        for group in city["groups"]:
+        for group in data["groups"]:
             rows.extend(group["rows"])
         for r in rows:
             self.assertNotIn("下", str(r.get("shelf_status") or ""), "下柜 SKU 不该出现在清单里")
@@ -220,7 +272,7 @@ class TestRestockExport(unittest.TestCase):
 
         import openpyxl
 
-        resp = self.client.post("/api/inventory/restock/export?date=2026-10-20")
+        resp = self.client.post(f"/api/inventory/restock/export?date={_live_date()}")
         self.assertEqual(resp.status_code, 200)
         self.assertIn("spreadsheetml", resp.headers.get("content-type", ""))
         self.assertIn("attachment", resp.headers.get("content-disposition", ""))
@@ -243,9 +295,9 @@ class TestRestockExport(unittest.TestCase):
 
         import openpyxl
 
-        resp = self.client.post("/api/inventory/restock/export?date=2026-10-20")
+        resp = self.client.post(f"/api/inventory/restock/export?date={_live_date()}")
         self.assertEqual(resp.status_code, 200)
-        sku_view = self.client.get("/api/inventory/restock?view=sku&date=2026-10-20").json()
+        sku_view = self.client.get(f"/api/inventory/restock?view=sku&date={_live_date()}").json()
         rows = sku_view["rows"]
         if not rows:
             self.skipTest("库存库暂无补货行")
@@ -275,7 +327,7 @@ class TestRestockExport(unittest.TestCase):
 
         import openpyxl
 
-        resp = self.client.post("/api/inventory/restock/export?date=2026-10-20")
+        resp = self.client.post(f"/api/inventory/restock/export?date={_live_date()}")
         self.assertEqual(resp.status_code, 200)
         wb = openpyxl.load_workbook(io.BytesIO(resp.content))
         for sheet_name in ("按SKU", "按城市"):
@@ -324,12 +376,12 @@ class TestRestockExport(unittest.TestCase):
 
         import openpyxl
 
-        resp = self.client.get("/api/inventory/restock/export?date=2026-10-20")
+        resp = self.client.get(f"/api/inventory/restock/export?date={_live_date()}")
         self.assertEqual(resp.status_code, 200)
         self.assertIn("attachment", resp.headers.get("content-disposition", ""))
         self.assertIn("no-store", resp.headers.get("cache-control", ""), "导出不能被浏览器缓存")
         wb = openpyxl.load_workbook(io.BytesIO(resp.content))
-        post = self.client.post("/api/inventory/restock/export?date=2026-10-20")
+        post = self.client.post(f"/api/inventory/restock/export?date={_live_date()}")
         wb_post = openpyxl.load_workbook(io.BytesIO(post.content))
         self.assertEqual(wb.sheetnames, wb_post.sheetnames, "GET 与 POST 必须导出同样的 sheet")
         self.assertEqual(
@@ -502,7 +554,7 @@ class TestRestockExport(unittest.TestCase):
             "backend.app.restock_export.build_workbook",
             side_effect=RuntimeError("模拟生成失败"),
         ):
-            resp = self.client.get("/api/inventory/restock/export?date=2026-10-20")
+            resp = self.client.get(f"/api/inventory/restock/export?date={_live_date()}")
         self.assertEqual(resp.status_code, 500)
         self.assertIn("attachment", resp.headers.get("content-disposition", ""))
         self.assertIn("导出失败", resp.content.decode("utf-8"))
@@ -572,7 +624,7 @@ class TestMatrixExport(unittest.TestCase):
         return openpyxl.load_workbook(io.BytesIO(resp.content))
 
     def test_workbook_has_two_sheets_and_identity_columns(self):
-        wb = self._export("?date=2026-10-20")
+        wb = self._export(f"?date={_live_date()}")
         self.assertEqual(wb.sheetnames, ["按SKU", "按城市"], "sheet 顺序：按SKU 在前、按城市 在后")
         sku_head = [c.value for c in wb["按SKU"][1]]
         city_head = [c.value for c in wb["按城市"][1]]
@@ -591,7 +643,7 @@ class TestMatrixExport(unittest.TestCase):
         不设对齐时 openpyxl 默认底部对齐：合并区比内容高时文字沉底，
         正是用户反馈的现象（2026-10-26）。
         """
-        wb = self._export("?date=2026-10-20&metrics=city_stock,nat_slow")
+        wb = self._export(f"?date={_live_date()}&metrics=city_stock,nat_slow")
         for name in ("按SKU", "按城市"):
             ws = wb[name]
             checked = 0
@@ -612,7 +664,7 @@ class TestMatrixExport(unittest.TestCase):
         """
         from backend.app import matrix_export
 
-        wb = self._export("?date=2026-10-20&metrics=city_stock")
+        wb = self._export(f"?date={_live_date()}&metrics=city_stock")
         ws = wb["按SKU"]
         for block_start in range(2, 20, 9):
             heights = [ws.row_dimensions[r].height for r in range(block_start, block_start + 9)]
@@ -621,13 +673,13 @@ class TestMatrixExport(unittest.TestCase):
 
     def test_metric_columns_follow_selection(self):
         """勾选决定列：只选 city_stock 时不该出现其它指标列（模版只演示几个指标的泛化）。"""
-        wb = self._export("?date=2026-10-20&metrics=city_stock")
+        wb = self._export(f"?date={_live_date()}&metrics=city_stock")
         head = [c.value for c in wb["按SKU"][1]]
         self.assertIn("现货库存", head)
         self.assertNotIn("采购未到货", head)
         self.assertNotIn("全国滞销件数", head)
         # 全国指标同样可勾选（单列，不按城市展开）
-        wb2 = self._export("?date=2026-10-20&metrics=nat_slow")
+        wb2 = self._export(f"?date={_live_date()}&metrics=nat_slow")
         head2 = [c.value for c in wb2["按SKU"][1]]
         self.assertIn("全国滞销件数", head2)
         self.assertNotIn("现货库存", head2)
@@ -635,7 +687,7 @@ class TestMatrixExport(unittest.TestCase):
     def test_default_columns_match_default_visible(self):
         from backend.jobs.inventory_metrics import METRICS
 
-        wb = self._export("?date=2026-10-20")
+        wb = self._export(f"?date={_live_date()}")
         head = [c.value for c in wb["按SKU"][1]]
         for m in METRICS:
             if m["locked"]:
@@ -646,15 +698,15 @@ class TestMatrixExport(unittest.TestCase):
                 self.assertNotIn(m["title"], head, f"未勾选指标不该出现：{m['title']}")
 
     def test_unknown_metric_key_ignored(self):
-        wb = self._export("?date=2026-10-20&metrics=__nope__,city_stock")
+        wb = self._export(f"?date={_live_date()}&metrics=__nope__,city_stock")
         head = [c.value for c in wb["按SKU"][1]]
         self.assertIn("现货库存", head, "合法 key 不受非法 key 牵连")
 
     def test_sku_sheet_row_count_matches_matrix_rows(self):
-        rows = self.client.get("/api/inventory/rows?date=2026-10-20&page_size=500").json()["rows"]
+        rows = self.client.get(f"/api/inventory/rows?date={_live_date()}&page_size=500").json()["rows"]
         if not rows:
             self.skipTest("库存库暂无矩阵行")
-        wb = self._export("?date=2026-10-20&metrics=city_stock")
+        wb = self._export(f"?date={_live_date()}&metrics=city_stock")
         ws = wb["按SKU"]
         # 每个矩阵行 = 8 个城市行 + 1 行合计
         self.assertEqual(ws.max_row - 1, len(rows) * 9, "按SKU sheet 行数必须与矩阵行数一致")
@@ -662,18 +714,18 @@ class TestMatrixExport(unittest.TestCase):
     def test_filters_match_matrix_rows(self):
         """筛选口径必须与 /rows 一致（导出的是当前筛选下的全量矩阵行）。"""
         total = self.client.get(
-            "/api/inventory/rows?keyword=%E6%BB%A4%E8%8A%AF&date=2026-10-20&page_size=1"
+            f"/api/inventory/rows?keyword=%E6%BB%A4%E8%8A%AF&date={_live_date()}&page_size=1"
         ).json()["total"]
         if not total:
             self.skipTest("当前库存库没有命中该关键词的矩阵行")
-        wb = self._export("?date=2026-10-20&keyword=%E6%BB%A4%E8%8A%AF&metrics=city_stock")
+        wb = self._export(f"?date={_live_date()}&keyword=%E6%BB%A4%E8%8A%AF&metrics=city_stock")
         self.assertEqual(wb["按SKU"].max_row - 1, total * 9, "导出行数必须与矩阵筛选结果一致")
 
     def test_city_sheet_groups_have_subtotals(self):
-        rows = self.client.get("/api/inventory/rows?date=2026-10-20&page_size=500").json()["rows"]
+        rows = self.client.get(f"/api/inventory/rows?date={_live_date()}&page_size=500").json()["rows"]
         if not rows:
             self.skipTest("库存库暂无矩阵行")
-        wb = self._export("?date=2026-10-20&metrics=city_stock")
+        wb = self._export(f"?date={_live_date()}&metrics=city_stock")
         ws = wb["按城市"]
         head = [c.value for c in ws[1]]
         stock_col = head.index("现货库存") + 1
@@ -691,7 +743,7 @@ class TestMatrixExport(unittest.TestCase):
 
     def test_ratio_metrics_not_totaled(self):
         """率值指标（预计可售天数）不参与合计行——与矩阵表 tfoot 同口径。"""
-        wb = self._export("?date=2026-10-20&metrics=city_sellable_days")
+        wb = self._export(f"?date={_live_date()}&metrics=city_sellable_days")
         ws = wb["按SKU"]
         head = [c.value for c in ws[1]]
         days_col = head.index("预计可售天数") + 1
@@ -707,7 +759,7 @@ class TestMatrixExport(unittest.TestCase):
 
     def test_export_supports_get_for_native_browser_download(self):
         """GET 也要能导出（前端用 <a href> 触发浏览器原生下载）。"""
-        resp = self.client.get("/api/inventory/matrix/export?date=2026-10-20&metrics=city_stock")
+        resp = self.client.get(f"/api/inventory/matrix/export?date={_live_date()}&metrics=city_stock")
         self.assertEqual(resp.status_code, 200)
         self.assertIn("attachment", resp.headers.get("content-disposition", ""))
         self.assertIn("no-store", resp.headers.get("cache-control", ""))
@@ -720,7 +772,7 @@ class TestMatrixExport(unittest.TestCase):
             "backend.app.matrix_export.build_workbook",
             side_effect=RuntimeError("模拟生成失败"),
         ):
-            resp = self.client.get("/api/inventory/matrix/export?date=2026-10-20")
+            resp = self.client.get(f"/api/inventory/matrix/export?date={_live_date()}")
         self.assertEqual(resp.status_code, 500)
         self.assertIn("attachment", resp.headers.get("content-disposition", ""))
         self.assertIn("导出失败", resp.content.decode("utf-8"))

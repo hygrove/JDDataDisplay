@@ -483,15 +483,19 @@ export function putAlertThresholds(
 }
 
 /**
- * 拉取补货建议清单（按城市分组，只含建议量 > 0 的行，下柜排除）。
+ * 拉取补货建议清单（一次返回两种装配：平铺长表 rows + 城市分组 groups）。
+ *
+ * @remarks
+ * 城市视图与 SKU 视图是**同一份计算**的两种装配（后端 `_restock_payload`），
+ * 一次取全后前端本地切换视图，不再为切换重发请求
+ * （2026-10-28 方案 A：实测重算占整请求耗时 100%，切一次白等 ~228ms）。
  *
  * @param {object} [q] - 查询与算法参数。
  * @param {string} [q.shop] - 店铺过滤；留空 = 全部店铺。
  * @param {string} [q.date] - 快照日期；留空 = 每店各自最新（ADR-0015 per-shop 口径）。
  * @param {string} [q.keyword] - 关键词（SKU / 商品名称 / SPU）；留空 = 不过滤。口径与矩阵表一致。
- * @param {"city" | "sku"} [q.view] - 视图：city=按城市分组（默认）/ sku=平铺长表。两者共用同一份计算。
  * @param {RestockParams} [q.params] - 算法参数（days/safety/window）；非法值由后端夹回默认。
- * @returns {Promise<RestockListResponse>} 分组清单或平铺清单 + 参数回显 + 总计。
+ * @returns {Promise<RestockListResponse>} 长表 + 城市分组 + 参数回显 + 总计。
  * @throws {Error} 接口非 2xx。
  */
 export function fetchRestockList(
@@ -499,7 +503,6 @@ export function fetchRestockList(
     shop?: string;
     date?: string;
     keyword?: string;
-    view?: "city" | "sku";
     params?: Partial<RestockParams>;
   } = {},
 ): Promise<RestockListResponse> {
@@ -507,7 +510,6 @@ export function fetchRestockList(
   if (q.shop) params.set("shop", q.shop);
   if (q.date) params.set("date", q.date);
   if (q.keyword) params.set("keyword", q.keyword);
-  params.set("view", q.view ?? "city");
   const p = q.params ?? {};
   if (p.days !== undefined) params.set("days", String(p.days));
   if (p.safety !== undefined) params.set("safety", String(p.safety));

@@ -7,10 +7,13 @@
 //   可信销速：有货天数 ≥ 可信门槛（params.cred_min，默认 6）→ 窗口出库÷有货天数；
 //   0 < 有货天数 < 可信门槛 → 按 30 日参照收缩估算（velocity_kind=shrunk，
 //   销速前标 ≈、有货天数琥珀色悬浮说明；点「销速算法说明」看推导）
-// 只展示建议量 > 0 的行；下柜 SKU 完全排除。
+// 只展示建议量 > 0 的行（城市视图）；SKU 视图保留建议量为 0 的行，便于看全"哪城缺、哪城不缺"；
+// 下柜 SKU 完全排除。
 // 参数变化 / 父级 shop/date/keyword 变化时重拉（销速窗口切换立即生效；
 // 关键词的防抖在父级做，面板拿到的已是提交后的值）。
-import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+// 视图切换（城市 ⇄ SKU）**不重拉**：两种装配一次取全，本地切表渲染
+// （2026-10-28 方案 A，详见 .scratch/restock-view-switch/measure.py 的测量）。
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { fetchRestockList } from "../../api";
 import {
   THUMB_SIZE,
@@ -25,6 +28,8 @@ import {
   sellableDaysText,
   shelfText,
 } from "../../modules/inventory";
+import { useUiPrefsStore } from "../../stores/uiPrefs";
+import { pickRowHeight, useTableVirtualizer } from "../../utils/virtual-list";
 import type { RestockGroup, RestockListResponse, RestockRow } from "../../types";
 
 const props = defineProps<{
@@ -41,9 +46,15 @@ const days = ref(9);
 const safetyPct = ref(20);
 const windowDays = ref(14);
 
-/** 清单响应（两个视图的联合类型：按 view 判别）。 */
+/** 清单响应（一次含两种装配：平铺长表 rows + 城市分组 groups）。 */
 const data = ref<RestockListResponse | null>(null);
-/** 视图：city=按城市分组 / sku=平铺长表（同一份计算的两种装配）。 */
+/**
+ * 视图：city=按城市分组 / sku=平铺长表。
+ *
+ * @remarks
+ * 纯前端状态：两种装配一次取全（见 api.fetchRestockList 的说明），
+ * 切换视图只重新渲染、**不发请求**（2026-10-28 方案 A）。
+ */
 const view = ref<"city" | "sku">("city");
 const loading = ref(false);
 const error = ref<string | null>(null);
@@ -65,7 +76,6 @@ async function load(): Promise<void> {
     data.value = await fetchRestockList({
       shop: props.shop || undefined,
       keyword: props.keyword || undefined,
-      view: view.value,
       params: {
         days: days.value,
         safety: safetyPct.value / 100,
@@ -96,8 +106,13 @@ watch(
 );
 // 参数变化：防抖重拉
 watch([days, safetyPct, windowDays], scheduleLoad);
-// 视图切换：立即重拉（换的是装配方式，不是口径）
-watch(view, () => void load());
+// ⚠️ 视图切换**故意不重拉**（2026-10-28 方案 A）：
+//    城市视图与 SKU 视图是同一份计算（后端 _restock_payload）的两种装配，
+//    接口一次把两种装配都返回（rows + groups），这里切 view 只是换一张表渲染。
+//    曾经这里是 `watch(view, () => void load())` —— 每次切视图都让后端重算一遍
+//    全量（DB 取数 + 每 SKU×8 城循环算销速），实测重算占整请求耗时 100%，
+//    切一次白等 ~228ms 且期间无任何提示。别把它加回来：要加请先看
+//    .scratch/restock-view-switch/measure.py 的测量结果。
 
 onMounted(() => void load());
 
@@ -176,11 +191,101 @@ function onKeydown(e: KeyboardEvent): void {
 onMounted(() => window.addEventListener("keydown", onKeydown));
 onUnmounted(() => window.removeEventListener("keydown", onKeydown));
 
-/** 当前是否没有任何行（空态提示）。 */
-const empty = ref(false);
-watch(data, (d) => {
-  empty.value = !!d && (d.view === "city" ? d.groups.length === 0 : d.rows.length === 0);
+/**
+ * 当前视图下是否没有任何行（空态提示）。
+ *
+ * @remarks
+ * 用 computed 而非 watch+ref：空态取决于「当前视图 + 已有数据」的组合，
+ * 切视图时必须跟着变（旧的 watch 写法只认响应里的 view 字段，切视图不会重判）。
+ */
+const empty = computed(() => {
+  const d = data.value;
+  if (!d) return false;
+  return view.value === "city" ? d.groups.length === 0 : d.rows.length === 0;
 });
+
+// ====================== SKU 视图的虚拟滚动 ======================
+//
+// 城市视图只有一百多行，直接渲染即可；SKU 视图有 1500+ 行 × 12 列 ≈ 3.9 万个
+// DOM 节点，一次性构建要 ~1s（实测 1035ms）——切视图时这段成本全额买单。
+// 这里只渲染可视区的几十行，把切换耗时压到几十毫秒。
+//
+// 行高必须**运行时实测**：它随字号缩放（--font-scale）变化，写死常量会在用户
+// 调字号后错位。见 utils/virtual-list.ts 的说明。
+
+/** SKU 长表总行数。 */
+const skuTotal = computed(() => (view.value === "sku" ? (data.value?.rows.length ?? 0) : 0));
+
+/** SKU 表实测行高（px）；初值是标准字号下的实测值，首帧后立即被实测值取代。 */
+const skuRowHeight = ref(69);
+
+/** SKU 表 tbody（实测行高用）。 */
+const skuTbody = ref<HTMLElement | null>(null);
+
+/** SKU 表滚动容器（虚拟滚动的滚动上下文）。 */
+const skuWrap = ref<HTMLElement | null>(null);
+
+const { virtualizer: skuVirtualizer, visibleRows: skuVisibleIdx, spacers: skuSpacers } =
+  useTableVirtualizer({
+    count: skuTotal,
+    scrollEl: skuWrap,
+    rowHeight: skuRowHeight,
+    overscan: 8,
+  });
+
+/** 当前窗口内的行（库算区间，这里只把下标换成数据行）。 */
+const skuVisibleRows = computed<RestockRow[]>(() => {
+  const rows = data.value?.rows ?? [];
+  return skuVisibleIdx.value.map((i) => rows[i]).filter(Boolean);
+});
+
+/**
+ * 实测行高：取窗口内各行的高度样本，挑众数。
+ *
+ * @remarks
+ * 窗口每次变动都要重测：滚动换了一批行（可能含更高的行），
+ * 字号缩放也会改变行高——两者都靠这里自动校准。
+ * 众数而非最大值：偶发一条换行变高的行不该把整表行高撑大（见 pickRowHeight）。
+ *
+ * 行高变了还要让虚拟器丢弃旧测量重新估算（`measure()`）——
+ * 否则它仍按旧行高算总高度，滚动位置 ↔ 行下标的映射会漂。
+ */
+function remeasureSkuRowHeight(): void {
+  const tbody = skuTbody.value;
+  if (!tbody) return;
+  const samples: number[] = [];
+  for (const el of tbody.querySelectorAll<HTMLElement>("tr[data-rrow]")) {
+    samples.push(el.getBoundingClientRect().height);
+  }
+  const h = pickRowHeight(samples);
+  if (h > 0 && Math.abs(h - skuRowHeight.value) > 0.5) {
+    skuRowHeight.value = h;
+    skuVirtualizer.value.measure();
+  }
+}
+
+// 窗口变动（滚动）→ 重测行高；数据换批 → 同样重测。
+watch([skuVisibleRows, skuTotal], () => void nextTick(remeasureSkuRowHeight), { flush: "post" });
+
+// 字号缩放会改变行高 → 重测（--font-scale 是 CSS 变量，尺寸变化不触发 Vue 更新）。
+const uiPrefs = useUiPrefsStore();
+watch(
+  () => uiPrefs.scale,
+  () => void nextTick(remeasureSkuRowHeight),
+  { flush: "post" },
+);
+
+// 切到 SKU 视图：表格刚挂载，实测一次行高（首帧用的是初值）。
+watch(
+  () => view.value,
+  (v) => {
+    if (v !== "sku") return;
+    void nextTick(() => {
+      remeasureSkuRowHeight();
+    });
+  },
+  { flush: "post" },
+);
 
 /** 导出中 / 导出提示。 */
 const exporting = ref(false);
@@ -316,7 +421,12 @@ function exportExcel(): void {
       <template v-else>当前筛选与参数下没有匹配的行。</template>
     </div>
 
-    <div v-if="data && data.view === 'city' && data.groups.length" class="rp-wrap" data-testid="restock-table">
+    <div class="rp-tables">
+    <div
+      v-if="view === 'city' && data && data.groups.length"
+      class="rp-wrap"
+      data-testid="restock-table"
+    >
       <table class="rp-table">
         <thead>
           <tr>
@@ -351,6 +461,8 @@ function exportExcel(): void {
                   :src="thumbSrc(r) ?? undefined"
                   :srcset="invThumbSrcSet(r.sku_pic)"
                   :alt="r.sku_name ?? ''"
+                  loading="lazy"
+                  decoding="async"
                   data-testid="restock-thumb"
                   @error="onThumbError(r)"
                 />
@@ -367,7 +479,7 @@ function exportExcel(): void {
                 </div>
               </td>
               <td>{{ orEmpty(r.shop) }}</td>
-              <td class="erp" data-testid="restock-erp-code">{{ erpText(r.erp_code) }}</td>
+              <td class="erp" data-testid="restock-erp-code" :title="r.erp_code ?? undefined">{{ erpText(r.erp_code) }}</td>
               <td class="num">{{ fmt(r.stock) }}</td>
               <td class="num">{{ fmt(r.purchase) }}</td>
               <td class="num">{{ (r.velocity_kind === "shrunk" ? "≈" : "") + fmt(r.velocity) }} 件/天</td>
@@ -403,9 +515,14 @@ function exportExcel(): void {
       </table>
     </div>
 
-    <!-- SKU 视图：平铺长表（一行一个 SKU × 城市），与城市视图共用同一份计算 -->
+    <!-- SKU 视图：平铺长表（一行一个 SKU × 城市），与城市视图共用同一份计算。
+         ⚠️ 这里用 v-if（切走即卸载）而不是 v-show（常驻 DOM）：实测 1562 行的表
+         只要还挂在 DOM 里，浏览器每次重排都要为 3.9 万个元素重算样式，
+         会把「切回城市视图」从 157ms 拖到 391ms——常驻反而更慢。
+         渲染成本本身用**虚拟滚动**根治：只渲染可视区的几十行（见 utils/virtual-list.ts）。 -->
     <div
-      v-if="data && data.view === 'sku' && data.rows.length"
+      v-if="view === 'sku' && data && data.rows.length"
+      ref="skuWrap"
       class="rp-wrap"
       data-testid="restock-sku-table"
     >
@@ -426,11 +543,17 @@ function exportExcel(): void {
             <th>状态</th>
           </tr>
         </thead>
-        <tbody>
+        <tbody ref="skuTbody">
+          <!-- 虚拟滚动占位行：把窗口推到正确的滚动位置（上方）/ 撑出总高度（下方）。
+               必须是「一行一个 colspan 的单元格」：行内不能有内容，否则高度算不准。 -->
+          <tr v-if="skuSpacers.top > 0" class="rp-vspace" aria-hidden="true">
+            <td :colspan="12" :style="{ height: skuSpacers.top + 'px' }"></td>
+          </tr>
           <tr
-            v-for="r in data.rows"
+            v-for="r in skuVisibleRows"
             :key="`${r.sku}-${r.city}-${r.shop}`"
             class="data-row"
+            data-rrow
           >
             <td>{{ r.city }}</td>
             <td class="cell-product">
@@ -440,6 +563,8 @@ function exportExcel(): void {
                 :src="thumbSrc(r) ?? undefined"
                 :srcset="invThumbSrcSet(r.sku_pic)"
                 :alt="r.sku_name ?? ''"
+                loading="lazy"
+                decoding="async"
                 data-testid="restock-thumb"
                 @error="onThumbError(r)"
               />
@@ -480,6 +605,10 @@ function exportExcel(): void {
               >{{ gapFlagMeta(r.gap_flag)?.text }}</span>
             </td>
           </tr>
+          <!-- 虚拟滚动占位行：把总滚动高度撑到完整列表长度（窗口下方的行） -->
+          <tr v-if="skuSpacers.bottom > 0" class="rp-vspace" aria-hidden="true">
+            <td :colspan="12" :style="{ height: skuSpacers.bottom + 'px' }"></td>
+          </tr>
         </tbody>
         <tfoot>
           <tr class="grand">
@@ -489,6 +618,12 @@ function exportExcel(): void {
           </tr>
         </tfoot>
       </table>
+      </div>
+      <!-- 局部加载遮罩：切换视图 / 刷新参数时盖在旧表格上，给即时反馈（不糊全屏）。
+           用 loading && data 而非 loading && !data：切换时旧数据仍在，原条件会藏掉提示。 -->
+      <div v-if="loading && data" class="rp-loading-mask" data-testid="restock-loading-mask">
+        <div class="rp-spin" aria-hidden="true"></div>
+      </div>
     </div>
 
     <!-- 销速算法说明对话框：讲清 ≈ 是怎么算出来的（数字全由后端真实函数算出） -->
@@ -749,6 +884,37 @@ function exportExcel(): void {
   border: 1px dashed var(--color-border-2);
   border-radius: var(--radius-lg, 14px);
 }
+/* 局部加载遮罩：切换视图 / 刷新参数时盖在旧表格上，给即时反馈（不糊全屏）。
+   视觉沿用全局路由遮罩（App.vue .nav-loading）的 spinner 语言，但 scope 到表格区。 */
+.rp-tables {
+  position: relative;
+}
+.rp-loading-mask {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.58);
+  backdrop-filter: blur(1.5px);
+  -webkit-backdrop-filter: blur(1.5px);
+  border-radius: var(--radius-lg, 14px);
+  pointer-events: none;
+}
+.rp-spin {
+  width: 34px;
+  height: 34px;
+  border: 3px solid var(--color-brand-border-2, #dbeafe);
+  border-top-color: var(--color-brand, #2563eb);
+  border-radius: 50%;
+  animation: rp-spin 0.8s linear infinite;
+}
+@keyframes rp-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
 .rp-wrap {
   background: var(--color-surface);
   border: 1px solid var(--color-border-2);
@@ -762,7 +928,53 @@ function exportExcel(): void {
   border-collapse: collapse;
   width: 100%;
   font-size: calc(12.5px * var(--font-scale));
+  /* 固定列宽（table-layout: fixed）——虚拟滚动的前置条件：
+     虚拟滚动只渲染可视区的十几行，若用 auto 布局，列宽由「这一小撮行的最宽内容」
+     决定：ERP 编码列因此在滚动时摆动 52px（实测 138↔190px），其余列被它挤着
+     一起晃（表格 width:100%，一列变宽别人就得让位）。
+     固定布局让列宽只由下面的 em 值决定：不抖、且 em 跟着字号缩放走。
+     两视图（城市 / SKU）共用同一套宽度。 */
+  table-layout: fixed;
 }
+/* 各列宽度（em 相对表头字号 14px*缩放）。
+   宽度按「最长内容尽量不裁切」取：数字列 4~6em、含表头文字的列 5.5~7.5em、
+   商品信息列 24em（= 缩略图 48 + 间距 8 + 身份行最长 260 + 内边距 20）、
+   ERP 编码列 12em（最长码 23 字符 ≈ 159px，12em 装得下）。
+   总和 ≈1288px ≤ 容器 1300px（@1600 视口）→ 不产生横向滚动条。 */
+.rp-table th:nth-child(1) {
+  width: 3.75em;
+} /* 城市 */
+.rp-table th:nth-child(2) {
+  width: 24em;
+} /* 商品信息 */
+.rp-table th:nth-child(3) {
+  width: 3.75em;
+} /* 店铺 */
+.rp-table th:nth-child(4) {
+  width: 12em;
+} /* ERP 编码（超长码截断 + 悬浮显示全码） */
+.rp-table th:nth-child(5),
+.rp-table th:nth-child(6) {
+  width: 4em;
+} /* 现货 / 在途 */
+.rp-table th:nth-child(7) {
+  width: 6em;
+} /* 日均销速 */
+.rp-table th:nth-child(8) {
+  width: 7.5em;
+} /* 周期有货天数 */
+.rp-table th:nth-child(9) {
+  width: 5.5em;
+} /* 目标库存 */
+.rp-table th:nth-child(10) {
+  width: 6.5em;
+} /* 建议补货量 */
+.rp-table th:nth-child(11) {
+  width: 7.5em;
+} /* 预计可售天数 */
+.rp-table th:nth-child(12) {
+  width: 7.5em;
+} /* 状态（预警 + 关注 两个徽章并排 ≈104px） */
 /* 表头字号 12px → 14px：与库存矩阵表表头（InventoryMatrixTable 的 .th，14px）
    对齐，两个视图的列名层级一致（2026-10 补货工作台模式视觉统一）。 */
 .rp-table th {
@@ -788,6 +1000,14 @@ function exportExcel(): void {
 }
 .rp-table .num {
   text-align: right;
+}
+/* 虚拟滚动占位行：高度由内联 style 给足。
+   单元格自身的内边距 / 边框必须清零——否则占位行会比声明的高度多出
+   内边距 + 1px 边框，行高对不上、滚动位置慢慢漂移。 */
+.rp-vspace td {
+  padding: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
 }
 .data-row:hover td {
   background: var(--color-surface-2);
@@ -873,6 +1093,10 @@ function exportExcel(): void {
   font-size: calc(11.5px * var(--font-scale));
   color: var(--color-text-2);
   white-space: nowrap;
+  /* 固定列宽后，超长 ERP 码（最长 23 字符）会被裁切：截断显示 + 悬浮看全码
+     （title 由模板绑定），不静默丢数据。 */
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .qty {
   font-weight: 700;

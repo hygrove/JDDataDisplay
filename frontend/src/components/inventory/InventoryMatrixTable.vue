@@ -279,23 +279,45 @@ function infoTitle(v: InvCell | undefined): string | undefined {
 }
 
 /**
- * 「全国滞销件数」列头弹窗的悬停状态。
+ * 「全国滞销件数」列头弹窗的悬停状态与定位。
  *
  * @remarks
- * 纯 CSS :hover 方案会失效：弹窗自身 overflow 滚动容器会裁掉用于「桥接缝隙」
- * 的伪元素，鼠标从表头移向列表途中一旦离开触发区，列表立刻消失。
- * 这里改为 JS 状态机：进入触发区/命中层即展开，离开后延迟 ~280ms 收起，
- * 配合命中层 padding 扩大范围，鼠标移入列表的整个过程列表始终可见。
+ * 弹窗用 position: fixed + Teleport 挂到 body：表头 th 是 sticky，且外层
+ * .mt-scroll 是 overflow:auto 的滚动上下文，absolute 定位的弹层会被容器
+ * 裁剪遮挡（2026-10-27 修复；与 slow-tip / filter-panel / pic-zoom 同一个坑）。
+ * 纯 CSS :hover 仍不可行（桥接缝隙的伪元素会被弹窗自身滚动容器裁掉），
+ * 保留 JS 状态机：进入触发区/弹窗即展开，离开后延迟 ~280ms 收起；
+ * 外壳 padding 把缝隙纳入命中区域，鼠标移入弹窗的整个过程弹窗始终可见。
  */
 const popOpen = ref(false);
+const popPos = ref({ top: 0, left: 0 });
+const popMaxH = ref(250);
 let popTimer: number | undefined;
 
-/** 进入触发区或命中层：立即展开，并取消待执行的收起。 */
-function onPopEnter(): void {
+/** 弹窗宽度（与 CSS `.th-pop` 的 width 保持一致）。 */
+const TH_POP_W = 190;
+
+/**
+ * 进入触发区或弹窗外壳：立即展开，并取消待执行的收起；按触发区位置定位。
+ *
+ * @remarks
+ * 已展开时（鼠标从触发区移入弹窗触发的 mouseenter）不重复定位，
+ * 否则会按弹窗自身的 rect 继续往下推，位置越移越远。
+ */
+function onPopEnter(e: MouseEvent): void {
   if (popTimer !== undefined) {
     clearTimeout(popTimer);
     popTimer = undefined;
   }
+  if (popOpen.value) return;
+  const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+  // 水平：以触发区为中心，两端收进视口
+  let left = rect.left + rect.width / 2 - TH_POP_W / 2;
+  left = Math.max(8, Math.min(left, window.innerWidth - TH_POP_W - 8));
+  // 纵向：贴着触发区下方；下方空间不足时压缩弹窗高度（表头 sticky 在顶部，常态空间充足）
+  const top = rect.bottom + 2;
+  popMaxH.value = Math.max(120, Math.min(250, window.innerHeight - top - 12));
+  popPos.value = { top, left };
   popOpen.value = true;
 }
 
@@ -494,27 +516,40 @@ function onWindowScroll(e: Event): void {
   const t = e.target as HTMLElement | null;
   const closest = (sel: string): boolean =>
     !!t && typeof t.closest === "function" && !!t.closest(sel);
-  if (closest(".slow-tip")) return;
+  if (closest(".slow-tip") || closest(".th-pop-fly")) return;
   // 表格内部滚动不影响表头位置（表头 sticky），筛选面板可继续开着；
   // 页面滚动会让表头整体移位 → 收起面板，避免错位。
   if (filterOpen.value && !closest(".mt-scroll")) filterOpen.value = false;
   closeSlowTip();
+  closePop();
+}
+
+/** 强制收起列头弹窗（表格滚动 / 窗口缩放后弹窗位置会失效）。 */
+function closePop(): void {
+  popOpen.value = false;
+}
+
+/** 窗口缩放：两类 hover 浮层的位置都会失效，一并收起。 */
+function onWindowResize(): void {
+  closeSlowTip();
+  closePop();
 }
 
 onMounted(() => {
   // 捕获阶段监听：表格容器自身的滚动也会触发 scroll 事件
   window.addEventListener("scroll", onWindowScroll, true);
-  window.addEventListener("resize", closeSlowTip);
+  window.addEventListener("resize", onWindowResize);
   document.addEventListener("click", onDocClick);
   document.addEventListener("keydown", onEsc);
 });
 
 onBeforeUnmount(() => {
   window.removeEventListener("scroll", onWindowScroll, true);
-  window.removeEventListener("resize", closeSlowTip);
+  window.removeEventListener("resize", onWindowResize);
   document.removeEventListener("click", onDocClick);
   document.removeEventListener("keydown", onEsc);
   cancelSlowTipTimer();
+  if (popTimer !== undefined) clearTimeout(popTimer);
   if (copyTimer !== undefined) clearTimeout(copyTimer);
 });
 
@@ -796,30 +831,15 @@ async function copySku(sku: string): Promise<void> {
               <svg v-else-if="sortOrder === 'asc'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m7 14 5-5 5 5" /></svg>
               <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m7 10 5 5 5-5" /></svg>
             </span>
-            <!-- 全国滞销件数：列头悬浮看全城市拆分（不限 8 城） -->
+            <!-- 全国滞销件数：列头悬浮看全城市拆分（不限 8 城）；弹窗本体 Teleport 到 body -->
             <span
               v-if="m.key === 'nat_slow' && (slowCities ?? []).length > 0"
               class="th-pop-wrap"
+              data-testid="inv-nat-slow-pop-trigger"
               @mouseenter="onPopEnter"
               @mouseleave="onPopLeave"
             >
               <span class="th-pop-hint">{{ (slowCities ?? []).length }} 城</span>
-              <!-- 独立命中层：把表头与列表之间的缝隙和四周留白都纳入 hover 区域，
-                   鼠标移入途中不会离开触发区；再叠加延迟收起兜底 -->
-              <span
-                v-if="popOpen"
-                class="th-pop-layer"
-                @mouseenter="onPopEnter"
-                @mouseleave="onPopLeave"
-              >
-                <span class="th-pop" @wheel.stop @mousedown.stop>
-                  <span v-for="s in slowCities ?? []" :key="s.city" class="th-pop-row">
-                    <span :class="{ core: s.core }">{{ s.city }}</span>
-                    <span>{{ fmtNum(s.units) }}</span>
-                  </span>
-                  <span class="th-pop-more">共 {{ (slowCities ?? []).length }} 个城市</span>
-                </span>
-              </span>
             </span>
           </th>
         </tr>
@@ -1002,6 +1022,27 @@ async function copySku(sku: string): Promise<void> {
           <span class="val">{{ line.text }}</span>
         </div>
         <div class="slow-tip-more">共 {{ slowTipLines.length }} 个城市</div>
+      </div>
+    </div>
+  </Teleport>
+
+  <!-- 全国滞销件数列头弹窗：Teleport 到 body，避免被表格滚动容器裁剪（同 slow-tip 的坑） -->
+  <Teleport to="body">
+    <div
+      v-if="popOpen"
+      class="th-pop-fly"
+      data-testid="inv-nat-slow-pop"
+      :style="{ top: popPos.top + 'px', left: popPos.left + 'px' }"
+      @mouseenter="onPopEnter"
+      @mouseleave="onPopLeave"
+    >
+      <!-- 弹窗本体：独立滚动区；外壳 padding 已把「列头 → 弹窗」缝隙纳入命中区域 -->
+      <div class="th-pop" :style="{ maxHeight: popMaxH + 'px' }" @wheel.stop @mousedown.stop>
+        <span v-for="s in slowCities ?? []" :key="s.city" class="th-pop-row">
+          <span :class="{ core: s.core }">{{ s.city }}</span>
+          <span>{{ fmtNum(s.units) }}</span>
+        </span>
+        <span class="th-pop-more">共 {{ (slowCities ?? []).length }} 个城市</span>
       </div>
     </div>
   </Teleport>
@@ -1287,8 +1328,7 @@ async function copySku(sku: string): Promise<void> {
 }
 .th-pop {
   display: block;
-  width: 190px;
-  max-height: 250px;
+  width: 190px; /* 与脚本 TH_POP_W 保持一致 */
   overflow-y: auto;
   overscroll-behavior: contain; /* 滚到列表边界时不把滚动传给外层表格 */
   padding: 9px 11px;
@@ -1300,15 +1340,13 @@ async function copySku(sku: string): Promise<void> {
   font-weight: 400;
   user-select: text; /* 列表内可正常选中/复制城市名 */
 }
-/* 命中层：包在弹窗外层的透明盒子，padding 把「表头 → 列表」的缝隙
-   以及列表四周都纳入可命中区域（自身不裁剪，桥接一定生效）。 */
-.th-pop-layer {
-  position: absolute;
-  top: 100%;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 30;
-  padding: 14px 12px;
+/* 弹窗外壳：fixed 定位经 Teleport 挂到 body（absolute 在 .mt-scroll 滚动上下文里
+   会被裁剪遮挡），padding 把「表头 → 弹窗」的缝隙以及四周留白都纳入可命中区域
+   （自身不裁剪，桥接一定生效）。 */
+.th-pop-fly {
+  position: fixed;
+  z-index: 1000;
+  padding: 12px;
   background: transparent;
 }
 .th-pop-row {

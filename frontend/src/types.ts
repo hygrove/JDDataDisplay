@@ -715,35 +715,38 @@ export interface RestockGroup {
 
 /**
  * 补货建议清单响应（/api/inventory/restock）。
+ *
+ * @remarks
+ * 一次返回**两种装配**（rows 平铺长表 + groups 城市分组）——它们是后端同一份计算的
+ * 不同装配，前端切换视图只做本地装配、不再请求后端。
+ * 2026-10-28 方案 A：原先切视图会重跑整轮后端计算，实测重算占整请求耗时 100%，
+ * 切一次白等 ~228ms；改为一次取全后，切换耗时 ≈ 0ms。
  */
-export interface RestockResponse {
-  /** 视图标识：城市视图 */
-  view: "city";
-  /** 计算所用快照日期 */
+export interface RestockListResponse {
+  /**
+   * 最新快照日期（**跨店**口径，仅供展示）。
+   *
+   * @remarks
+   * ⛔ 这不是"本次计算所用的日期"——库存按「每店保留自己最新一份」淘汰
+   * （ADR-0015），各店日期可能不同，落后店的计算用的是它自己的日期。
+   * 真实的 per-shop 日期见 `shop_dates`。
+   */
   date: string;
+  /**
+   * 每店各自最新的快照日期：{店铺: "YYYY-MM-DD"}。
+   *
+   * @remarks
+   * 各店日期**可能不同**——某店当天漏下载时它停在上一份。
+   */
+  shop_dates: Record<string, string>;
   /** 本次计算实际生效的参数（非法值已被后端夹回默认） */
   params: RestockParams;
-  /** 按城市分组（仅含有建议行的城市，按 CITIES 顺序） */
-  groups: RestockGroup[];
-  /** 8 城建议量总计（本周建议采购总量） */
-  grand_total: number;
-}
-
-/** SKU 视图：平铺长表，一行一个 SKU × 城市。 */
-export interface RestockSkuResponse {
-  /** 视图标识：SKU 视图 */
-  view: "sku";
-  /** 计算所用快照日期 */
-  date: string;
-  /** 本次计算实际生效的参数 */
-  params: RestockParams;
-  /** 平铺行（按 SKU 编码升序、同 SKU 按城市白名单顺序） */
+  /** 平铺长表（按 SKU 编码升序、同 SKU 按城市白名单顺序；含建议量为 0 的行） */
   rows: RestockRow[];
-  /** 建议量总计（与城市视图的 grand_total 同口径） */
+  /** 按城市分组（仅含有建议行的城市，按 CITIES 顺序；组内按建议量降序 + 小计） */
+  groups: RestockGroup[];
+  /** 8 城建议量总计（本周建议采购总量；两种装配同口径） */
   grand_total: number;
   /** 涉及的 SKU 个数 */
   sku_count: number;
 }
-
-/** 补货清单响应（两个视图的联合类型）。 */
-export type RestockListResponse = RestockResponse | RestockSkuResponse;

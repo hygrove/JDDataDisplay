@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import io
 import sqlite3
-from typing import Any, Literal, Optional, Union
+from typing import Any, Optional
 from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException, Query
@@ -1097,66 +1097,64 @@ class RestockCityGroupModel(BaseModel):
     subtotal: int = 0
 
 
-class RestockCityResponse(BaseModel):
-    """城市视图响应（view=city）。"""
+class RestockListModel(BaseModel):
+    """补货清单响应：平铺长表 + 城市分组（一次给全，切换视图不再请求后端）。
 
-    view: Literal["city"] = "city"
+    @remarks
+    两种视图是**同一份计算**的两种装配（都出自 _restock_payload）：
+    - rows：平铺长表（SKU × 城市，含建议量为 0 的行）；
+    - groups：按城市分组（只含建议量 > 0 的行，组内按建议量降序 + 小计）。
+
+    一次把两种装配都返回，前端切换视图只做本地装配、不再回头重算
+    （2026-10-28 方案 A：实测重算占整请求耗时 100%，切一次视图白等 ~228ms）。
+    """
+
     date: Optional[str] = None
-    params: RestockParamsModel
-    groups: list[RestockCityGroupModel] = []
-    grand_total: int = 0
-
-
-class RestockSkuResponse(BaseModel):
-    """SKU 视图响应（view=sku）：平铺长表。"""
-
-    view: Literal["sku"] = "sku"
-    date: Optional[str] = None
+    # 每店各自最新的快照日期（ADR-0015 per-shop 口径）。⚠️ **必须在此声明**——
+    # response_model 会把未声明的字段**静默丢弃**（`extra="allow"` 也不例外），
+    # 不声明 = 白加，接口返回里没有该字段。
+    shop_dates: dict[str, str] = {}
     params: RestockParamsModel
     rows: list[RestockRowModel] = []
+    groups: list[RestockCityGroupModel] = []
     grand_total: int = 0
     sku_count: int = 0
 
 
-@router.get("/restock", response_model=Union[RestockCityResponse, RestockSkuResponse])
+@router.get("/restock", response_model=RestockListModel)
 def get_restock(
     shop: Optional[str] = Query(None, description="店铺名；空=全部店铺"),
     date: Optional[str] = Query(None, description="快照日期；空=最新快照"),
     keyword: Optional[str] = Query(None, description="SKU / 商品名称 / SPU 模糊搜索（口径与矩阵表一致）"),
-    view: str = Query("city", description="视图：city=按城市分组 / sku=平铺长表（同一份计算的两种装配）"),
     days: Optional[float] = Query(None, description="覆盖天数；默认 9，域 [1,60]"),
     safety: Optional[float] = Query(None, description="安全系数；默认 0.2（20%）"),
     window: Optional[int] = Query(None, description="销速窗口天数；7/14/30，默认 14"),
-) -> Union[RestockCityResponse, RestockSkuResponse]:
+) -> RestockListModel:
     """补货建议清单：销速驱动目标库存 − 现货 − 在途。
 
-    两个视图共用同一份计算（_restock_payload），只是装配方式不同：
-    - view=city：按城市分组，组内按建议量降序，每组小计 + 8 城总计（只含建议量 > 0 的行）；
-    - view=sku：平铺长表（每行一个 SKU × 城市），按 SKU 编码升序、同 SKU 按城市白名单顺序，
-      保留建议量为 0 的行，便于看全"哪城缺、哪城不缺"。
+    一次返回**两种装配**（rows 平铺长表 + groups 城市分组）——它们是同一份计算的
+    不同装配（见 _restock_payload），前端切换视图只做本地装配、不再请求后端
+    （2026-10-28 方案 A：实测重算占整请求耗时 100%，切一次视图白等 ~228ms）。
+    - rows：按 SKU 编码升序、同 SKU 按城市白名单顺序，保留建议量为 0 的行，
+      便于看全"哪城缺、哪城不缺"；
+    - groups：按 CITIES 顺序分组，只含建议量 > 0 的行，组内按建议量降序 + 小计。
 
     下柜 SKU 完全排除；合计口径与前端展示一致。None/越界参数被夹回默认值；
     非数字串由 Query 类型验证拦下（422）。关键词过滤与矩阵表共用同一套口径。
     每行含 avail（窗口有货天数）与 velocity_kind（销速估计方式）：有货天数不足
     可信门槛时销速按 30 日参照收缩估算（kind=shrunk），防积压爆发把销速顶上天。
     """
-    v = view if view in ("city", "sku") else "city"
     payload = _restock_payload(shop, date, keyword, days, safety, window)
-    if v == "sku":
-        return {
-            "view": "sku",
-            "date": payload["date"],
-            "params": payload["params"],
-            "rows": payload["rows"],
-            "grand_total": payload["grand_total"],
-            "sku_count": payload["sku_count"],
-        }
     return {
-        "view": "city",
         "date": payload["date"],
+        # 每店各自最新的快照日期（ADR-0015 per-shop 口径）。⚠️ 端点是**手工组装**
+        # 响应的（挑字段填进 response_model），⛔ 漏了这个字段它就静默取模型默认值 {}。
+        "shop_dates": payload["shop_dates"],
         "params": payload["params"],
+        "rows": payload["rows"],
         "groups": payload["city_groups"],
         "grand_total": payload["grand_total"],
+        "sku_count": payload["sku_count"],
     }
 
 
