@@ -25,6 +25,7 @@ from fastapi.staticfiles import StaticFiles
 
 from ..jobs import config
 from .api import router as api_router
+from .chat_api import router as chat_router
 from .inventory_api import router as inventory_router
 
 # FRONTEND_DIST：前端 npm run build 的产物目录，生产模式下页面全部由这里提供
@@ -49,6 +50,9 @@ app.add_middleware(GZipMiddleware, minimum_size=1024)
 app.include_router(api_router)
 # 库存管理 API（/api/inventory/...）
 app.include_router(inventory_router)
+# AI 对话（/api/chat/...：config / completions SSE / 报告导出）。
+# 与业务路由平行注册；chat 链路对数据库只读（spec：.scratch/ai-chat/spec.md）。
+app.include_router(chat_router)
 
 
 # 启动钩子：确保 SQLite 表已存在（幂等）。

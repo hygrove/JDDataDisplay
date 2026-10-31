@@ -3,12 +3,14 @@
 // ⚠️ BASE 用相对路径 "/api" 而不是写死 http://127.0.0.1:8000：
 //    生产是单端口 8000 同源部署，开发时由 vite 的 proxy 转发，
 //    写死域名会让「换端口部署」或「走 https」时全部请求失败。
+import { splitSseFrames, parseSseFrame } from "./modules/chat";
 import type {
   BatchStatus,
   InventoryAlertsSummary,
   InventoryDistributions,
   InventoryMeta,
   InventoryPagedRows,
+  InventoryRefreshResult,
   InventoryRowsQuery,
   InventorySlowCity,
   InventorySummary,
@@ -212,6 +214,29 @@ export async function postRefresh(): Promise<BatchStatus> {
   const res = await fetch(`${BASE}/refresh`, { method: "POST" });
   if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
   return (await res.json()) as BatchStatus;
+}
+
+/**
+ * 手动触发**库存数据**刷新（重跑库存摄入 + 缩略图 + 快照淘汰）。
+ *
+ * @remarks
+ * 与 {@link postRefresh} 的区别：后者重跑整条批处理（含 POP 明细摄入，数十秒）；
+ * 本接口只跑库存链路那四步，耗时秒级，**不碰单品数据**。
+ * 同步执行——调用方需自己处理等待期（按钮禁用 + 状态提示）。
+ *
+ * @returns {Promise<InventoryRefreshResult>} 刷新结果（是否更新 / 行数 / 耗时 / 逐步骤明细）。
+ * @throws {Error} 接口非 2xx。**503** 表示已有刷新在执行中（重复点击）；
+ *      摄入失败时后端返回 HTTP 200 + `ok:false` + `error`，由调用方判断。
+ * @example
+ * ```ts
+ * const r = await postInventoryRefresh();
+ * if (!r.ok) showError(r.error);
+ * ```
+ */
+export async function postInventoryRefresh(): Promise<InventoryRefreshResult> {
+  const res = await fetch(`${BASE}/inventory/refresh`, { method: "POST" });
+  if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+  return (await res.json()) as InventoryRefreshResult;
 }
 
 /**
@@ -515,4 +540,189 @@ export function fetchRestockList(
   if (p.safety !== undefined) params.set("safety", String(p.safety));
   if (p.window !== undefined) params.set("window", String(p.window));
   return get<RestockListResponse>(`/inventory/restock?${params.toString()}`);
+}
+
+// ====================== AI 对话（/api/chat）======================
+
+/** AI 配置视图（后端只回掩码，明文 key 永不出服务端——ADR-0017）。 */
+export interface ChatConfig {
+  /** 是否已配置可用的 API Key */
+  configured: boolean;
+  /** key 掩码（形如 tk-a1b2…c3d4）；未配置为 null */
+  key_mask: string | null;
+  /** 生效的 DeepSeek 兼容端点（迁移性：云端可换网关） */
+  base_url: string;
+  /** 默认模型（deepseek-chat / deepseek-reasoner） */
+  model: string;
+  /** 模型目录（事实来源：后端 chat_service.MODEL_CATALOG，驱动切换器与降级提示） */
+  models: ChatModelInfo[];
+}
+
+/** 模型目录条目：id / 展示名 / 是否支持查询工具（不支持时 UI 显示"不查库"提示）。 */
+export interface ChatModelInfo {
+  id: string;
+  label: string;
+  tools_supported: boolean;
+}
+
+/** 对话消息（多轮上下文；system 由后端注入，前端只传 user / assistant）。 */
+export interface ChatMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
+/** 溯源记录：AI 回答依据的一次查询工具调用（CONTEXT.md「溯源」）。 */
+export interface ProvenanceCall {
+  /** 查询工具名（如 pop_rows / inventory_restock） */
+  tool: string;
+  /** 模型传的参数 */
+  args: unknown;
+  /** 工具返回结果的截断预览（300 字） */
+  result_preview: string;
+}
+
+/**
+ * 拉取 AI 配置（掩码视图）。
+ *
+ * @returns {Promise<ChatConfig>} 当前生效配置。
+ * @throws {Error} 接口非 2xx。
+ */
+export function fetchChatConfig(): Promise<ChatConfig> {
+  return get<ChatConfig>("/chat/config");
+}
+
+/**
+ * 保存 AI 配置（面板设置弹层调用）。
+ *
+ * @remarks
+ * 约定与后端一致：省略的键不改；空串 = 清除该键（回退环境变量）。
+ *
+ * @param {object} body 只提交要改的键。
+ * @returns {Promise<ChatConfig>} 保存后的生效配置（掩码视图）。
+ * @throws {Error} 接口非 2xx。
+ */
+export function putChatConfig(body: {
+  api_key?: string;
+  base_url?: string;
+  model?: string;
+}): Promise<ChatConfig> {
+  return put<ChatConfig>("/chat/config", body);
+}
+
+/**
+ * AI 对话 SSE 流式请求：边收边回调，不抛业务错误（错误统一走 onError）。
+ *
+ * @remarks
+ * 帧协议：tool_call（模型决定查数，UI 显示"正在查询…"）→ delta（文本增量）
+ * → done（markdown 原文 + 渲染后 HTML + 溯源 provenance）；
+ * 未配 key / 非法模型等请求级错误由 HTTP 状态码给出（400/422），本函数
+ * 解析 detail 后转 onError；上游错误在流内以 error 帧到达，同样转 onError。
+ * 流结束但既无 done 也无 error（网络中断）时补一条 onError。
+ *
+ * @param {object} body 请求体：当前对话的最近若干轮消息 + 可选模型。
+ * @param {object} cb 回调集合。
+ * @param {(name: string, args: unknown) => void} [cb.onToolCall] 模型发起一次查询工具调用。
+ * @param {(text: string) => void} cb.onDelta 收到一段文本增量。
+ * @param {(markdown: string, html: string, provenance: ProvenanceCall[]) => void} cb.onDone 回答完成。
+ * @param {(message: string) => void} cb.onError 面向用户的错误信息。
+ * @returns {Promise<void>} 流结束时 resolve（结果已通过回调交付）。
+ */
+export async function streamChat(
+  body: { messages: ChatMessage[]; model?: string },
+  cb: {
+    onToolCall?: (name: string, args: unknown) => void;
+    onDelta: (text: string) => void;
+    onDone: (markdown: string, html: string, provenance: ProvenanceCall[]) => void;
+    onError: (message: string) => void;
+  },
+): Promise<void> {
+  const res = await fetch(`${BASE}/chat/completions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    // 400/422 的 detail 是后端写好的用户引导文案，优先展示
+    const text = await res.text();
+    try {
+      const detail = JSON.parse(text)?.detail;
+      if (typeof detail === "string") {
+        cb.onError(detail);
+        return;
+      }
+    } catch {
+      /* 非 JSON 错误体，走原始文本 */
+    }
+    cb.onError(`${res.status} ${text}`);
+    return;
+  }
+  const reader = res.body?.getReader();
+  if (!reader) {
+    cb.onError("当前浏览器不支持流式读取");
+    return;
+  }
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let sawDone = false;
+  let sawError = false;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    // stream: true —— 多字节 UTF-8 字符可能被网络分块劈开，解码器跨段拼接
+    buffer += decoder.decode(value, { stream: true });
+    const { frames, rest } = splitSseFrames(buffer);
+    buffer = rest;
+    for (const f of frames) {
+      const payload = parseSseFrame(f);
+      if (!payload) continue;
+      if (payload.type === "tool_call") {
+        cb.onToolCall?.(String(payload.name ?? ""), payload.args ?? {});
+      } else if (payload.type === "delta" && typeof payload.text === "string") {
+        cb.onDelta(payload.text);
+      } else if (payload.type === "done") {
+        sawDone = true;
+        const provenance = Array.isArray(payload.provenance)
+          ? (payload.provenance as ProvenanceCall[])
+          : [];
+        cb.onDone(String(payload.markdown ?? ""), String(payload.html ?? ""), provenance);
+      } else if (payload.type === "error") {
+        sawError = true;
+        cb.onError(String(payload.message ?? "未知错误"));
+      }
+    }
+  }
+  if (!sawDone && !sawError) {
+    cb.onError("连接中断，请重试");
+  }
+}
+
+/**
+ * 导出一条 AI 回答为报告文件（HTML 内嵌样式 / Word 真 docx，ADR-0018）。
+ *
+ * @remarks
+ * 与现有 xlsx 导出同款交互：返回 Blob 由调用方用 `<a download>` 触发下载；
+ * 每条 AI 回答都可导出，不做"是否报告"的判断（spec Q11）。
+ *
+ * @param {"html" | "docx"} format 目标格式。
+ * @param {string} markdown AI 回答的 markdown 原文。
+ * @param {string} title 文档标题（同时用作下载文件名主干）。
+ * @returns {Promise<Blob>} 文件内容。
+ * @throws {Error} 接口非 2xx。
+ * @example
+ * ```ts
+ * const blob = await exportChatReport("docx", md, "周销售分析");
+ * ```
+ */
+export async function exportChatReport(
+  format: "html" | "docx",
+  markdown: string,
+  title: string,
+): Promise<Blob> {
+  const res = await fetch(`${BASE}/chat/export/${format}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ markdown, title }),
+  });
+  if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+  return res.blob();
 }

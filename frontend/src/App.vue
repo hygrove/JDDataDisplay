@@ -6,6 +6,7 @@ import { useModuleStore } from "./stores/module";
 import { useUiStore } from "./stores/ui";
 import { fetchManifest } from "./api";
 import SettingsControl from "./components/SettingsControl.vue";
+import ChatPanel from "./components/chat/ChatPanel.vue";
 
 const store = useModuleStore();
 const ui = useUiStore();
@@ -170,6 +171,9 @@ function onShopClick(shop: string) {
     <div class="nl-spinner"></div>
     <div class="nl-text">{{ ui.loadingText }}</div>
   </div>
+
+  <!-- AI 对话悬浮面板（全局组件，右上角气泡入口；与路由无关，任何页面可用） -->
+  <ChatPanel />
 </template>
 
 <style scoped>
