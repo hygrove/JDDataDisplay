@@ -51,6 +51,29 @@ export const CONTEXT_MESSAGE_LIMIT = 12;
 export const MODEL_PREF_KEY = "jd.chat-model.v1";
 /** 对话标题截断长度。 */
 const TITLE_MAX = 20;
+/** 停止标注（追加在半截回答的 markdown 之后；随上下文回传让模型知道"上次被打断"）。 */
+export const STOPPED_MARKER = "（已停止）";
+
+/**
+ * 生成「点停止后保留的半截回答」的存储内容。
+ *
+ * @remarks
+ * 半截回答保留进历史（多轮上下文不断链），末尾追加停止标注；
+ * 一个字都没流出就停止时，存一条占位说明——历史里 assistant 消息
+ * 的 content 不能为空串（loadHistory 会把空 content 当坏行丢弃）。
+ *
+ * @param {string} partial 停止时已流出的文本（可为空）。
+ * @returns {string} 入库的 assistant content。
+ * @example
+ * ```ts
+ * stoppedContent("根据数据，销售额"); // "根据数据，销售额\n\n（已停止）"
+ * stoppedContent("");               // "（已停止：未生成内容）"
+ * ```
+ */
+export function stoppedContent(partial: string): string {
+  const t = partial.trim();
+  return t ? `${t}\n\n${STOPPED_MARKER}` : "（已停止：未生成内容）";
+}
 
 /**
  * 把任意存储值规整成合法模型 id（工单 05：模型偏好容错读取）。
@@ -221,6 +244,31 @@ export function appendMessage(
   };
   const rest = h.conversations.filter((c) => c.id !== updated.id);
   return _prune({ conversations: [updated, ...rest], activeId: updated.id });
+}
+
+/**
+ * 删除一个对话（列表行的 × 按钮）。
+ *
+ * @remarks
+ * 只影响本地历史，不碰任何业务数据。删的是当前对话时，activeId 回退到剩余
+ * 最近使用的一条（列表已按 updatedAt 降序，第 0 个即最新），全删空则 null。
+ * 删的是别的对话则当前对话不变。id 不存在时原样返回（幂等，防重复点击炸态）。
+ *
+ * @param {ChatHistory} h 当前历史。
+ * @param {string} id 要删除的对话 id。
+ * @returns {ChatHistory} 新历史。
+ * @example
+ * ```ts
+ * deleteConversation({ conversations: [a, b], activeId: "a" }, "a");
+ * // { conversations: [b], activeId: "b" }
+ * ```
+ */
+export function deleteConversation(h: ChatHistory, id: string): ChatHistory {
+  const conversations = h.conversations.filter((c) => c.id !== id);
+  if (conversations.length === h.conversations.length) return h; // id 不存在：幂等
+  const activeId =
+    h.activeId === id ? (conversations[0]?.id ?? null) : h.activeId;
+  return { conversations, activeId };
 }
 
 /**

@@ -17,10 +17,12 @@ import {
 import {
   appendMessage,
   buildContextMessages,
+  deleteConversation,
   emptyHistory,
   loadHistory,
   newConversation,
   normalizeModel,
+  stoppedContent,
   MODEL_PREF_KEY,
   type ChatHistory,
   type StoredMessage,
@@ -39,6 +41,12 @@ const streamText = ref("");
 /** 工具接地状态行：模型正在查数时显示"正在查询：xxx"（tool_call 帧） */
 const toolStatus = ref("");
 const error = ref("");
+/** 当前流式请求的取消句柄（「停止」按钮 abort；非响应式，生命周期同一次 send） */
+let abortCtrl: AbortController | null = null;
+/** 用户主动停止标记（区别于网络错误：停止要保留半截回答入库） */
+let stoppedByUser = false;
+/** 本次流已收到 done / error 帧（停止分支据此避免重复写入历史） */
+let streamSettled = false;
 const cfg = ref<ChatConfig | null>(null);
 const keyInput = ref("");
 const savingKey = ref(false);
@@ -91,6 +99,8 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   window.removeEventListener("resize", onBubbleResize);
+  // 组件销毁时断开进行中的 SSE，防止悬挂请求
+  abortCtrl?.abort();
 });
 
 /** 历史写盘（localStorage 满配额 / 隐私模式失败不致命，静默降级为不持久化）。 */
@@ -239,6 +249,17 @@ function switchConversation(id: string): void {
 }
 
 /**
+ * 删除一个历史对话（列表行右上角 ×，直接删不二次确认）。
+ *
+ * @remarks 流式回答中禁用，防止删掉正在写入的当前对话；只动本地历史。
+ */
+function removeConversation(id: string): void {
+  if (streaming.value) return;
+  history.value = deleteConversation(history.value, id);
+  persist();
+}
+
+/**
  * 对话列表用的相对时间（刚刚 / N 分钟前 / 今天 HH:mm / M-DD）。
  */
 function fmtTime(ts: number): string {
@@ -257,8 +278,19 @@ function fmtTime(ts: number): string {
 }
 
 /**
+ * 停止当前流式回答：abort 断开 SSE（后端随之感知断连、终止上游生成）。
+ * 半截回答由 send() 的 finally 分支保留入库（stoppedContent 标注）。
+ */
+function stop(): void {
+  if (!streaming.value) return;
+  stoppedByUser = true;
+  abortCtrl?.abort();
+}
+
+/**
  * 发送当前输入：追加用户消息到当前对话 → SSE 流式 → 增量进 streamText →
  * done 转 assistant 消息（渲染 HTML + 溯源）；上下文取当前对话最近 12 条。
+ * 点「停止」时半截回答标注"（已停止）"入库，多轮上下文不断链。
  */
 async function send(): Promise<void> {
   const text = input.value.trim();
@@ -271,6 +303,9 @@ async function send(): Promise<void> {
   streaming.value = true;
   streamText.value = "";
   toolStatus.value = "";
+  stoppedByUser = false;
+  streamSettled = false;
+  abortCtrl = new AbortController();
   await scrollBottom();
   const context = buildContextMessages(bubbles.value);
   try {
@@ -284,6 +319,7 @@ async function send(): Promise<void> {
         void scrollBottom();
       },
       onDone: (markdown, html, provenance) => {
+        streamSettled = true;
         history.value = appendMessage(
           history.value,
           { role: "assistant", content: markdown, html, provenance },
@@ -294,14 +330,26 @@ async function send(): Promise<void> {
         toolStatus.value = "";
       },
       onError: (message) => {
+        streamSettled = true;
         error.value = message;
         streamText.value = "";
         toolStatus.value = "";
       },
-    });
+    }, abortCtrl.signal);
   } finally {
+    // 停止且没收到 done/error：把已流出的半截文本标注后入库（纯文本渲染）
+    if (stoppedByUser && !streamSettled) {
+      history.value = appendMessage(
+        history.value,
+        { role: "assistant", content: stoppedContent(streamText.value) },
+        Date.now(),
+      );
+      persist();
+    }
+    streamText.value = "";
     streaming.value = false;
     toolStatus.value = "";
+    abortCtrl = null;
     void scrollBottom();
   }
 }
@@ -469,18 +517,32 @@ async function exportReport(markdown: string, format: "html" | "docx"): Promise<
         >
           ＋ 新建对话
         </button>
-        <button
+        <div
           v-for="c in history.conversations"
           :key="c.id"
-          class="conv-item"
-          :class="{ active: c.id === history.activeId }"
-          :data-testid="`chat-conv-item-${c.id}`"
-          :disabled="streaming"
-          @click="switchConversation(c.id)"
+          class="conv-row"
         >
-          <span class="conv-title">{{ c.title || "新对话" }}</span>
-          <span class="conv-meta">{{ c.messages.length }} 条 · {{ fmtTime(c.updatedAt) }}</span>
-        </button>
+          <button
+            class="conv-item"
+            :class="{ active: c.id === history.activeId }"
+            :data-testid="`chat-conv-item-${c.id}`"
+            :disabled="streaming"
+            @click="switchConversation(c.id)"
+          >
+            <span class="conv-title">{{ c.title || "新对话" }}</span>
+            <span class="conv-meta">{{ c.messages.length }} 条 · {{ fmtTime(c.updatedAt) }}</span>
+          </button>
+          <button
+            class="conv-del"
+            :disabled="streaming"
+            :data-testid="`chat-conv-del-${c.id}`"
+            title="删除该对话"
+            aria-label="删除该对话"
+            @click="removeConversation(c.id)"
+          >
+            ✕
+          </button>
+        </div>
         <div v-if="!history.conversations.length" class="chat-empty">
           还没有历史对话<br />直接提问会自动开始一个
         </div>
@@ -577,6 +639,15 @@ async function exportReport(markdown: string, format: "html" | "docx"): Promise<
         :disabled="streaming"
         @keydown.enter.exact.prevent="send"
       ></textarea>
+      <button
+        v-if="streaming"
+        class="chat-stop"
+        data-testid="chat-stop"
+        title="停止回答（已生成的部分会保留）"
+        @click="stop"
+      >
+        <span class="stop-square" aria-hidden="true"></span>停止
+      </button>
       <button
         class="chat-send"
         :disabled="!input.trim() || streaming"
@@ -763,7 +834,8 @@ async function exportReport(markdown: string, format: "html" | "docx"): Promise<
   flex-direction: column;
   align-items: flex-start;
   gap: 3px;
-  padding: 9px 12px;
+  width: 100%;
+  padding: 9px 34px 9px 12px; /* 右侧留常驻 × 的位置 */
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   background: var(--color-surface);
@@ -794,6 +866,37 @@ async function exportReport(markdown: string, format: "html" | "docx"): Promise<
 .conv-meta {
   font-size: calc(12px * var(--font-scale));
   color: var(--color-text-5);
+}
+/* 每行外层：为右上角常驻删除 × 提供定位参照 */
+.conv-row {
+  position: relative;
+}
+/* 常驻删除按钮（列表行右上角，灰 → 悬停转品牌红） */
+.conv-del {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-circle);
+  background: transparent;
+  color: var(--color-text-6);
+  font-size: calc(14px * var(--font-scale));
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.conv-del:hover:not(:disabled) {
+  color: var(--color-brand);
+  background: var(--color-brand-tint);
+}
+.conv-del:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 /* ---------- 设置弹层 ---------- */
@@ -1147,5 +1250,29 @@ async function exportReport(markdown: string, format: "html" | "docx"): Promise<
 .chat-send:disabled {
   background: var(--color-brand-border);
   cursor: not-allowed;
+}
+/* 停止按钮（仅流式期间显示）：中性描边 + 方块停止图标，hover 转警示红 */
+.chat-stop {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 8px 14px;
+  font-size: calc(13px * var(--font-scale));
+  border: 1px solid var(--color-divider-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text-2);
+  cursor: pointer;
+}
+.chat-stop:hover {
+  border-color: var(--color-brand);
+  color: var(--color-brand);
+}
+.stop-square {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  background: currentColor;
 }
 </style>

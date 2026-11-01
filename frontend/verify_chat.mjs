@@ -6,10 +6,13 @@ import {
   appendMessage,
   buildContextMessages,
   conversationTitle,
+  deleteConversation,
   emptyHistory,
   loadHistory,
   newConversation,
   normalizeModel,
+  stoppedContent,
+  STOPPED_MARKER,
   CONTEXT_MESSAGE_LIMIT,
   MAX_CONVERSATIONS,
 } from "./src/modules/chat.ts";
@@ -229,6 +232,53 @@ eq(normalizeModel(null), "deepseek-chat", "model: null 回默认");
 eq(normalizeModel(""), "deepseek-chat", "model: 空串回默认");
 eq(normalizeModel("gpt-4"), "deepseek-chat", "model: 未知值回默认（防手改脏数据）");
 eq(normalizeModel(undefined), "deepseek-chat", "model: undefined 回默认");
+
+// ---------- 停止回答：半截内容入库（stoppedContent） ----------
+
+// 有半截文本：末尾追加停止标注，原文保留
+eq(stoppedContent("根据数据，销售额"), `根据数据，销售额\n\n${STOPPED_MARKER}`, "stop: 半截文本追加标注");
+// 空白文本视同无内容：存占位说明（content 不能为空串，否则 loadHistory 当坏行丢弃）
+eq(stoppedContent("   "), "（已停止：未生成内容）", "stop: 空白回占位");
+eq(stoppedContent(""), "（已停止：未生成内容）", "stop: 空串回占位");
+// 停止标注会随上下文回传：入库后的消息进 buildContextMessages 不被剥掉
+const stoppedMsg = [
+  { role: "user", content: "问" },
+  { role: "assistant", content: stoppedContent("半截") },
+];
+eq(buildContextMessages(stoppedMsg)[1].content, `半截\n\n${STOPPED_MARKER}`, "stop: 标注随上下文回传");
+// 半截消息经 loadHistory 往返不丢（content 非空即合法行）
+const reloaded = loadHistory(JSON.stringify({
+  conversations: [{ id: "s1", title: "t", updatedAt: 1, messages: stoppedMsg }],
+  activeId: "s1",
+}));
+eq(reloaded.conversations[0].messages[1].content, `半截\n\n${STOPPED_MARKER}`, "stop: 历史往返不丢");
+
+// ---------- 删除对话（deleteConversation） ----------
+
+const delBase = {
+  conversations: [
+    { id: "x1", title: "a", messages: [{ role: "user", content: "1" }], updatedAt: 300 },
+    { id: "x2", title: "b", messages: [{ role: "user", content: "2" }], updatedAt: 200 },
+    { id: "x3", title: "c", messages: [{ role: "user", content: "3" }], updatedAt: 100 },
+  ],
+  activeId: "x1",
+};
+// 删非当前：目标消失、其余保序，当前对话不变
+const d1 = deleteConversation(delBase, "x3");
+eq(d1.conversations.map((c) => c.id), ["x1", "x2"], "del: 删非当前，移除目标");
+eq(d1.activeId, "x1", "del: 删非当前，activeId 不变");
+// 删当前：回退到剩余最近一条（列表已降序，第 0 个最新）
+const d2 = deleteConversation(delBase, "x1");
+eq(d2.conversations.map((c) => c.id), ["x2", "x3"], "del: 删当前，移除");
+eq(d2.activeId, "x2", "del: 删当前回退最近一条");
+// 删到空：列表空、activeId null
+const d3 = deleteConversation({ conversations: [{ id: "z", title: "", messages: [], updatedAt: 1 }], activeId: "z" }, "z");
+eq(d3.conversations, [], "del: 删空列表");
+eq(d3.activeId, null, "del: 删空后 activeId null");
+// 不存在的 id：幂等，原样返回（防重复点击炸态）
+const d4 = deleteConversation(delBase, "nope");
+eq(d4.conversations.length, 3, "del: 不存在 id 幂等，列表不变");
+eq(d4.activeId, "x1", "del: 不存在 id activeId 不变");
 
 console.log(`\nchat 断言：${pass} 通过，${fail} 失败`);
 if (fail > 0) process.exit(1);

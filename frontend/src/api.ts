@@ -625,6 +625,8 @@ export function putChatConfig(body: {
  * @param {(text: string) => void} cb.onDelta 收到一段文本增量。
  * @param {(markdown: string, html: string, provenance: ProvenanceCall[]) => void} cb.onDone 回答完成。
  * @param {(message: string) => void} cb.onError 面向用户的错误信息。
+ * @param {AbortSignal} [signal] 取消信号（「停止」按钮）：abort 后断开 SSE 连接
+ *   （后端随之感知断连、终止上游生成），本函数静默 resolve，不走 onError。
  * @returns {Promise<void>} 流结束时 resolve（结果已通过回调交付）。
  */
 export async function streamChat(
@@ -635,12 +637,23 @@ export async function streamChat(
     onDone: (markdown: string, html: string, provenance: ProvenanceCall[]) => void;
     onError: (message: string) => void;
   },
+  signal?: AbortSignal,
 ): Promise<void> {
-  const res = await fetch(`${BASE}/chat/completions`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  // 用户主动停止（AbortError）与网络故障分开：前者静默返回，半截文本由调用方处置
+  const isAbort = (e: unknown): boolean =>
+    e instanceof DOMException && e.name === "AbortError";
+  let res: Response;
+  try {
+    res = await fetch(`${BASE}/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal,
+    });
+  } catch (e) {
+    if (isAbort(e)) return;
+    throw e;
+  }
   if (!res.ok) {
     // 400/422 的 detail 是后端写好的用户引导文案，优先展示
     const text = await res.text();
@@ -666,8 +679,15 @@ export async function streamChat(
   let sawDone = false;
   let sawError = false;
   for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
+    let chunk: { done: boolean; value?: Uint8Array };
+    try {
+      chunk = await reader.read();
+    } catch (e) {
+      if (isAbort(e)) return;
+      throw e;
+    }
+    if (chunk.done) break;
+    const value = chunk.value;
     // stream: true —— 多字节 UTF-8 字符可能被网络分块劈开，解码器跨段拼接
     buffer += decoder.decode(value, { stream: true });
     const { frames, rest } = splitSseFrames(buffer);
@@ -691,7 +711,8 @@ export async function streamChat(
       }
     }
   }
-  if (!sawDone && !sawError) {
+  // 兜底：abort 竞态下流"正常结束"但无 done/error 帧，也不算连接中断
+  if (!sawDone && !sawError && !signal?.aborted) {
     cb.onError("连接中断，请重试");
   }
 }
