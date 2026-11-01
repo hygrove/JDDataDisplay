@@ -6,7 +6,7 @@
 // 消息渲染（spec Q13C）：流式期间显示原始文本，done 帧到达后替换为
 // 后端渲染好的 HTML（v-html 安全：后端 markdown-it html=False 已转义）。
 // 工单 02 加溯源与查询态；工单 03 加对话列表；工单 04 加导出按钮。
-import { computed, nextTick, onMounted, ref } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
 import {
   exportChatReport,
   fetchChatConfig,
@@ -86,6 +86,11 @@ onMounted(() => {
   // 恢复历史对话（容错：损坏自动回空）+ 预拉配置
   history.value = loadHistory(localStorage.getItem(STORAGE_KEY));
   loadConfig();
+  window.addEventListener("resize", onBubbleResize);
+});
+
+onBeforeUnmount(() => {
+  window.removeEventListener("resize", onBubbleResize);
 });
 
 /** 历史写盘（localStorage 满配额 / 隐私模式失败不致命，静默降级为不持久化）。 */
@@ -111,6 +116,73 @@ async function loadConfig(): Promise<void> {
 function toggle(): void {
   open.value = !open.value;
   if (open.value) void scrollBottom();
+}
+
+/* ---------- 气泡沿右边缘上下拖动 ---------- */
+/** 落点持久化键（沿用 `jd.*.v1` 惯例）。 */
+const BUBBLE_TOP_KEY = "jd.chat-bubble-top.v1";
+/** 气泡尺寸与上下留白（px）。 */
+const BUBBLE_SIZE = 44;
+const BUBBLE_EDGE = 6;
+
+/** 把 top 夹在可视范围内（窗口变矮时也不会跑出屏幕）。 */
+function clampBubbleTop(v: number): number {
+  const max = Math.max(BUBBLE_EDGE, window.innerHeight - BUBBLE_SIZE - BUBBLE_EDGE);
+  return Math.max(BUBBLE_EDGE, Math.min(v, max));
+}
+
+/** 气泡纵向位置（初始取上次落点，缺省贴顶 12px）。 */
+const bubbleTop = ref(clampBubbleTop(Number(localStorage.getItem(BUBBLE_TOP_KEY)) || 12));
+
+// 拖动过程态无需响应式，用普通变量
+let dragging = false;
+let dragMoved = false;
+let dragStartY = 0;
+let dragStartTop = 0;
+
+function onBubblePointerDown(e: PointerEvent): void {
+  dragging = true;
+  dragMoved = false;
+  dragStartY = e.clientY;
+  dragStartTop = bubbleTop.value;
+  try {
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+  } catch {
+    /* 个别环境不支持指针捕获，退化为无捕获拖动 */
+  }
+}
+function onBubblePointerMove(e: PointerEvent): void {
+  if (!dragging) return;
+  const dy = e.clientY - dragStartY;
+  if (Math.abs(dy) > 4) dragMoved = true;
+  if (dragMoved) bubbleTop.value = clampBubbleTop(dragStartTop + dy);
+}
+function onBubblePointerUp(e: PointerEvent): void {
+  if (!dragging) return;
+  dragging = false;
+  try {
+    (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+  } catch {
+    /* 指针已释放，忽略 */
+  }
+  if (dragMoved) {
+    try {
+      localStorage.setItem(BUBBLE_TOP_KEY, String(bubbleTop.value));
+    } catch {
+      /* 存不进只是丢位置偏好 */
+    }
+  } else {
+    toggle(); // 未移动 = 点击，开合面板
+  }
+  dragMoved = false;
+}
+function onBubblePointerCancel(): void {
+  dragging = false;
+  dragMoved = false;
+}
+/** 窗口尺寸变化时重新夹取位置。 */
+function onBubbleResize(): void {
+  bubbleTop.value = clampBubbleTop(bubbleTop.value);
 }
 
 /**
@@ -280,20 +352,31 @@ async function exportReport(markdown: string, format: "html" | "docx"): Promise<
 </script>
 
 <template>
-  <!-- 右上角气泡入口（用户指定位置；面板打开时隐藏，由面板内 ✕ 收起） -->
-  <button
+  <!-- 右上角气泡入口（可沿右边缘上下拖动，落点记忆；面板打开时隐藏，由面板内 ✕ 收起）。
+       T1 科技风：脉冲光圈 + 旋转微光环 + 蓝青渐变「AI」圆钮 + 琥珀角标。 -->
+  <div
     v-if="!open"
-    class="chat-bubble"
-    data-testid="chat-bubble"
-    title="AI 助手"
-    aria-label="打开 AI 助手"
-    @click="toggle"
+    class="chat-bubble-wrap"
+    :style="{ top: bubbleTop + 'px' }"
+    @pointerdown="onBubblePointerDown"
+    @pointermove="onBubblePointerMove"
+    @pointerup="onBubblePointerUp"
+    @pointercancel="onBubblePointerCancel"
   >
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-      stroke-linecap="round" stroke-linejoin="round">
-      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-    </svg>
-  </button>
+    <div class="chat-bubble-ring" aria-hidden="true"></div>
+    <div class="chat-bubble-halo" aria-hidden="true"></div>
+    <button
+      class="chat-bubble"
+      data-testid="chat-bubble"
+      title="AI 助手（可上下拖动）"
+      aria-label="打开 AI 助手"
+      @keydown.enter.prevent="toggle"
+      @keydown.space.prevent="toggle"
+    >
+      AI
+    </button>
+    <div class="chat-bubble-dot" aria-hidden="true"></div>
+  </div>
 
   <!-- 悬浮面板 -->
   <div v-else class="chat-panel" data-testid="chat-panel">
@@ -507,32 +590,86 @@ async function exportReport(markdown: string, format: "html" | "docx"): Promise<
 </template>
 
 <style scoped>
-/* ---------- 气泡入口：视口右上角（用户指定） ---------- */
-.chat-bubble {
+/* ---------- 气泡入口：视口右上角（用户指定）· T1 科技风 ---------- */
+.chat-bubble-wrap {
   position: fixed;
-  top: 14px;
-  right: 16px;
+  right: 14px;
   z-index: 230;
-  width: 40px;
-  height: 40px;
+  width: 44px;
+  height: 44px;
+  touch-action: none; /* 交给指针事件处理纵向拖动，避免被浏览器滚动/手势抢走 */
+  user-select: none;
+}
+.chat-bubble {
+  position: relative;
+  z-index: 2;
+  width: 44px;
+  height: 44px;
   border-radius: var(--radius-circle);
-  border: 1px solid var(--color-brand-border);
-  background: var(--color-brand);
-  color: var(--color-surface);
+  border: 1px solid rgba(103, 232, 249, 0.5);
+  background: linear-gradient(135deg, #1e3a8a, #0e7490);
+  color: #a5f3fc;
+  font-size: calc(14px * var(--font-scale));
+  font-weight: 800;
+  font-style: italic;
+  letter-spacing: 0.5px;
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  box-shadow: 0 2px 10px rgba(225, 37, 27, 0.28);
-  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  box-shadow: 0 0 16px rgba(34, 211, 238, 0.35);
+  transition: transform 0.18s ease, box-shadow 0.18s ease, background 0.18s ease, color 0.18s ease;
 }
 .chat-bubble:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 14px rgba(225, 37, 27, 0.36);
+  background: linear-gradient(135deg, #0891b2, #1d4ed8);
+  color: #fff;
+  transform: scale(1.08);
+  box-shadow: 0 0 26px rgba(34, 211, 238, 0.7);
 }
-.chat-bubble svg {
-  width: 20px;
-  height: 20px;
+/* 脉冲光圈：向外扩散的青色环（两层错峰） */
+.chat-bubble-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: var(--radius-circle);
+  background: rgba(34, 211, 238, 0.28);
+  z-index: 0;
+  animation: bubble-pulse 1.9s ease-out infinite;
+}
+/* 旋转微光环：蓝青 conic 渐变，径向遮罩把中心打透成环 */
+.chat-bubble-halo {
+  position: absolute;
+  inset: -3px;
+  border-radius: var(--radius-circle);
+  z-index: 1;
+  background: conic-gradient(from 0deg, transparent, #22d3ee, transparent 40%, transparent, #3b82f6, transparent 85%);
+  -webkit-mask: radial-gradient(closest-side, transparent 62%, #000 64%);
+  mask: radial-gradient(closest-side, transparent 62%, #000 64%);
+  animation: bubble-rot 3.6s linear infinite;
+}
+/* 琥珀角标 */
+.chat-bubble-dot {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  width: 12px;
+  height: 12px;
+  border-radius: var(--radius-circle);
+  background: #fbbf24;
+  border: 2px solid var(--color-surface);
+  z-index: 3;
+}
+@keyframes bubble-pulse {
+  0% { transform: scale(0.95); opacity: 0.7; }
+  100% { transform: scale(1.75); opacity: 0; }
+}
+@keyframes bubble-rot {
+  to { transform: rotate(360deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-bubble-ring,
+  .chat-bubble-halo {
+    animation: none;
+  }
 }
 
 /* ---------- 悬浮面板 ---------- */
