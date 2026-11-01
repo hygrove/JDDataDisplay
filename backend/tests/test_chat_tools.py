@@ -271,5 +271,51 @@ class TestOverviewAndPrompt(unittest.TestCase):
             self.assertIn(max(ends), prompt)
 
 
+class TestUpstreamMessageCap(unittest.TestCase):
+    """回归：历史里的超长消息（如模型上轮写出的整份 HTML 报告）不得原样回传。
+
+    DeepSeek 单条消息硬限 20000 字符；超限回传会让此后每轮请求都 422，
+    对话永久卡死。截断只作用于请求体，本地历史与界面展示不受影响。
+    """
+
+    LONG = "x" * 25000
+
+    def test_short_content_unchanged(self):
+        self.assertEqual(svc._cap_message_content("hello"), "hello")
+
+    def test_long_content_capped_under_upstream_limit(self):
+        capped = svc._cap_message_content(self.LONG)
+        # 含省略标记在内仍必须低于上游硬限 20000
+        self.assertLessEqual(len(capped), 20000)
+        self.assertLess(len(capped), len(self.LONG))
+        self.assertTrue(capped.startswith("x" * 1000))
+
+    def test_generate_chat_frames_caps_history_in_payload(self):
+        if not svc.load_ai_config()["api_key"]:
+            self.skipTest("未配置 DeepSeek Key，跳过请求组装断言")
+        captured: list[dict] = []
+
+        def fake_stream(payload):
+            captured.append(payload)
+            yield {"choices": [{"delta": {"content": "ok"}}]}
+
+        original = svc.stream_chat_completion
+        svc.stream_chat_completion = fake_stream
+        try:
+            msgs = [
+                {"role": "user", "content": "出个报告"},
+                {"role": "assistant", "content": self.LONG},
+                {"role": "user", "content": "本月哪家店铺销售额最高"},
+            ]
+            frames = list(svc.generate_chat_frames(msgs, use_tools=False))
+        finally:
+            svc.stream_chat_completion = original
+        self.assertTrue(any(f.startswith("data:") for f in frames))
+        sent = captured[0]["messages"]  # [system, user, assistant(截断), user]
+        self.assertLessEqual(len(sent[2]["content"]), 20000)
+        # 本地历史不被截断污染（界面仍能看到完整报告）
+        self.assertEqual(len(msgs[1]["content"]), len(self.LONG))
+
+
 if __name__ == "__main__":
     unittest.main()

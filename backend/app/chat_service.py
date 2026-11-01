@@ -82,6 +82,25 @@ class ChatUpstreamError(RuntimeError):
     """DeepSeek 上游错误（网络 / 鉴权 / 余额 / 限流），message 面向用户可读。"""
 
 
+# 回传上游的单条消息上限：模型上下文窗口按 token 计，历史里的巨型回复
+# （如整份 HTML 报告）会撑爆整个请求；网关层（chat_api ChatMessage.content）
+# 只做防滥用的宽松校验，真正截断统一在这里做。
+UPSTREAM_MESSAGE_CHAR_LIMIT = 18000
+_TRUNC_MARK = "\n…（本条内容过长，回传上游时已省略中段）…"
+
+
+def _cap_message_content(text: str, limit: int = UPSTREAM_MESSAGE_CHAR_LIMIT) -> str:
+    """把单条消息内容截到回传上限内（保留头部 + 省略标记）。
+
+    历史里可能有模型上轮写出的超长回复（如整份 HTML 报告）：原样回传会撑爆
+    模型上下文，上游拒掉整个请求后每轮都拒、对话永久卡死。截断只作用于请求体，
+    本地历史与界面展示不受影响。
+    """
+    if len(text) <= limit:
+        return text
+    return text[:limit] + _TRUNC_MARK
+
+
 # ---------------------------------------------------------------------------
 # 配置：双通道（环境变量为底，ai_config.json 覆盖）
 # ---------------------------------------------------------------------------
@@ -234,6 +253,7 @@ def _upstream_error_message(status_code: int, body: str) -> str:
         401: "API Key 无效或已失效，请在设置里更新 Key。",
         402: "DeepSeek 账户余额不足，请充值后重试。",
         403: "DeepSeek 拒绝了请求（403），请检查 Key 权限。",
+        422: "上游拒绝请求内容（422）：单条消息超出字符上限，可尝试新开对话。",
         429: "请求过于频繁，请稍等片刻再试。",
     }.get(status_code)
     detail = body.strip()[:200]
@@ -353,8 +373,13 @@ def generate_chat_frames(
     """
     from . import chat_tools  # 局部导入：chat_tools 依赖 api/inventory_api，保持本模块头部轻
 
-    # 过滤客户端消息：只认 user / assistant，剥掉一切 system（提示词主权在后端）
-    clean = [m for m in messages if m.get("role") in ("user", "assistant") and m.get("content")]
+    # 过滤客户端消息：只认 user / assistant，剥掉一切 system（提示词主权在后端）；
+    # 超长内容截断后再回传，防止历史里的巨型回复撑爆模型上下文
+    clean = [
+        {**m, "content": _cap_message_content(m["content"])}
+        for m in messages
+        if m.get("role") in ("user", "assistant") and m.get("content")
+    ]
     cfg = load_ai_config()
     if not cfg["api_key"]:
         # 端点层已做 400 前置拦截，这里是并发竞态兜底（配置在流开始后被删）
@@ -446,7 +471,7 @@ def generate_chat_frames(
                 {
                     "role": "tool",
                     "tool_call_id": call["id"] or f"call_{i}",
-                    "content": json.dumps(result, ensure_ascii=False),
+                    "content": _cap_message_content(json.dumps(result, ensure_ascii=False)),
                 }
             )
             provenance.append(

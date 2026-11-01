@@ -274,6 +274,38 @@ class TestCompletions(unittest.TestCase):
             )
         self.assertEqual(r.status_code, 422)
 
+    def test_oversized_history_message_accepted_and_capped(self):
+        """回归：历史含模型上轮超长回复（如整份 HTML 报告）不再被本网关 422 拒掉。
+
+        原故障：ChatMessage.content 曾硬卡 2 万字符，历史巨型回复在**自家网关**
+        就被 Pydantic 打回 422，对话永久卡死。现网关放宽防滥用、服务层回传前
+        统一截断——请求必须放行，且发上游的内容已截到单条上限内。
+        """
+        long_content = "x" * 25000
+        stub = _fake_stream([{"choices": [{"delta": {"content": "ok"}}]}])
+        with _TmpConfig():
+            TestClient(app).put("/api/chat/config", json={"api_key": "tk-test-000000000088"})
+            with mock.patch.object(svc, "stream_chat_completion", side_effect=stub):
+                r = TestClient(app).post(
+                    "/api/chat/completions",
+                    json={
+                        "messages": [
+                            {"role": "user", "content": "出个报告"},
+                            {"role": "assistant", "content": long_content},
+                            {"role": "user", "content": "本月哪家卖得最好"},
+                        ]
+                    },
+                )
+        # 网关放行（不再 422）
+        self.assertEqual(r.status_code, 200)
+        sent = stub.recorded[0]["messages"]
+        self.assertEqual([m["role"] for m in sent], ["system", "user", "assistant", "user"])
+        # 发上游前已截断：头部保留 + 省略标记，长度在单条上限内
+        capped = sent[2]["content"]
+        self.assertLessEqual(len(capped), svc.UPSTREAM_MESSAGE_CHAR_LIMIT + 60)
+        self.assertTrue(capped.startswith("x" * 1000))
+        self.assertIn("省略", capped)
+
 
 class TestToolLoop(unittest.TestCase):
     """工具接地循环：tool_call 帧、参数分片拼接、provenance、轮次上限。"""

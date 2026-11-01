@@ -62,7 +62,10 @@ class ChatMessage(BaseModel):
     """
 
     role: str = Field(pattern="^(user|assistant)$")
-    content: str = Field(min_length=1, max_length=20000)
+    # 上限放宽到 20 万字符：历史里可能有模型上轮写出的超长回复（如整份 HTML
+    # 报告），网关若按上游单条 2 万字符硬卡，对话会永久 422 卡死；真正的截断
+    # 在 chat_service 发上游前统一做（_cap_message_content），此处只防滥用体量。
+    content: str = Field(min_length=1, max_length=200_000)
 
 
 class ChatRequest(BaseModel):
