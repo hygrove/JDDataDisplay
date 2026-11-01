@@ -66,6 +66,12 @@ function animate(to: number | null) {
     display.value = 0;
     return;
   }
+  // 系统开启「减少动态效果」时直接落到目标值，不播滚动动画（无障碍）
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    display.value = to;
+    render(to);
+    return;
+  }
   const from = display.value;
   const dur = props.duration ?? 700;
   const t0 = performance.now();

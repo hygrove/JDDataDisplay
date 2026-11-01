@@ -15,6 +15,7 @@ import type {
   InventorySlowCity,
   InventorySummary,
   Manifest,
+  ModuleAggregate,
   ModuleSummary,
   PagedRows,
   RestockListResponse,
@@ -128,6 +129,43 @@ export function fetchRows(moduleId: string, q: RowsQuery) {
   params.set("page", String(q.page));
   params.set("page_size", String(q.page_size));
   return get<PagedRows>(`/module/${moduleId}/rows?${params.toString()}`);
+}
+
+/**
+ * 区间汇总的查询参数（与 RowsQuery 的过滤子集同语义，无排序分页）。
+ */
+export interface AggregateQuery {
+  /** 店铺名过滤；留空 = 全部店铺 */
+  shop?: string;
+  /** 区间起点 YYYY-MM-DD */
+  start?: string;
+  /** 区间终点 YYYY-MM-DD */
+  end?: string;
+  /** SPU 号 / 商品名称的模糊搜索词 */
+  keyword?: string;
+}
+
+/**
+ * 拉取区间汇总（模块页汇总面板：与 /rows 同过滤链，后端现算）。
+ *
+ * @param {string} moduleId - 模块标识，如 "pop_spu_detail"。
+ * @param {AggregateQuery} q - 过滤参数；空值不拼进 URL（与 fetchRows 同约定）。
+ * @returns {Promise<ModuleAggregate>} 区间汇总（total / days / counts / series）。
+ * @throws {Error} 接口非 2xx（空库 404 等）。
+ * @example
+ * ```ts
+ * const agg = await fetchAggregate("pop_spu_detail", { start: "2026-09-18", end: "2026-09-30" });
+ * agg.total.amount; // 区间成交金额总和
+ * ```
+ */
+export function fetchAggregate(moduleId: string, q: AggregateQuery) {
+  const params = new URLSearchParams();
+  if (q.shop) params.set("shop", q.shop);
+  if (q.start) params.set("start", q.start);
+  if (q.end) params.set("end", q.end);
+  if (q.keyword) params.set("keyword", q.keyword);
+  const qs = params.toString();
+  return get<ModuleAggregate>(`/module/${moduleId}/aggregate${qs ? `?${qs}` : ""}`);
 }
 
 /**

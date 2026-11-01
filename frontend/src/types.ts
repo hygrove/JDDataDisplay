@@ -185,6 +185,43 @@ export interface ModuleSummary {
 }
 
 /**
+ * 区间汇总面板的逐日趋势点（sparkline 用，核心 5 项）。
+ *
+ * @remarks
+ * 与后端 AggregateSeriesPoint 手工对齐；比率类（roi / return_rate）
+ * 是「当日分子总量 / 当日分母总量」，分母为 0 时为 null（sparkline 跳过该点）。
+ * 给了完整区间时后端按自然日历逐日下发，**无数据日各项均为 null**（sparkline 一并跳过）。
+ */
+export interface AggregateSeriesPoint {
+  /** 日期 YYYY-MM-DD（升序）；无数据日也在轴上，其各指标为 null */
+  date: string;
+  /** 当日成交金额总和 */
+  amount: number | null;
+  /** 当日成交单量总和 */
+  orders: number | null;
+  /** 当日访客数总和 */
+  visitors: number | null;
+  /** 当日 ROI = 推广成交金额 / 推广花费 */
+  roi: number | null;
+  /** 当日退货率 = 退款单量 / 成交单量 */
+  return_rate: number | null;
+}
+
+/**
+ * 区间汇总响应（模块页汇总面板，与 /rows 同过滤链同口径）。
+ */
+export interface ModuleAggregate {
+  /** 全部 15 项指标的区间值（sum 类求和 / ratio 类总量相除；无数据为 null） */
+  total: MetricRecord;
+  /** 区间自然天数（含无数据日） */
+  days: number;
+  /** 命中范围计数 */
+  counts: { shops: number; spus: number };
+  /** 核心 5 项逐日数组（升序）；给完整区间时覆盖每个自然日、与 days 等长，缺数据日各项为 null */
+  series: AggregateSeriesPoint[];
+}
+
+/**
  * manifest 中的单个模块条目。
  */
 export interface ModuleManifest {

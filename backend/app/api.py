@@ -12,7 +12,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -584,6 +584,212 @@ def get_summary(module_id: str) -> ModuleSummary:
     if updated:
         summary.updated_at = updated
     return summary
+
+
+# ---------------- 区间汇总（模块页汇总面板，spec：.scratch/pop-summary/spec.md）----------------
+class AggregateSeriesPoint(BaseModel):
+    """汇总面板 sparkline 用的逐日点（核心 5 项）。
+
+    Fields:
+        date: 日期 "YYYY-MM-DD"。
+        amount / orders / visitors: 当日全命中行求和；当日无数据为 None。
+        roi: 当日推广成交金额 / 当日推广花费（先求和再相除）；分母 0/缺失为 None。
+        return_rate: 当日退款单量 / 当日成交单量；分母 0/缺失为 None。
+    """
+
+    date: str
+    amount: Optional[float] = None
+    orders: Optional[float] = None
+    visitors: Optional[float] = None
+    roi: Optional[float] = None
+    return_rate: Optional[float] = None
+
+
+class AggregateCounts(BaseModel):
+    """汇总命中范围计数（面板标题「N 家店铺 / N 个 SPU」）。"""
+
+    shops: int = 0
+    spus: int = 0
+
+
+class AggregateOut(BaseModel):
+    """区间汇总响应：与 /rows 完全同口径（同过滤链 + transforms 比率口径）。
+
+    Fields:
+        total: 全部 15 项指标的区间值；sum 类=区间求和（无数据为 None），
+            ratio 类=分子分母各自总量相除（分母 0/缺失为 None，绝不 Infinity）。
+        days: 区间自然天数（start/end 都给时=闭区间天数，含无数据日；否则=有数据日期数）。
+        counts: 命中的店铺数与 (shop, spu) 对数。
+        series: 核心 5 项逐日数组（升序）。start/end 都给时覆盖闭区间每个自然日、
+            与 days 等长，缺数据日各项为 null；全区间/单日模式下为有数据的日期。
+    """
+
+    total: MetricRecord
+    days: int
+    counts: AggregateCounts
+    series: list[AggregateSeriesPoint]
+
+
+# 参与区间累加的原始字段（sum 类指标自身 + 全部 ratio 的分子分母；
+# 与前端 metrics.ts sumRawMetrics 的收集规则一致，search_clicks 是隐藏分子也要累加）
+_AGG_RAW_KEYS = [
+    "visitors", "buyers", "orders", "items", "amount",
+    "search_impressions", "search_clicks",
+    "promotion_cost", "promotion_amount",
+    "refund_orders", "refund_amount",
+]
+# series / total 共用的「行标签」列名：逐日行 = 日期，总计行 = _TOTAL_KEY
+_TOTAL_KEY = "_total"
+
+
+def _accumulate(records: list[MetricRecord]) -> dict[str, float]:
+    """把若干日的 MetricRecord 累加成原始字段总量；None/NaN 跳过（不污染累加）。
+
+    Args:
+        records: 逐日指标列表。
+
+    Returns:
+        dict[str, float]: 各原始字段总量；完全没有数据的字段不出现在结果里
+            （调用方据此区分「0」与「无数据」）。
+    """
+    sums: dict[str, float] = {}
+    for m in records:
+        for k in _AGG_RAW_KEYS:
+            v = getattr(m, k, None)
+            if v is not None and v == v:  # v == v 排除 NaN
+                sums[k] = sums.get(k, 0.0) + v
+    return sums
+
+
+def _has_raw_data(m: MetricRecord) -> bool:
+    """判断某日指标是否为「有数据的行」（任一原始字段非 None）。
+
+    Args:
+        m: 单日指标（_build_rows 会给缺数据日铺全 None 的空 MetricRecord）。
+
+    Returns:
+        bool: 至少一个原始字段有值时为 True。
+    """
+    return any(getattr(m, k, None) is not None for k in _AGG_RAW_KEYS)
+
+
+def _compute_agg_table(per_day: dict[str, list[MetricRecord]], date_list: list[str]):
+    """逐日 + 总计的原始字段累加表，比率列由 transforms.compute_metrics 补齐（SSOT 复用）。
+
+    为什么不在 Python 侧自己写分子/分母：项目铁律「任何比率都必须走 compute_metrics，
+    禁止在别处另算一份」——同一张映射表若抄第二份，新增比率时必然漏改。
+
+    Args:
+        per_day: 日期 -> 当日全部命中行的 metrics 列表。
+        date_list: series 的日期轴（升序）；每个日期都产出一行，per_day 里没有的日期
+            （无数据日）各原始字段为 None，经 compute_metrics 后比率列也为 None。
+
+    Returns:
+        polars.DataFrame: 首列为 _key（日期或 _TOTAL_KEY），含 11 个原始列与 5 个比率列。
+    """
+    import polars as pl
+
+    from ..jobs import transforms
+
+    rows: list[dict] = []
+    grand: list[MetricRecord] = []
+    for dt in date_list:
+        recs = [m for m in per_day.get(dt, []) if _has_raw_data(m)]
+        grand.extend(recs)
+        s = _accumulate(recs)
+        rows.append({"_key": dt, **{k: s.get(k) for k in _AGG_RAW_KEYS}})
+    ts = _accumulate(grand)
+    rows.append({"_key": _TOTAL_KEY, **{k: ts.get(k) for k in _AGG_RAW_KEYS}})
+    schema = {"_key": pl.Utf8, **{k: pl.Float64 for k in _AGG_RAW_KEYS}}
+    return transforms.compute_metrics(pl.DataFrame(rows, schema=schema))
+
+
+@router.get("/module/{module_id}/aggregate", response_model=AggregateOut)
+def get_aggregate(
+    module_id: str,
+    shop: Optional[str] = Query(None, description="店铺名；空=全部店铺"),
+    start: Optional[str] = Query(None, description="起始日期 YYYY-MM-DD"),
+    end: Optional[str] = Query(None, description="截止日期 YYYY-MM-DD"),
+    keyword: Optional[str] = Query(None, description="SPU 号或名称模糊搜索"),
+) -> AggregateOut:
+    """区间汇总：与 /rows 共用 _build_rows 过滤链，保证「汇总与列表数字对得上」。
+
+    Args:
+        module_id: 模块标识。
+        shop / start / end / keyword: 语义与 get_rows 完全一致（无排序分页参数）。
+
+    Returns:
+        AggregateOut: 见模型 docstring。
+
+    Raises:
+        HTTPException: 404 —— 模块未登记，或库中无数据（由 _build_rows/_flat_rows 抛出）。
+
+    Example:
+        GET /api/module/pop_spu_detail/aggregate?start=2026-09-18&end=2026-09-30
+    """
+    rows, date_list = _build_rows(module_id, shop, start, end, None, keyword, None, "desc")
+
+    # series 的日期轴：给了完整区间时按自然日历展开（含无数据日，各项为 null），
+    # 使 len(series) == days、sparkline 的横轴与「N 天」口径一致；
+    # 否则（全区间 / 单日模式）退化为有数据的日期列表。days 与 series 共用同一份日历，
+    # 避免两处各解析一遍 start/end 导致口径分叉。
+    series_dates = date_list
+    days = len(date_list)
+    if start and end:
+        try:
+            d0 = datetime.fromisoformat(start)
+            d1 = datetime.fromisoformat(end)
+            if d0 <= d1:
+                series_dates = [
+                    (d0 + timedelta(days=i)).date().isoformat()
+                    for i in range((d1 - d0).days + 1)
+                ]
+                days = len(series_dates)
+        except ValueError:
+            pass  # 非法日期串不炸接口，退回「有数据日期数」兜底
+
+    # 无命中（如关键词落空）：total 全 None、series 空数组，counts=0——不报错
+    if not rows:
+        return AggregateOut(total=MetricRecord(), days=days, counts=AggregateCounts(), series=[])
+
+    # 逐日分组：date -> 当日全部命中行的 metrics（跨店铺/SPU）
+    per_day: dict[str, list[MetricRecord]] = {}
+    for r in rows:
+        for d in r.days:
+            per_day.setdefault(d.date, []).append(d.metrics)
+
+    computed = _compute_agg_table(per_day, series_dates)
+    total = MetricRecord()
+    series: list[AggregateSeriesPoint] = []
+    for row in computed.iter_rows(named=True):
+        rec = MetricRecord(**{k: row.get(k) for k in METRIC_KEYS})
+        if row["_key"] == _TOTAL_KEY:
+            total = rec
+        else:
+            # 当日退货率 = 当日退款单量 / 当日成交单量（分子分母都已是当日总量，
+            # 与「先求和再相除」口径一致；return_rate 不是 METRICS 成员，compute_metrics 不管它）
+            series.append(
+                AggregateSeriesPoint(
+                    date=row["_key"],
+                    amount=rec.amount,
+                    orders=rec.orders,
+                    visitors=rec.visitors,
+                    roi=rec.roi,
+                    return_rate=(rec.refund_orders / rec.orders)
+                    if rec.refund_orders is not None and rec.orders
+                    else None,
+                )
+            )
+
+    return AggregateOut(
+        total=total,
+        days=days,
+        counts=AggregateCounts(
+            shops=len({r.shop for r in rows}),
+            spus=len({(r.shop, r.spu) for r in rows}),
+        ),
+        series=series,
+    )
 
 
 # ---------------- 数据导出（xlsx）----------------

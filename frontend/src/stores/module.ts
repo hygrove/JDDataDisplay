@@ -6,10 +6,11 @@
 // 最后一并 return 出去。
 import { defineStore } from "pinia";
 import { computed, ref } from "vue";
-import { fetchManifest, fetchRows, fetchSummary, fetchStatus, postRefresh } from "../api";
+import { fetchAggregate, fetchManifest, fetchRows, fetchSummary, fetchStatus, postRefresh } from "../api";
 import type {
   BatchStatus,
   Manifest,
+  ModuleAggregate,
   ModuleSummary,
   Row,
 } from "../types";
@@ -35,6 +36,13 @@ export const useModuleStore = defineStore("module", () => {
   const status = ref<BatchStatus | null>(null);
   /** 模块汇总（图表用） */
   const summary = ref<ModuleSummary | null>(null);
+  /** 区间汇总面板数据（与当前 shop/start/end/keyword 同口径） */
+  const aggregate = ref<ModuleAggregate | null>(null);
+  /** 区间汇总自身的加载/错误状态：面板内消化，不写全局 error（不阻塞列表） */
+  const loadingAggregate = ref(false);
+  const aggregateError = ref("");
+  /** 汇总请求序号：只让「最后一次发出的请求」写状态，丢弃过期响应（防抖切换时旧响应晚到会覆盖新结果） */
+  let aggSeq = 0;
   /** 当前模块 id；离开页面会被 reset 清空 */
   const moduleId = ref("");
   /** 店铺过滤；空串 = 全部店铺 */
@@ -130,8 +138,8 @@ export const useModuleStore = defineStore("module", () => {
     }
     // 状态是「锦上添花」的信息，不 await：即使 /status 慢也不该拖慢首屏
     fetchStatus().then((st) => (status.value = st)).catch(() => {});
-    // 汇总与行数据互不依赖，并行拉取
-    await Promise.all([loadSummary(), reloadRows()]);
+    // 汇总、区间汇总与行数据互不依赖，并行拉取
+    await Promise.all([loadSummary(), loadAggregate(), reloadRows()]);
   }
 
   /**
@@ -152,6 +160,41 @@ export const useModuleStore = defineStore("module", () => {
       error.value = String(e);
     } finally {
       loadingSummary.value = false;
+    }
+  }
+
+  /**
+   * 拉取区间汇总面板数据（与行数据同过滤链，随筛选变化并行刷新）。
+   *
+   * @returns {Promise<void>} 完成后 resolve。
+   * @throws 不抛出——失败写 aggregateError（面板内占位提示），不污染全局 error。
+   * @example
+   * ```ts
+   * await store.loadAggregate();
+   * ```
+   */
+  async function loadAggregate(): Promise<void> {
+    if (!moduleId.value) return;
+    // 领取本次请求的序号；await 回来后若不是最新序号，说明期间又发了新请求，直接丢弃本次结果
+    const seq = ++aggSeq;
+    loadingAggregate.value = true;
+    aggregateError.value = "";
+    try {
+      const res = await fetchAggregate(moduleId.value, {
+        shop: shop.value || undefined,
+        start: start.value || undefined,
+        end: end.value || undefined,
+        keyword: keyword.value || undefined,
+      });
+      if (seq === aggSeq) aggregate.value = res;
+    } catch (e) {
+      if (seq === aggSeq) {
+        aggregateError.value = String(e);
+        aggregate.value = null;
+      }
+    } finally {
+      // 仅当没有更新的请求在飞行时才关骨架，避免旧请求收尾把新请求的 loading 提前熄灭
+      if (seq === aggSeq) loadingAggregate.value = false;
     }
   }
 
@@ -224,6 +267,7 @@ export const useModuleStore = defineStore("module", () => {
   function setShop(shopParam: string): void {
     shop.value = shopParam;
     void reloadRows();
+    void loadAggregate();
   }
 
   /**
@@ -242,6 +286,7 @@ export const useModuleStore = defineStore("module", () => {
     start.value = startParam;
     end.value = endParam;
     void reloadRows();
+    void loadAggregate();
   }
 
   /**
@@ -257,6 +302,7 @@ export const useModuleStore = defineStore("module", () => {
   function setKeyword(kw: string): void {
     keyword.value = kw;
     void reloadRows();
+    void loadAggregate();
   }
 
   /**
@@ -293,7 +339,7 @@ export const useModuleStore = defineStore("module", () => {
       status.value = await postRefresh();
       // 批处理可能新增/删除模块，manifest 必须重新拉
       manifest.value = await fetchManifest();
-      await Promise.all([loadSummary(), reloadRows()]);
+      await Promise.all([loadSummary(), loadAggregate(), reloadRows()]);
     } catch (e) {
       error.value = String(e);
     } finally {
@@ -316,6 +362,10 @@ export const useModuleStore = defineStore("module", () => {
    */
   function reset(): void {
     summary.value = null;
+    aggregate.value = null;
+    aggregateError.value = "";
+    loadingAggregate.value = false;
+    aggSeq++; // 作废切换前仍在飞行的汇总请求，其响应回来时因序号不匹配被丢弃
     moduleId.value = "";
     shop.value = "";
     start.value = "";
@@ -334,6 +384,9 @@ export const useModuleStore = defineStore("module", () => {
     manifest,
     status,
     summary,
+    aggregate,
+    loadingAggregate,
+    aggregateError,
     moduleId,
     shop,
     start,
@@ -355,6 +408,7 @@ export const useModuleStore = defineStore("module", () => {
     // 动作
     init,
     loadSummary,
+    loadAggregate,
     reloadRows,
     loadMore,
     setShop,

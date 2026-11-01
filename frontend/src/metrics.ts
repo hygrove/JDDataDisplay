@@ -263,3 +263,29 @@ export function aggregateMetrics(
   }
   return out;
 }
+
+/**
+ * 区间退货率：退款单量 / 成交单量（分子分母都取自已求和的区间总量）。
+ *
+ * @remarks
+ * 退货率**不在** METRICS 清单里（清单 15 项无此项），因此后端 total（MetricRecord）
+ * 也不含它，只能由前端从 total 的两个已求和字段派生。口径与后端「先求和再相除」一致：
+ * 这里除的是区间总退款单量与区间总成交单量，而非对每日退货率取平均。
+ *
+ * @param {{ refund_orders?: number | null; orders?: number | null }} total - 区间总量。
+ * @returns {number | null} 退货率；成交单量为 0 / 缺失时为 null（前端显示 "--"），绝不返回 Infinity。
+ * @throws 无。
+ * @example
+ * ```ts
+ * returnRateOf({ refund_orders: 3, orders: 100 }); // 0.03
+ * returnRateOf({ refund_orders: 3, orders: 0 });   // null
+ * ```
+ */
+export function returnRateOf(total: {
+  refund_orders?: number | null;
+  orders?: number | null;
+}): number | null {
+  const ro = total.refund_orders;
+  const od = total.orders;
+  return ro != null && od ? ro / od : null;
+}

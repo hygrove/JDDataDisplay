@@ -16,6 +16,7 @@ import { fmtBy } from "../modules";
 import type { MetricRecord, Row } from "../types";
 import MetricConfigPanel from "../components/MetricConfigPanel.vue";
 import DateRangePicker from "../components/DateRangePicker.vue";
+import ModuleSummaryPanel from "../components/ModuleSummaryPanel.vue";
 
 const props = defineProps<{ moduleId: string }>();
 const store = useModuleStore();
@@ -509,6 +510,9 @@ async function exportXlsx() {
         </button>
       </div>
     </div>
+
+    <!-- 区间汇总面板（方案 C）：与下方列表同口径，随店铺/区间/搜索并行刷新 -->
+    <ModuleSummaryPanel />
 
     <div v-if="store.error" class="error">{{ store.error }}</div>
 
