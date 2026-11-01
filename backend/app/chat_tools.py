@@ -90,6 +90,41 @@ def _default_module_id() -> str:
     return "pop_spu_detail"
 
 
+def _pop_module_range(module_id: str) -> tuple[Optional[str], Optional[str]]:
+    """模块全区间（首日, 末日）；空库 / 模块未登记 / 查库异常返回 (None, None)。"""
+    try:
+        manifest = pop_api.get_manifest()
+        for mod in manifest.modules:
+            if mod.module_id == module_id and mod.date_range:
+                return mod.date_range[0], mod.date_range[-1]
+    except Exception:  # noqa: BLE001 —— 回显只是增强，取不到不阻断查询
+        pass
+    return None, None
+
+
+def get_pop_data_end() -> Optional[str]:
+    """POP 全部模块里的最新日期（"本月至今"的锚）；空库 / 异常返回 None。"""
+    try:
+        manifest = pop_api.get_manifest()
+        ends = [mod.date_range[-1] for mod in manifest.modules if mod.date_range]
+        return max(ends) if ends else None
+    except Exception:  # noqa: BLE001 —— 锚点只是增强，取不到退化为"未知"
+        return None
+
+
+def _queried_range(
+    module_id: str, start: Optional[str], end: Optional[str]
+) -> list[Optional[str]]:
+    """实际查询区间的回显：漏传日期 = 模块全区间。
+
+    manifest 取不到时退化为 [None, None]（区间未知，但不阻断查询本身）。
+    与 SpuAnalysisOut 自带的 date_range（实际有数据的日期）语义不同：
+    这里回显的是**查询口径**，供模型核对是否等于用户所问区间。
+    """
+    full_start, full_end = _pop_module_range(module_id)
+    return [start or full_start, end or full_end]
+
+
 # ---------------------------------------------------------------------------
 # POP 指标区间聚合：与 MetricRecord / transforms 同一套「先求和再相除」
 # ---------------------------------------------------------------------------
@@ -140,17 +175,21 @@ def _tool_pop_module_summary(args: dict[str, Any]) -> dict[str, Any]:
     data = _strip_keys(_round_floats(summary.model_dump(mode="json")))
     data.pop("module_id", None)
     data.pop("updated_at", None)
+    # 汇总是全区间口径：显式回显，防止模型把全区间数字当"本月"引用
+    data["queried_range"] = _queried_range(module_id, None, None)
     return data
 
 
 def _tool_pop_rows(args: dict[str, Any]) -> dict[str, Any]:
     """POP 明细分页：按店铺 / 日期区间 / 关键词过滤，按指标排序。"""
     module_id = _opt_str(args.get("module_id")) or _default_module_id()
+    start = _opt_str(args.get("start"))
+    end = _opt_str(args.get("end"))
     result = pop_api.get_rows(
         module_id=module_id,
         shop=_opt_str(args.get("shop")),
-        start=_opt_str(args.get("start")),
-        end=_opt_str(args.get("end")),
+        start=start,
+        end=end,
         date=None,
         keyword=_opt_str(args.get("keyword")),
         sort_by=_opt_str(args.get("sort_by")),
@@ -173,6 +212,8 @@ def _tool_pop_rows(args: dict[str, Any]) -> dict[str, Any]:
             }
         )
     return {
+        # 回显实际查询区间：漏传日期=全区间，模型据此发现自己查错了口径
+        "queried_range": _queried_range(module_id, start, end),
         "total": result.total,
         "page": result.page,
         "page_size": result.page_size,
@@ -185,14 +226,19 @@ def _tool_pop_spu_analysis(args: dict[str, Any]) -> dict[str, Any]:
     spu = _opt_str(args.get("spu"))
     if not spu:
         return {"error": "缺少参数 spu（SPU 编号）"}
+    module_id = _opt_str(args.get("module_id")) or _default_module_id()
+    start = _opt_str(args.get("start"))
+    end = _opt_str(args.get("end"))
     out = pop_api.get_spu_analysis(
-        module_id=_opt_str(args.get("module_id")) or _default_module_id(),
+        module_id=module_id,
         spu=spu,
         shop=_opt_str(args.get("shop")),
-        start=_opt_str(args.get("start")),
-        end=_opt_str(args.get("end")),
+        start=start,
+        end=end,
     )
-    return _strip_keys(_round_floats(out.model_dump(mode="json")))
+    data = _strip_keys(_round_floats(out.model_dump(mode="json")))
+    data["queried_range"] = _queried_range(module_id, start, end)
+    return data
 
 
 def _tool_inventory_summary(args: dict[str, Any]) -> dict[str, Any]:
@@ -323,7 +369,8 @@ TOOLS_SCHEMA: list[dict[str, Any]] = [
                 "POP 销售明细分页查询：按店铺 / 日期区间 / 关键词（SPU 号或商品名）过滤，"
                 "按指标排序后取一页。适合回答「某段时间哪些商品销售额最高 / 访客最多」"
                 "「某个商品卖了多少」类问题。返回的 metrics 是区间合计（比率已按先求和"
-                "再相除的正确口径算好）。"
+                "再相除的正确口径算好）。返回的 queried_range 是本次实际查询的日期区间"
+                "（未传 start/end 即全区间）——回答前必须核对它与用户所问区间一致。"
             ),
             "parameters": {
                 "type": "object",

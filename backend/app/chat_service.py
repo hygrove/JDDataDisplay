@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import date
 from pathlib import Path
 from typing import Any, Iterator, Optional
 
@@ -55,7 +56,14 @@ SYSTEM_PROMPT_TEMPLATE = (
     "1. 只能基于查询工具返回的数据回答；工具没查到的信息就说「查不到」，绝不编造数字。\n"
     "2. 工具返回的指标已经是正确口径（比率类先求和再相除），不要自己用平均值推算比率。\n"
     "3. 数据库里没有的信息（如复购率、用户画像、竞品、利润）直接说明无法提供。\n"
-    "4. 工具返回 error 时，如实向用户转述原因（如数据尚未摄入），不要猜。\n\n"
+    "4. 工具返回 error 时，如实向用户转述原因（如数据尚未摄入），不要猜。\n"
+    "5. 回答开头必须注明所用数据的实际统计区间（如「统计区间：2026-10-01 ~ 2026-10-29」）；"
+    "多次查询区间不一致时分别说明，绝不把不同区间的数字混进同一张对比表。\n\n"
+    "【时间锚点】\n"
+    "今天是 {today}；POP 销售数据的最新日期是 {data_end}。\n"
+    "「本月 / 上月 / 本周 / 上周 / 最近」等相对时间一律以**数据最新日期**为锚换算成具体"
+    " YYYY-MM-DD 区间（例如数据截至 2026-10-30 时，「本月」= 2026-10-01 ~ 2026-10-30），"
+    "并显式传 start / end 给工具；不要省略日期参数让它默认查全区间。\n\n"
     "【当前数据概览】\n{overview}\n\n"
     "【工具使用建议】\n"
     "- 销售 / 流量 / 推广 / 退款问题 → pop_module_summary（整体）或 pop_rows（明细排行）\n"
@@ -283,11 +291,13 @@ def _frame(obj: dict[str, Any]) -> str:
 
 
 def build_system_prompt() -> str:
-    """组装系统提示词：模板 + 现查的数据概览（chat_tools.build_data_overview）。
+    """组装系统提示词：模板 + 现查的数据概览与时间锚点。
 
     Returns:
-        str: 完整 system 提示词；概览查库失败时也会退化为「尚未摄入」文案，
-        组装过程本身绝不抛出（提示词坏了 = 整个聊天不可用）。
+        str: 完整 system 提示词；概览失败退化为「暂不可用」文案，
+        数据截止日取不到（空库 / 库异常，get_pop_data_end 内部已吞异常）
+        退化为「未知（数据尚未摄入）」——组装过程本身绝不抛出
+        （提示词坏了 = 整个聊天不可用）。
     """
     from . import chat_tools  # 局部导入避免与模块级 httpx/markdown 段耦合
 
@@ -295,7 +305,10 @@ def build_system_prompt() -> str:
         overview = chat_tools.build_data_overview()
     except Exception:  # noqa: BLE001 —— 概览失败不阻塞对话
         overview = "（数据概览暂不可用）"
-    return SYSTEM_PROMPT_TEMPLATE.format(overview=overview)
+    data_end = chat_tools.get_pop_data_end() or "未知（数据尚未摄入）"
+    return SYSTEM_PROMPT_TEMPLATE.format(
+        overview=overview, today=date.today().isoformat(), data_end=data_end
+    )
 
 
 def _accumulate_tool_call(

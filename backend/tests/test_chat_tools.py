@@ -93,6 +93,66 @@ class TestExecuteToolBasics(unittest.TestCase):
         self.assertIsNone(m["roi"])
 
 
+class TestQueriedRangeEcho(unittest.TestCase):
+    """查询工具回显"实际查询区间"，模型每查一次都看得见口径。
+
+    期望值取自独立真相来源（/api/manifest 的全区间），不与 chat_tools
+    内部实现同义反复。
+    """
+
+    def _manifest_range(self) -> list[str]:
+        mod = _CLIENT.get("/api/manifest").json()["modules"][0]
+        return mod["date_range"]
+
+    def test_pop_rows_echoes_full_range_when_dates_omitted(self):
+        """漏传日期 = 全区间：回显必须让模型看见它查的是全区间。"""
+        if not _pop_ready():
+            self.skipTest("POP 库为空（未跑批处理），跳过回显断言")
+        tool = ct.execute_tool("pop_rows", {"page_size": 1})
+        if "error" in tool:
+            self.skipTest(f"工具返回 error：{tool['error']}")
+        rng = self._manifest_range()
+        self.assertEqual(tool["queried_range"], [rng[0], rng[-1]])
+
+    def test_pop_rows_echoes_explicit_range(self):
+        """显式传日期：原样回显，模型可核对与自己意图一致。"""
+        if not _pop_ready():
+            self.skipTest("POP 库为空（未跑批处理），跳过回显断言")
+        tool = ct.execute_tool(
+            "pop_rows", {"start": "2026-10-01", "end": "2026-10-05", "page_size": 1}
+        )
+        if "error" in tool:
+            self.skipTest(f"工具返回 error：{tool['error']}")
+        self.assertEqual(tool["queried_range"], ["2026-10-01", "2026-10-05"])
+
+    def test_pop_module_summary_includes_queried_range(self):
+        """汇总天然是全区间口径：显式告诉模型，别把它当"本月"用。"""
+        if not _pop_ready():
+            self.skipTest("POP 库为空（未跑批处理），跳过回显断言")
+        tool = ct.execute_tool("pop_module_summary", {})
+        if "error" in tool:
+            self.skipTest(f"工具返回 error：{tool['error']}")
+        rng = self._manifest_range()
+        self.assertEqual(tool["queried_range"], [rng[0], rng[-1]])
+
+    def test_pop_spu_analysis_echoes_queried_range(self):
+        """单品分析同样回显实际区间（显式传参原样回显）。"""
+        if not _pop_ready():
+            self.skipTest("POP 库为空（未跑批处理），跳过回显断言")
+        rows = _CLIENT.get(
+            "/api/module/pop_spu_detail/rows", params={"page_size": 1}
+        ).json()["rows"]
+        if not rows:
+            self.skipTest("无可用 SPU，跳过")
+        tool = ct.execute_tool(
+            "pop_spu_analysis",
+            {"spu": rows[0]["spu"], "start": "2026-10-01", "end": "2026-10-05"},
+        )
+        if "error" in tool:
+            self.skipTest(f"工具返回 error：{tool['error']}")
+        self.assertEqual(tool["queried_range"], ["2026-10-01", "2026-10-05"])
+
+
 class TestZeroWriteScan(unittest.TestCase):
     """chat 链路零写库的静态检查（可自动化的禁令，ai-rules 元规则）。"""
 
@@ -192,6 +252,23 @@ class TestOverviewAndPrompt(unittest.TestCase):
         self.assertIn("查询工具", prompt)
         # 概览段落确实嵌进了模板
         self.assertIn(ct.build_data_overview().splitlines()[0], prompt)
+
+    def test_system_prompt_contains_time_anchor_and_range_rule(self):
+        """prompt 给模型"时钟"（今天+数据截止日）并要求回答标注统计区间。"""
+        from datetime import date
+
+        prompt = svc.build_system_prompt()
+        # 时间锚点：今天日期必须出现，模型才能换算相对时间
+        self.assertIn(date.today().isoformat(), prompt)
+        self.assertIn("时间锚点", prompt)
+        # 铁律：回答开头注明实际统计区间
+        self.assertIn("统计区间", prompt)
+        if _pop_ready():
+            # 数据截止日取自独立真相来源：全部模块 date_range 末日的最大值
+            # （与 get_pop_data_end 的口径一致，多模块区间不齐时不误判）
+            mods = _CLIENT.get("/api/manifest").json()["modules"]
+            ends = [m["date_range"][-1] for m in mods if m.get("date_range")]
+            self.assertIn(max(ends), prompt)
 
 
 if __name__ == "__main__":
