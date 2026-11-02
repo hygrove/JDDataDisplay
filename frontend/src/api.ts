@@ -150,7 +150,7 @@ export interface AggregateQuery {
  *
  * @param {string} moduleId - 模块标识，如 "pop_spu_detail"。
  * @param {AggregateQuery} q - 过滤参数；空值不拼进 URL（与 fetchRows 同约定）。
- * @returns {Promise<ModuleAggregate>} 区间汇总（total / days / counts / series）。
+ * @returns {Promise<ModuleAggregate>} 区间汇总（total / days / counts / series / prev）。
  * @throws {Error} 接口非 2xx（空库 404 等）。
  * @example
  * ```ts

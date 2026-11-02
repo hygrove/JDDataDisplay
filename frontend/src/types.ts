@@ -219,6 +219,8 @@ export interface ModuleAggregate {
   counts: { shops: number; spus: number };
   /** 核心 5 项逐日数组（升序）；给完整区间时覆盖每个自然日、与 days 等长，缺数据日各项为 null */
   series: AggregateSeriesPoint[];
+  /** 上一个「等长且紧邻」区间的同口径 total；上期无数据或未给完整区间时为 null */
+  prev: MetricRecord | null;
 }
 
 /**

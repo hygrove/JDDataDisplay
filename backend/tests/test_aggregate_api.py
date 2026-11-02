@@ -176,6 +176,103 @@ class TestAggregateApi(unittest.TestCase):
         self.assertIsNone(body["total"]["amount"])
         self.assertIsNone(body["total"]["roi"])
 
+    # ---------- 环比 prev（上一个等长紧邻区间） ----------
+    def test_prev_is_adjacent_equal_length_window(self):
+        """prev 应等于「紧邻当前区间之前、等长」那段区间的 total（边界=等长 / 紧邻 / 不重叠）。"""
+        from datetime import date as _d, timedelta
+
+        cur = self.client.get(f"/api/module/{MODULE}/aggregate", params=self.params).json()
+        days = cur["days"]
+        cur_start = _d.fromisoformat(self.params["start"])
+        prev_end = cur_start - timedelta(days=1)  # 紧邻：上一区间止于当前起点的昨天
+        prev_start = prev_end - timedelta(days=days - 1)  # 等长
+        # 直接对那段区间再打一次 aggregate 取 total 作外部基准（不依赖实现细节）
+        ref = self.client.get(
+            f"/api/module/{MODULE}/aggregate",
+            params={"start": prev_start.isoformat(), "end": prev_end.isoformat()},
+        ).json()
+        if ref["counts"]["spus"] == 0:
+            self.assertIsNone(cur["prev"], "上一区间无数据时 prev 应整体为 null")
+            return
+        prev = cur["prev"]
+        self.assertIsNotNone(prev)
+        for key in [*SUM_KEYS, *RATIOS]:
+            with self.subTest(field=key):
+                a, b = prev.get(key), ref["total"].get(key)
+                if a is None or b is None:
+                    self.assertEqual(a, b)
+                else:
+                    self.assertAlmostEqual(a, b, places=6)
+
+    def test_prev_null_when_prior_window_out_of_range(self):
+        """当前区间贴着数据起点时，上一区间在数据之外 → prev 整体为 null（非报错 / 非零值）。"""
+        from datetime import date as _d, timedelta
+
+        lo = _d.fromisoformat(self.date_range[0])
+        end = lo + timedelta(days=2)
+        body = self.client.get(
+            f"/api/module/{MODULE}/aggregate",
+            params={"start": lo.isoformat(), "end": end.isoformat()},
+        ).json()
+        # 当前区间自身应有数据，确保 prev=null 是因为上期在范围外，而非整段无数据
+        self.assertGreater(body["counts"]["spus"], 0, "首日窗口应命中数据")
+        self.assertIsNone(body["prev"], "上一区间应在数据范围之外，prev 必须为 null")
+
+    def test_prev_ratio_uses_sum_then_divide(self):
+        """prev 的比率口径与 total 完全相同：分子分母总量相除，而非逐日比率取平均。"""
+        cur = self.client.get(f"/api/module/{MODULE}/aggregate", params=self.params).json()
+        prev = cur["prev"]
+        if prev is None:
+            self.skipTest("上一区间无数据，无法验证 prev 比率口径")
+        for key, (num, den) in RATIOS.items():
+            with self.subTest(ratio=key):
+                n, d = prev.get(num), prev.get(den)
+                if not d:
+                    self.assertIsNone(prev[key])
+                else:
+                    self.assertAlmostEqual(prev[key], n / d, places=9)
+
+    def test_prev_single_day_is_yesterday(self):
+        """单日模式（start==end）：prev = 前一天的同口径 total（由等长公式自然得出）。"""
+        from datetime import date as _d, timedelta
+
+        hi = self.date_range[1]
+        prev_d = _d.fromisoformat(hi) - timedelta(days=1)
+        cur = self.client.get(
+            f"/api/module/{MODULE}/aggregate", params={"start": hi, "end": hi}
+        ).json()
+        self.assertEqual(cur["days"], 1, "单日模式 days 应为 1")
+        ref = self.client.get(
+            f"/api/module/{MODULE}/aggregate",
+            params={"start": prev_d.isoformat(), "end": prev_d.isoformat()},
+        ).json()
+        if ref["counts"]["spus"] == 0:
+            self.skipTest("前一天无数据，跳过单日 prev 对照")
+        prev = cur["prev"]
+        self.assertIsNotNone(prev, "前一天有数据时单日 prev 不应为 null")
+        for key in [*SUM_KEYS, *RATIOS]:
+            with self.subTest(field=key):
+                a, b = prev.get(key), ref["total"].get(key)
+                self.assertEqual(a is None, b is None)
+                if a is not None:
+                    self.assertAlmostEqual(a, b, places=6)
+
+    def test_prev_null_when_window_truncated_by_data_start(self):
+        """上期窗口贴数据起点被截断（7 天里只有 1 天在数据内）→ prev=None，
+        绝不返回「1 天当 7 天」的假 total（story #4：不显示错误值）。"""
+        from datetime import date as _d, timedelta
+
+        lo_d = _d.fromisoformat(self.date_range[0])
+        # cur 窗口长 7 天从次日开始 → prev 窗口 [lo-6, lo] 只有 lo 那天落在数据内
+        start = (lo_d + timedelta(days=1)).isoformat()
+        end = (lo_d + timedelta(days=7)).isoformat()
+        body = self.client.get(
+            f"/api/module/{MODULE}/aggregate", params={"start": start, "end": end}
+        ).json()
+        self.assertEqual(body["days"], 7)
+        self.assertGreater(body["counts"]["spus"], 0, "当前窗口应命中数据")
+        self.assertIsNone(body["prev"], "上期窗口被数据起点截断时应为 null，避免假暴跌/暴涨")
+
     def test_unknown_module_404(self):
         resp = self.client.get("/api/module/no_such_module/aggregate", params=self.params)
         self.assertEqual(resp.status_code, 404)

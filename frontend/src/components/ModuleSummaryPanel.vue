@@ -1,14 +1,15 @@
 <script setup lang="ts">
-// 区间汇总面板（方案 C · 工单 01）：插在模块页工具条正下方。
+// 区间汇总面板（方案 C · 工单 01 骨架 + 工单 02 环比）：插在模块页工具条正下方。
 // 5 张核心 KPI 卡（成交金额 / 成交单量 / 访客数 / ROI / 退货率），
-// 每卡 = 区间总值（CountUp）+ 逐日 sparkline（纯 SVG polyline，series 来自后端现算）。
+// 每卡 = 区间总值（CountUp）+ 环比上期小字（方向色，反转类由 compareDelta 折算）
+// + 逐日 sparkline（纯 SVG polyline，series 来自后端现算）。
 // 面板标题写明统计范围（N 家店铺 / N 个 SPU / N 天），本身就是「汇总跟随筛选」的口径自检器。
 // 状态：加载中 = 骨架屏；无命中数据 = 整体隐藏；加载失败 = 面板内占位（不阻塞下方列表）。
 import { computed } from "vue";
 import { useModuleStore } from "../stores/module";
 import CountUp from "./CountUp.vue";
-import { getMetric, returnRateOf } from "../metrics";
-import type { MetricFormat } from "../metrics";
+import { compareDelta, getMetric, kpiValueOf } from "../metrics";
+import type { CompareSpec, MetricFormat } from "../metrics";
 
 const store = useModuleStore();
 
@@ -38,19 +39,33 @@ const KPIS: KpiSpec[] = [
 ];
 
 /**
- * 取某 KPI 的区间总值。
+ * 取某 KPI 的区间总值（委托纯函数 kpiValueOf：含退货率口径分支，组件不自己判定）。
  *
  * @param {string} key - KPI key。
  * @returns {number | null} 总值；无数据 / 分母为 0 时为 null（CountUp 显示 "--"）。
  */
 function totalOf(key: string): number | null {
-  const t = store.aggregate?.total;
-  if (!t) return null;
-  // 退货率不在后端 total 里，用「总退款单量 / 总成交单量」现算（口径见 returnRateOf）
-  if (key === "return_rate") return returnRateOf(t);
-  const v = (t as unknown as Record<string, number | null>)[key];
-  return v ?? null;
+  return kpiValueOf(store.aggregate?.total, key);
 }
+
+/** 是否单日模式（起止同一天）：环比文案随之切换为「较前一天」 */
+const singleDay = computed(() => !!store.start && store.start === store.end);
+
+/** 各 KPI 的环比描述（vs 上一等长区间），由纯函数 compareDelta 折算，模板只渲染 */
+const cmpCache = computed(() => {
+  const a = store.aggregate;
+  const out: Record<string, CompareSpec> = {};
+  for (const k of KPIS) {
+    out[k.key] = compareDelta(
+      k.key,
+      k.format,
+      kpiValueOf(a?.total, k.key),
+      kpiValueOf(a?.prev, k.key),
+      singleDay.value,
+    );
+  }
+  return out;
+});
 
 /**
  * 某 KPI 的逐日值（sparkline 数据源）。
@@ -149,8 +164,18 @@ const visible = computed(
           <div class="k-val">
             <CountUp :value="totalOf(k.key)" :format="k.format" />
           </div>
+          <!-- 环比小字：与上一等长区间比较；prev 缺失 / 字段 null / 相对变化分母 0 时整块不渲染 -->
+          <div
+            v-if="cmpCache[k.key].present"
+            class="k-cmp"
+            :class="'tone-' + cmpCache[k.key].tone"
+          >
+            <span class="cmp-arrow">{{ cmpCache[k.key].arrow }}</span>
+            <span class="cmp-text">{{ cmpCache[k.key].text }}</span>
+            <span class="cmp-label">{{ cmpCache[k.key].label }}</span>
+          </div>
           <!-- sparkline：逐日趋势，纯装饰（数值已有文本等价物），null 日跨过不砸 0 -->
-          <!-- 描边/填充走 :style 内联而非属性：k.color 可能是 var(--color-danger)，属性形式对 var() 解析不可靠 -->
+          <!-- 描边/填充走 :style 内联而非属性：k.color 可能是 var(--color-brand)，属性形式对 var() 解析不可靠 -->
           <svg
             v-if="sparkCache[k.key].points"
             class="k-spark"
@@ -214,6 +239,7 @@ const visible = computed(
   border: 1px solid var(--color-border-4);
   border-radius: 10px;
   padding: 10px 12px;
+  min-width: 0; /* 允许作为 grid 项收缩，环比小字再长也不撑破列宽 */
 }
 .k-label {
   font-size: calc(11.5px * var(--font-scale));
@@ -225,6 +251,33 @@ const visible = computed(
   font-weight: 700;
   color: var(--color-text-strong);
   line-height: 1.2;
+}
+/* 环比小字：箭头+差值染方向色，标签恒灰；tabular-nums 防数字抖动 */
+.k-cmp {
+  margin-top: 3px;
+  display: flex;
+  align-items: baseline;
+  gap: 3px;
+  font-size: calc(11px * var(--font-scale));
+  font-variant-numeric: tabular-nums;
+  line-height: 1.3;
+}
+.cmp-arrow {
+  font-size: calc(10px * var(--font-scale));
+}
+.cmp-label {
+  color: var(--color-text-5);
+  font-size: calc(10.5px * var(--font-scale));
+}
+/* 方向色 good=绿 / bad=红 / flat=灰；反转类(退货率等)的升降好坏已由 compareDelta 折算进 tone */
+.k-cmp.tone-good {
+  color: var(--color-up);
+}
+.k-cmp.tone-bad {
+  color: var(--color-down);
+}
+.k-cmp.tone-flat {
+  color: var(--color-text-5);
 }
 /* 成交金额卡：品牌红强调（与预览稿一致，主指标突出） */
 .agg-card:first-child .k-val {

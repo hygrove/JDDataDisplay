@@ -622,12 +622,17 @@ class AggregateOut(BaseModel):
         counts: 命中的店铺数与 (shop, spu) 对数。
         series: 核心 5 项逐日数组（升序）。start/end 都给时覆盖闭区间每个自然日、
             与 days 等长，缺数据日各项为 null；全区间/单日模式下为有数据的日期。
+        prev: 上一个「等长且紧邻」区间（prev_end = start − 1 天，
+            prev_start = prev_end − (days − 1)）的同口径 total。仅在给了有效 start+end
+            时定义（单日模式 start==end 也算，prev=前一天）；未给区间、或上期窗口贴数据
+            起点被截断/无命中数据时，整体为 None。
     """
 
     total: MetricRecord
     days: int
     counts: AggregateCounts
     series: list[AggregateSeriesPoint]
+    prev: Optional[MetricRecord] = None
 
 
 # 参与区间累加的原始字段（sum 类指标自身 + 全部 ratio 的分子分母；
@@ -704,6 +709,36 @@ def _compute_agg_table(per_day: dict[str, list[MetricRecord]], date_list: list[s
     return transforms.compute_metrics(pl.DataFrame(rows, schema=schema))
 
 
+def _group_rows_by_day(rows: list[RowOut]) -> dict[str, list[MetricRecord]]:
+    """把命中行按日期归组：date -> 当日各行的 metrics（跨店铺/SPU 合并）。"""
+    per_day: dict[str, list[MetricRecord]] = {}
+    for r in rows:
+        for d in r.days:
+            per_day.setdefault(d.date, []).append(d.metrics)
+    return per_day
+
+
+def _extract_total(computed) -> MetricRecord:
+    """从 _compute_agg_table 的结果中取出总计行（_TOTAL_KEY），转成 MetricRecord。"""
+    for row in computed.iter_rows(named=True):
+        if row["_key"] == _TOTAL_KEY:
+            return MetricRecord(**{k: row.get(k) for k in METRIC_KEYS})
+    return MetricRecord()
+
+
+def _compute_total(rows: list[RowOut]) -> Optional[MetricRecord]:
+    """把一批命中行聚合成区间 total（比率仍走 compute_metrics，口径与主区间完全一致）。
+
+    给「环比上期」用：只关心区间总值、不需要逐日 series，故日期轴取行内实际出现的日期即可
+    （无数据日本就不在这些行里，不影响求和与比率）。rows 为空（上期无命中）时返回 None，
+    供调用方把 prev 降级为 null，而不是回一坨全 None 的 total 被误读成「上期=0」。
+    """
+    if not rows:
+        return None
+    per_day = _group_rows_by_day(rows)
+    return _extract_total(_compute_agg_table(per_day, sorted(per_day)))
+
+
 @router.get("/module/{module_id}/aggregate", response_model=AggregateOut)
 def get_aggregate(
     module_id: str,
@@ -735,6 +770,7 @@ def get_aggregate(
     # 避免两处各解析一遍 start/end 导致口径分叉。
     series_dates = date_list
     days = len(date_list)
+    range_lo: Optional[datetime] = None  # 仅在 start+end 都有效且 lo<=hi 时设置，供算 prev
     if start and end:
         try:
             d0 = datetime.fromisoformat(start)
@@ -745,41 +781,54 @@ def get_aggregate(
                     for i in range((d1 - d0).days + 1)
                 ]
                 days = len(series_dates)
+                range_lo = d0
         except ValueError:
             pass  # 非法日期串不炸接口，退回「有数据日期数」兜底
 
-    # 无命中（如关键词落空）：total 全 None、series 空数组，counts=0——不报错
+    # 无命中（如关键词落空）：total 全 None、counts=0、series 空、prev=None——不报错；
+    # 面板此时本就整体隐藏（story #15），无需再为 prev 多打一次库
     if not rows:
         return AggregateOut(total=MetricRecord(), days=days, counts=AggregateCounts(), series=[])
 
-    # 逐日分组：date -> 当日全部命中行的 metrics（跨店铺/SPU）
-    per_day: dict[str, list[MetricRecord]] = {}
-    for r in rows:
-        for d in r.days:
-            per_day.setdefault(d.date, []).append(d.metrics)
+    # 环比 prev：上一个「等长且紧邻」区间（prev_end = start−1 天，prev_start = prev_end−(days−1)）。
+    # 只有给了有效 start+end 才定义得出来（全区间模式无「上一段」可言 → prev=None）。
+    prev: Optional[MetricRecord] = None
+    if range_lo is not None:
+        prev_end = (range_lo - timedelta(days=1)).date()
+        prev_start = prev_end - timedelta(days=days - 1)
+        prev_rows, prev_date_list = _build_rows(
+            module_id, shop, prev_start.isoformat(), prev_end.isoformat(), None, keyword, None, "desc"
+        )
+        # 覆盖守卫：上期窗口的日历若没被库内数据铺满（len(prev_date_list) < days），说明它贴着
+        # 数据起点被截断——拿「1 天」当「7 天」比会造出假的暴跌/暴涨。按 story #4「上期贴数据起点
+        # 时环比自然消失，不显示错误值」，此时置 None。用模块级日历覆盖判定（非过滤后行数），
+        # 这样某店铺上期真有 0 销售日仍算「窗口在范围内」、只砍真正越界的窗口。
+        if len(prev_date_list) >= days:
+            prev = _compute_total(prev_rows)
+
+    per_day = _group_rows_by_day(rows)
 
     computed = _compute_agg_table(per_day, series_dates)
-    total = MetricRecord()
+    total = _extract_total(computed)
     series: list[AggregateSeriesPoint] = []
     for row in computed.iter_rows(named=True):
-        rec = MetricRecord(**{k: row.get(k) for k in METRIC_KEYS})
         if row["_key"] == _TOTAL_KEY:
-            total = rec
-        else:
-            # 当日退货率 = 当日退款单量 / 当日成交单量（分子分母都已是当日总量，
-            # 与「先求和再相除」口径一致；return_rate 不是 METRICS 成员，compute_metrics 不管它）
-            series.append(
-                AggregateSeriesPoint(
-                    date=row["_key"],
-                    amount=rec.amount,
-                    orders=rec.orders,
-                    visitors=rec.visitors,
-                    roi=rec.roi,
-                    return_rate=(rec.refund_orders / rec.orders)
-                    if rec.refund_orders is not None and rec.orders
-                    else None,
-                )
+            continue
+        rec = MetricRecord(**{k: row.get(k) for k in METRIC_KEYS})
+        # 当日退货率 = 当日退款单量 / 当日成交单量（分子分母都已是当日总量，与「先求和再相除」
+        # 口径一致；return_rate 不是 METRICS 成员，compute_metrics 不管它，故在此单独算）
+        series.append(
+            AggregateSeriesPoint(
+                date=row["_key"],
+                amount=rec.amount,
+                orders=rec.orders,
+                visitors=rec.visitors,
+                roi=rec.roi,
+                return_rate=(rec.refund_orders / rec.orders)
+                if rec.refund_orders is not None and rec.orders
+                else None,
             )
+        )
 
     return AggregateOut(
         total=total,
@@ -789,6 +838,7 @@ def get_aggregate(
             spus=len({(r.shop, r.spu) for r in rows}),
         ),
         series=series,
+        prev=prev,
     )
 
 

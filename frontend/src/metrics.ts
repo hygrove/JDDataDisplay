@@ -17,7 +17,7 @@
 //
 // ⚠️ 新增/修改指标时，必须同步后端：backend/jobs/models.py（MetricRecord 字段）
 //    与 backend/app/api.py 的 METRIC_KEYS，否则前端会拿到 undefined。
-import type { MetricKey } from "./types";
+import type { MetricKey, MetricRecord } from "./types";
 
 /**
  * 指标的展示格式：
@@ -288,4 +288,103 @@ export function returnRateOf(total: {
   const ro = total.refund_orders;
   const od = total.orders;
   return ro != null && od ? ro / od : null;
+}
+
+/**
+ * 从一份区间指标记录（total 或 prev）里取某 KPI 的值。
+ *
+ * @remarks
+ * 退货率不在 MetricRecord 里，用 `returnRateOf` 现算；其余按字段直取。把「按 key 取值 +
+ * 退货率口径分支」集中到这一个纯函数，组件里就只剩渲染、没有判定（符合 §5）。
+ *
+ * @param {MetricRecord | null | undefined} rec - 区间指标记录；缺失时返回 null。
+ * @param {string} key - KPI key（如 "amount" / "return_rate"）。
+ * @returns {number | null} 该 KPI 值；无数据 / 分母为 0 时为 null。
+ * @example
+ * ```ts
+ * kpiValueOf({ amount: 100 }, "amount");            // 100
+ * kpiValueOf({ refund_orders: 3, orders: 100 }, "return_rate"); // 0.03
+ * ```
+ */
+export function kpiValueOf(
+  rec: MetricRecord | null | undefined,
+  key: string,
+): number | null {
+  if (!rec) return null;
+  if (key === "return_rate") return returnRateOf(rec);
+  const v = (rec as unknown as Record<string, number | null>)[key];
+  return v ?? null;
+}
+
+/** 「升即为劣」需反转方向色的指标：退款族 + 退货率（业务约定，升=变坏=红）。 */
+const INVERT_KEYS = new Set<string>(["return_rate", "refund_amount", "refund_orders"]);
+
+/** {@link compareDelta} 的返回：一张 KPI 卡环比小字的渲染描述。 */
+export interface CompareSpec {
+  /** false → 整块环比小字隐藏 */
+  present: boolean;
+  /** 方向箭头：▲ 升 / ▼ 降 / 空 持平 */
+  arrow: "▲" | "▼" | "";
+  /** 色调（已按是否反转折算）：good=绿(变好) / bad=红(变坏) / flat=灰(持平) */
+  tone: "good" | "bad" | "flat";
+  /** 差值文案 */
+  text: string;
+  /** 对比对象文案：单日「较前一天」，区间「较上周期」 */
+  label: string;
+}
+
+/**
+ * 单个 KPI 的环比（对上一个等长区间）呈现描述——纯函数，供面板渲染。
+ *
+ * @remarks
+ * 单位由调用方传入的 `format` 决定（不再从 key 反推）：percent（转化率/占比/退货率）用
+ * 「百分点差 pp」，其余（金额/计数/ROI 等）用「相对变化百分比 %」。方向色按「好绿坏红」：
+ * 常规升=good(绿)，INVERT_KEYS（退款族/退货率，升为劣）折算成 bad(红)——本汇总面板刻意
+ * 采用「好=绿」语义，与 MonthCompareTable 的「涨=红」方向语义不同（用户 2026-11 拍板）。
+ * 降级：cur/prev 任一 null 或相对变化分母为 0 → 隐藏；差值小到会显示成 0.0/0.00 → 「持平」，
+ * 绝不显示假数字或 Infinity。
+ *
+ * @param {string} key - KPI key（决定是否反转）。
+ * @param {MetricFormat} format - 展示格式，决定用 pp 还是相对 %。
+ * @param {number | null} cur - 本区间该指标值。
+ * @param {number | null} prev - 上一区间同指标值；null 表示上期无该项数据。
+ * @param {boolean} singleDay - 是否单日模式（文案改「较前一天」）。
+ * @returns {CompareSpec} 渲染描述；present=false 时调用方隐藏整块环比小字。
+ * @throws 无。
+ * @example
+ * ```ts
+ * compareDelta("amount", "currency", 110, 100, false);            // good ▲ +10.0%
+ * compareDelta("return_rate", "percent", 0.06, 0.05, false);      // 反转 → bad ▲ +1.00pp
+ * compareDelta("roi", "decimal", 3, null, false);                 // prev null → present:false
+ * compareDelta("amount", "currency", 100.02, 100, false);         // 太小 → flat 持平
+ * ```
+ */
+export function compareDelta(
+  key: string,
+  format: MetricFormat,
+  cur: number | null,
+  prev: number | null,
+  singleDay: boolean,
+): CompareSpec {
+  const label = singleDay ? "较前一天" : "较上周期";
+  const hidden: CompareSpec = { present: false, arrow: "", tone: "flat", text: "", label };
+  const flat: CompareSpec = { present: true, arrow: "", tone: "flat", text: "持平", label };
+  if (cur == null || prev == null) return hidden;
+
+  const invert = INVERT_KEYS.has(key);
+  const diff = cur - prev;
+  const rising = diff > 0;
+  const tone: CompareSpec["tone"] = rising !== invert ? "good" : "bad";
+  const arrow: CompareSpec["arrow"] = rising ? "▲" : "▼";
+
+  if (format === "percent") {
+    // 比率类：两个小数比率相减，放大到百分点（pp）；小到会显示成 0.00pp 就当持平
+    const pp = diff * 100;
+    if (Math.abs(pp) < 0.005) return flat;
+    return { present: true, arrow, tone, label, text: `${rising ? "+" : "-"}${Math.abs(pp).toFixed(2)}pp` };
+  }
+  if (prev === 0) return hidden; // 相对变化分母为 0 → 无法用 % 表达，隐藏而不是显示 Infinity
+  const rel = (diff / Math.abs(prev)) * 100;
+  if (Math.abs(rel) < 0.05) return flat; // 会显示成 ±0.0% → 当持平，避免「▲ +0.0%」这种误导
+  return { present: true, arrow, tone, label, text: `${rising ? "+" : "-"}${Math.abs(rel).toFixed(1)}%` };
 }
