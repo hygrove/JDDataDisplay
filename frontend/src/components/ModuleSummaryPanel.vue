@@ -9,7 +9,7 @@ import { computed } from "vue";
 import { useModuleStore } from "../stores/module";
 import CountUp from "./CountUp.vue";
 import { compareDelta, getMetric, kpiValueOf, withBarWidth } from "../metrics";
-import { fmtBy, thumb } from "../modules";
+import { fmtBy, fmtShare, thumb } from "../modules";
 import type { CompareSpec, MetricFormat } from "../metrics";
 
 const store = useModuleStore();
@@ -227,7 +227,7 @@ const visible = computed(
               </div>
               <div class="st-num">
                 <span class="st-amount">{{ fmtBy("currency", t.amount) }}</span>
-                <span class="st-share">{{ t.share == null ? "--" : fmtBy("percent", t.share) }}</span>
+                <span class="st-share">{{ fmtShare(t.share) }}</span>
               </div>
             </li>
           </ul>
@@ -254,7 +254,7 @@ const visible = computed(
               </div>
               <div class="st-num">
                 <span class="st-amount">{{ fmtBy("currency", s.amount) }}</span>
-                <span class="st-share">{{ s.share == null ? "--" : fmtBy("percent", s.share) }}</span>
+                <span class="st-share">{{ fmtShare(s.share) }}</span>
               </div>
             </li>
           </ul>

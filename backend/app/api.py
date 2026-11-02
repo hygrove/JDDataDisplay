@@ -792,6 +792,15 @@ def _build_structure(
         tuple[list[AggregateTopSpu], list[AggregateShopTotal]]: (全局降序 TOP, 各店降序汇总)。
     """
     denom = total_amount or 0
+
+    def share_of(num: float) -> Optional[float]:
+        """占比 = num / 区间 total.amount；分母 0/None → None（绝不除零，无 Infinity/NaN）。
+
+        贡献占比是汇总面板专有指标，不在 transforms.compute_metrics 的 15 项口径内，
+        故此处就地安全相除，不冒充走 compute_metrics。
+        """
+        return (num / denom) if denom else None
+
     # 每行区间金额只算一次；复用 _accumulate 的「跳过 None/NaN 求和」口径，不另写一份
     amounts: list[tuple[RowOut, float]] = [
         (r, _accumulate([d.metrics for d in r.days]).get("amount", 0.0)) for r in rows
@@ -802,7 +811,7 @@ def _build_structure(
     top = [
         AggregateTopSpu(
             spu=r.spu, spu_name=r.spu_name, shop=r.shop, image=r.image,
-            amount=amt, share=(amt / denom) if denom else None,
+            amount=amt, share=share_of(amt),
         )
         for r, amt in ranked[:_AGG_TOP_N]
     ]
@@ -812,7 +821,7 @@ def _build_structure(
         for r, amt in amounts:
             by_shop[r.shop] = by_shop.get(r.shop, 0.0) + amt
         shop_totals = [
-            AggregateShopTotal(shop=s, amount=a, share=(a / denom) if denom else None)
+            AggregateShopTotal(shop=s, amount=a, share=share_of(a))
             for s, a in sorted(by_shop.items(), key=lambda kv: (-kv[1], kv[0]))
         ]
     return top, shop_totals

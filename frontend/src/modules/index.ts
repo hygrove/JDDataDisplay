@@ -282,6 +282,23 @@ export function fmtBy(
 }
 
 /**
+ * 占比显示（汇总面板「占区间总额」专用）：缺失（null/undefined）显示 "--"，
+ * 与 fmtPercent 把 null 当 "0.00%" 刻意区分——占比为 0 是事实、缺失是无意义，二者不能同形。
+ *
+ * @param {number | null | undefined} v - 占比（0–1）；后端分母为 0 时回 null。
+ * @returns {string} 缺失 → "--"；否则两位小数百分比（0 会正常显示 "0.00%"）。
+ * @example
+ * ```ts
+ * fmtShare(0.25); // "25.00%"
+ * fmtShare(0);    // "0.00%"
+ * fmtShare(null); // "--"
+ * ```
+ */
+export function fmtShare(v: number | null | undefined): string {
+  return v === null || v === undefined ? "--" : fmtPercent(v);
+}
+
+/**
  * 原图路径 -> 缩略图路径（与 ModuleView / SpuAnalysisView 图片渲染同约定）。
  * `thumb("/images/100123.png", 96)` → `/thumbs/96/100123.avif`。
  * 供需要走 /thumbs 预生成缩略图、而非直接塞原图的组件复用（小尺寸位图省流量）。
