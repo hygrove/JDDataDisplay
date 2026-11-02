@@ -388,3 +388,25 @@ export function compareDelta(
   if (Math.abs(rel) < 0.05) return flat; // 会显示成 ±0.0% → 当持平，避免「▲ +0.0%」这种误导
   return { present: true, arrow, tone, label, text: `${rising ? "+" : "-"}${Math.abs(rel).toFixed(1)}%` };
 }
+
+/**
+ * 给一组「带 amount 的条目」附加横向条宽度百分比（相对榜内最大金额，最小 4% 保证矮条可见）。
+ *
+ * @remarks
+ * TOP 贡献榜与店铺对比两个列表同构，共用此纯函数，组件里只剩渲染。用 `Math.max` 取基准，
+ * 不依赖后端已降序这一实现细节（后端排序若变，条宽仍正确）。
+ *
+ * @template T - 含 `amount` 字段的条目。
+ * @param {T[]} list - 条目数组（空则返回空数组）。
+ * @returns {Array<T & { width: number }>} 每项附加 `width`（0–100 的百分比）。
+ * @example
+ * ```ts
+ * withBarWidth([{ amount: 100 }, { amount: 50 }]); // [{amount:100,width:100},{amount:50,width:50}]
+ * ```
+ */
+export function withBarWidth<T extends { amount: number }>(
+  list: T[],
+): Array<T & { width: number }> {
+  const max = list.length ? Math.max(...list.map((x) => x.amount)) : 0;
+  return list.map((x) => ({ ...x, width: max ? Math.max(4, (x.amount / max) * 100) : 0 }));
+}

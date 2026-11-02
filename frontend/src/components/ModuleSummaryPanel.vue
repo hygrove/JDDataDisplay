@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 区间汇总面板（方案 C · 工单 01 骨架 + 工单 02 环比）：插在模块页工具条正下方。
+// 区间汇总面板（方案 C · 工单 01 骨架 + 工单 02 环比 + 工单 03 结构区）：插在模块页工具条正下方。
 // 5 张核心 KPI 卡（成交金额 / 成交单量 / 访客数 / ROI / 退货率），
 // 每卡 = 区间总值（CountUp）+ 环比上期小字（方向色，反转类由 compareDelta 折算）
 // + 逐日 sparkline（纯 SVG polyline，series 来自后端现算）。
@@ -8,7 +8,8 @@
 import { computed } from "vue";
 import { useModuleStore } from "../stores/module";
 import CountUp from "./CountUp.vue";
-import { compareDelta, getMetric, kpiValueOf } from "../metrics";
+import { compareDelta, getMetric, kpiValueOf, withBarWidth } from "../metrics";
+import { fmtBy, thumb } from "../modules";
 import type { CompareSpec, MetricFormat } from "../metrics";
 
 const store = useModuleStore();
@@ -117,6 +118,18 @@ const sparkCache = computed(() => {
   return out;
 });
 
+/**
+ * TOP 贡献榜（与店铺对比同构）：后端 top_spus 已给金额与 share，这里只经纯函数 withBarWidth
+ * 附加条宽百分比，组件里只剩渲染。
+ */
+const topSpus = computed(() => withBarWidth(store.aggregate?.top_spus ?? []));
+
+/** 店铺间对比：同 withBarWidth 附加条宽。后端在带 shop 过滤时返回空数组，故此卡自动无数据。 */
+const shopTotals = computed(() => withBarWidth(store.aggregate?.shop_totals ?? []));
+
+/** 店铺对比卡是否展示：仅「全部店铺」视图（未选店）且有店铺数据时出现 */
+const showShopCard = computed(() => !store.shop && shopTotals.value.length > 0);
+
 /** 面板标题的统计范围文案（含当前店铺名，明示汇总口径） */
 const scopeText = computed(() => {
   const a = store.aggregate;
@@ -193,6 +206,58 @@ const visible = computed(
               :style="{ fill: k.color }"
             />
           </svg>
+        </div>
+      </div>
+
+      <!-- 结构区双卡（工单 03）：TOP 5 贡献榜（品牌红条）+ 店铺间对比（紫条，点击下钻单店）。
+           指定店铺时后端不返回 shop_totals → 店铺卡隐藏 → TOP 卡自动占满整行。 -->
+      <div v-if="topSpus.length" class="agg-structure">
+        <div class="st-card">
+          <div class="st-title">成交金额 TOP {{ topSpus.length }} 贡献</div>
+          <ul class="st-list">
+            <li v-for="t in topSpus" :key="t.shop + '|' + t.spu" class="st-row">
+              <picture v-if="t.image" class="st-img">
+                <source :srcset="thumb(t.image, 96, 'avif')" type="image/avif" />
+                <source :srcset="thumb(t.image, 96, 'webp')" type="image/webp" />
+                <img :src="t.image" :alt="t.spu_name || t.spu" loading="lazy" />
+              </picture>
+              <div class="st-body">
+                <div class="st-name" :title="t.spu_name || t.spu">{{ t.spu_name || t.spu }}</div>
+                <div class="st-bar st-bar-top"><div class="st-bar-fill" :style="{ width: t.width + '%' }"></div></div>
+              </div>
+              <div class="st-num">
+                <span class="st-amount">{{ fmtBy("currency", t.amount) }}</span>
+                <span class="st-share">{{ t.share == null ? "--" : fmtBy("percent", t.share) }}</span>
+              </div>
+            </li>
+          </ul>
+        </div>
+
+        <div v-if="showShopCard" class="st-card">
+          <div class="st-title">店铺间成交对比</div>
+          <ul class="st-list">
+            <li
+              v-for="s in shopTotals"
+              :key="s.shop"
+              class="st-row st-click"
+              role="button"
+              tabindex="0"
+              :title="'切到「' + s.shop + '」查看该店明细'"
+              :aria-label="'查看「' + s.shop + '」区间明细'"
+              @click="store.setShop(s.shop)"
+              @keydown.enter="store.setShop(s.shop)"
+              @keydown.space.prevent="store.setShop(s.shop)"
+            >
+              <div class="st-body">
+                <div class="st-name" :title="s.shop">{{ s.shop }}</div>
+                <div class="st-bar st-bar-shop"><div class="st-bar-fill" :style="{ width: s.width + '%' }"></div></div>
+              </div>
+              <div class="st-num">
+                <span class="st-amount">{{ fmtBy("currency", s.amount) }}</span>
+                <span class="st-share">{{ s.share == null ? "--" : fmtBy("percent", s.share) }}</span>
+              </div>
+            </li>
+          </ul>
         </div>
       </div>
     </template>
@@ -279,6 +344,113 @@ const visible = computed(
 .k-cmp.tone-flat {
   color: var(--color-text-5);
 }
+/* ---------- 结构区双卡（工单 03）：TOP 贡献榜 + 店铺间对比 ---------- */
+.agg-structure {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+.st-card {
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border-4);
+  border-radius: 10px;
+  padding: 10px 12px;
+  min-width: 0;
+}
+.st-title {
+  font-size: calc(12.5px * var(--font-scale));
+  font-weight: 700;
+  color: var(--color-text-strong);
+  margin-bottom: 8px;
+}
+.st-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.st-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.st-img {
+  width: 34px;
+  height: 34px;
+  border-radius: 6px;
+  flex: 0 0 auto;
+  overflow: hidden;
+  background: var(--color-border-4);
+}
+.st-img img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.st-body {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+/* 商品名过长省略号截断，全名走 title 提示 */
+.st-name {
+  font-size: calc(12px * var(--font-scale));
+  color: var(--color-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-bottom: 4px;
+}
+.st-bar {
+  height: 7px;
+  border-radius: 4px;
+  background: var(--color-border-4);
+  overflow: hidden;
+}
+.st-bar-fill {
+  height: 100%;
+  border-radius: 4px;
+}
+.st-bar-top .st-bar-fill {
+  background: linear-gradient(90deg, var(--color-brand), var(--color-brand-dark));
+}
+.st-bar-shop .st-bar-fill {
+  background: linear-gradient(90deg, var(--color-violet), var(--color-violet-dark));
+}
+.st-num {
+  flex: 0 0 auto;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.st-amount {
+  display: block;
+  font-size: calc(12.5px * var(--font-scale));
+  font-weight: 600;
+  color: var(--color-text-strong);
+}
+.st-share {
+  display: block;
+  font-size: calc(11px * var(--font-scale));
+  color: var(--color-text-5);
+}
+/* 店铺条：可点击下钻单店，鼠标指针 + 悬停/键盘聚焦反馈 */
+.st-click {
+  cursor: pointer;
+  border-radius: 6px;
+  padding: 2px 4px;
+  margin: 0 -4px;
+  transition: background-color 0.15s ease;
+}
+.st-click:hover {
+  background: var(--color-surface); /* 白底在 surface-2 灰卡上「浮起」，比 border-4 对比明显 */
+}
+.st-click:focus-visible {
+  outline: 2px solid var(--color-violet);
+  outline-offset: 1px;
+}
 /* 成交金额卡：品牌红强调（与预览稿一致，主指标突出） */
 .agg-card:first-child .k-val {
   color: var(--color-brand-darker);
@@ -321,10 +493,13 @@ const visible = computed(
     opacity: 0.45;
   }
 }
-/* 系统开启「减少动态效果」时骨架屏不闪动 */
+/* 系统开启「减少动态效果」时骨架屏不闪动、店铺条悬停过渡静止 */
 @media (prefers-reduced-motion: reduce) {
   .skel .skel-line {
     animation: none;
+  }
+  .st-click {
+    transition: none;
   }
 }
 </style>

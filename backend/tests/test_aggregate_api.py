@@ -273,6 +273,61 @@ class TestAggregateApi(unittest.TestCase):
         self.assertGreater(body["counts"]["spus"], 0, "当前窗口应命中数据")
         self.assertIsNone(body["prev"], "上期窗口被数据起点截断时应为 null，避免假暴跌/暴涨")
 
+    # ---------- 结构区：TOP SPU 贡献 + 店铺间对比 ----------
+    def test_top_spus_descending_and_matches_rows(self):
+        """top_spus 全局降序、条数=min(5,命中SPU数)、每条金额=行接口同 (shop,spu) 求和、share 严格=金额/total.amount。"""
+        body = self.client.get(f"/api/module/{MODULE}/aggregate", params=self.params).json()
+        top = body["top_spus"]
+        total_amount = body["total"]["amount"] or 0.0
+        spus = body["counts"]["spus"]
+        self.assertEqual(len(top), min(5, spus), "TOP 条数应为 min(5, 命中 SPU 数)")
+        amts = [t["amount"] for t in top]
+        self.assertEqual(amts, sorted(amts, reverse=True), "TOP 榜应按成交金额降序")
+        # 逐 (shop,spu) 区间金额作核对基准（与行接口完全同源），核对每一条而非只首条
+        rows = _fetch_all_rows(self.client, self.params)
+        row_amt: dict[tuple, float] = {}
+        for r in rows:
+            row_amt[(r["shop"], r["spu"])] = sum((d["metrics"].get("amount") or 0.0) for d in r["days"])
+        for t in top:
+            with self.subTest(entity=(t["shop"], t["spu"])):
+                self.assertAlmostEqual(t["amount"], row_amt.get((t["shop"], t["spu"]), 0.0), places=4)
+                # 把「share 占谁」钉死：等于 amount / total.amount（分母写错也不会只靠 sum≤1 蒙混）
+                if total_amount:
+                    self.assertAlmostEqual(t["share"], t["amount"] / total_amount, places=9)
+                else:
+                    self.assertIsNone(t["share"])
+        self.assertLessEqual(sum(t["share"] or 0 for t in top), 1 + 1e-9, "share 之和不超过 1")
+
+    def test_shop_totals_only_when_unfiltered(self):
+        """未指定店铺 → shop_totals 各店降序、金额之和≈total.amount、share=金额/total.amount；指定店铺 → 空数组。"""
+        if not self.shops:
+            self.skipTest("manifest 无店铺")
+        body = self.client.get(f"/api/module/{MODULE}/aggregate", params=self.params).json()
+        st = body["shop_totals"]
+        total_amount = body["total"]["amount"] or 0.0
+        self.assertGreater(len(st), 0, "全部店铺视图应返回各店汇总")
+        amounts = [s["amount"] for s in st]
+        if len(st) >= 2:  # ≥2 家店时降序才有意义
+            self.assertEqual(amounts, sorted(amounts, reverse=True), "店铺汇总按金额降序")
+        self.assertAlmostEqual(sum(amounts), total_amount, places=4, msg="各店成交金额之和=区间 total.amount")
+        if total_amount:
+            for s in st:
+                with self.subTest(shop=s["shop"]):
+                    self.assertAlmostEqual(s["share"], s["amount"] / total_amount, places=9)
+        body2 = self.client.get(
+            f"/api/module/{MODULE}/aggregate", params={**self.params, "shop": self.shops[0]}
+        ).json()
+        self.assertEqual(body2["shop_totals"], [], "指定店铺时不返回店铺间对比")
+
+    def test_structure_empty_when_no_match(self):
+        """空区间（关键词落空）：top_spus / shop_totals 均为空数组。"""
+        body = self.client.get(
+            f"/api/module/{MODULE}/aggregate",
+            params={**self.params, "keyword": "zzz-绝不存在的关键词-zzz"},
+        ).json()
+        self.assertEqual(body["top_spus"], [])
+        self.assertEqual(body["shop_totals"], [])
+
     def test_unknown_module_404(self):
         resp = self.client.get("/api/module/no_such_module/aggregate", params=self.params)
         self.assertEqual(resp.status_code, 404)

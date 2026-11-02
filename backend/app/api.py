@@ -612,6 +612,37 @@ class AggregateCounts(BaseModel):
     spus: int = 0
 
 
+class AggregateTopSpu(BaseModel):
+    """TOP 贡献榜的一条（按 (shop,spu) 区间成交金额，全局降序取前 N）。
+
+    Fields:
+        spu / spu_name / shop / image: 实体标识与配图（image 可空）。
+        amount: 该 (shop,spu) 区间成交金额合计（无成交为 0）。
+        share: 占区间 total.amount 的比例（total.amount 为 0/缺失时为 None）。
+    """
+
+    spu: str
+    spu_name: Optional[str] = None
+    shop: str
+    image: Optional[str] = None
+    amount: float = 0
+    share: Optional[float] = None
+
+
+class AggregateShopTotal(BaseModel):
+    """店铺间对比的一条（某店区间成交金额）；仅在未指定店铺过滤时返回。
+
+    Fields:
+        shop: 店铺名。
+        amount: 该店区间成交金额合计。
+        share: 占区间 total.amount 的比例（分母 0/缺失时 None）。
+    """
+
+    shop: str
+    amount: float = 0
+    share: Optional[float] = None
+
+
 class AggregateOut(BaseModel):
     """区间汇总响应：与 /rows 完全同口径（同过滤链 + transforms 比率口径）。
 
@@ -626,6 +657,8 @@ class AggregateOut(BaseModel):
             prev_start = prev_end − (days − 1)）的同口径 total。仅在给了有效 start+end
             时定义（单日模式 start==end 也算，prev=前一天）；未给区间、或上期窗口贴数据
             起点被截断/无命中数据时，整体为 None。
+        top_spus: 区间成交金额全局降序前 5（含占 total.amount 的 share）；空命中为 []。
+        shop_totals: 各店区间成交金额降序；**仅在未指定店铺过滤时返回**，带 shop 时为空 []。
     """
 
     total: MetricRecord
@@ -633,6 +666,8 @@ class AggregateOut(BaseModel):
     counts: AggregateCounts
     series: list[AggregateSeriesPoint]
     prev: Optional[MetricRecord] = None
+    top_spus: list[AggregateTopSpu] = Field(default_factory=list)
+    shop_totals: list[AggregateShopTotal] = Field(default_factory=list)
 
 
 # 参与区间累加的原始字段（sum 类指标自身 + 全部 ratio 的分子分母；
@@ -739,6 +774,50 @@ def _compute_total(rows: list[RowOut]) -> Optional[MetricRecord]:
     return _extract_total(_compute_agg_table(per_day, sorted(per_day)))
 
 
+# TOP 贡献榜保留条数（spec：前 5）。与 config.SUMMARY_TOP_N 无关——那是 summary.json 每店条数。
+_AGG_TOP_N = 5
+
+
+def _build_structure(
+    rows: list[RowOut], total_amount: Optional[float], shop_given: bool
+) -> tuple[list[AggregateTopSpu], list[AggregateShopTotal]]:
+    """由命中行现算「TOP 贡献榜」与「店铺间对比」（与 total/rows 完全同源，杜绝口径漂移）。
+
+    Args:
+        rows: 已按 (shop,spu) 聚合的命中行。
+        total_amount: 区间成交金额合计，作 share 分母；0/None 时 share 为 None（绝不除零）。
+        shop_given: 是否指定了店铺过滤——指定时不返回店铺间对比（此时只有一家店，对比无意义）。
+
+    Returns:
+        tuple[list[AggregateTopSpu], list[AggregateShopTotal]]: (全局降序 TOP, 各店降序汇总)。
+    """
+    denom = total_amount or 0
+    # 每行区间金额只算一次；复用 _accumulate 的「跳过 None/NaN 求和」口径，不另写一份
+    amounts: list[tuple[RowOut, float]] = [
+        (r, _accumulate([d.metrics for d in r.days]).get("amount", 0.0)) for r in rows
+    ]
+    # 金额降序、同额以 (shop, spu) 兜底定序：源表用 REPLACE 重插会让等值行的物理顺序漂移，
+    # 不兜底则「前 5」边界会随刷新跳动（对齐 §2 行序确定性铁律）
+    ranked = sorted(amounts, key=lambda ra: (-ra[1], ra[0].shop, ra[0].spu))
+    top = [
+        AggregateTopSpu(
+            spu=r.spu, spu_name=r.spu_name, shop=r.shop, image=r.image,
+            amount=amt, share=(amt / denom) if denom else None,
+        )
+        for r, amt in ranked[:_AGG_TOP_N]
+    ]
+    shop_totals: list[AggregateShopTotal] = []
+    if not shop_given:
+        by_shop: dict[str, float] = {}
+        for r, amt in amounts:
+            by_shop[r.shop] = by_shop.get(r.shop, 0.0) + amt
+        shop_totals = [
+            AggregateShopTotal(shop=s, amount=a, share=(a / denom) if denom else None)
+            for s, a in sorted(by_shop.items(), key=lambda kv: (-kv[1], kv[0]))
+        ]
+    return top, shop_totals
+
+
 @router.get("/module/{module_id}/aggregate", response_model=AggregateOut)
 def get_aggregate(
     module_id: str,
@@ -810,6 +889,7 @@ def get_aggregate(
 
     computed = _compute_agg_table(per_day, series_dates)
     total = _extract_total(computed)
+    top_spus, shop_totals = _build_structure(rows, total.amount, bool(shop))
     series: list[AggregateSeriesPoint] = []
     for row in computed.iter_rows(named=True):
         if row["_key"] == _TOTAL_KEY:
@@ -839,6 +919,8 @@ def get_aggregate(
         ),
         series=series,
         prev=prev,
+        top_spus=top_spus,
+        shop_totals=shop_totals,
     )
 
 

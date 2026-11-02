@@ -208,6 +208,29 @@ export interface AggregateSeriesPoint {
 }
 
 /**
+ * TOP 贡献榜的一条（按 (shop,spu) 区间成交金额全局降序取前 5）。
+ */
+export interface AggregateTopSpu {
+  spu: string;
+  spu_name: string | null;
+  shop: string;
+  image: string | null;
+  amount: number;
+  /** 占区间 total.amount 的比例；total.amount 为 0/缺失时 null */
+  share: number | null;
+}
+
+/**
+ * 店铺间对比的一条（某店区间成交金额）；仅在未指定店铺过滤时出现于 ModuleAggregate。
+ */
+export interface AggregateShopTotal {
+  shop: string;
+  amount: number;
+  /** 占区间 total.amount 的比例；分母 0/缺失时 null */
+  share: number | null;
+}
+
+/**
  * 区间汇总响应（模块页汇总面板，与 /rows 同过滤链同口径）。
  */
 export interface ModuleAggregate {
@@ -221,6 +244,10 @@ export interface ModuleAggregate {
   series: AggregateSeriesPoint[];
   /** 上一个「等长且紧邻」区间的同口径 total；上期无数据或未给完整区间时为 null */
   prev: MetricRecord | null;
+  /** 成交金额全局降序 TOP 5（含占区间总额 share）；空命中为 [] */
+  top_spus: AggregateTopSpu[];
+  /** 各店区间成交金额降序；仅在未指定店铺过滤时返回，带 shop 时为 [] */
+  shop_totals: AggregateShopTotal[];
 }
 
 /**

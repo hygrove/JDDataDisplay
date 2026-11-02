@@ -280,3 +280,29 @@ export function fmtBy(
       return fmtNumber(v);
   }
 }
+
+/**
+ * 原图路径 -> 缩略图路径（与 ModuleView / SpuAnalysisView 图片渲染同约定）。
+ * `thumb("/images/100123.png", 96)` → `/thumbs/96/100123.avif`。
+ * 供需要走 /thumbs 预生成缩略图、而非直接塞原图的组件复用（小尺寸位图省流量）。
+ *
+ * @param {string | null | undefined} orig - 后端返回的原图路径（/images/...）；空则返回 ""。
+ * @param {number} size - 缩略图边长（px）。
+ * @param {"avif" | "webp"} fmt - 目标编码格式。
+ * @returns {string} 缩略图 URL；orig 为空时为 ""。
+ * @example
+ * ```ts
+ * thumb("/images/100123.png", 96, "avif"); // "/thumbs/96/100123.avif"
+ * thumb(null, 96);                          // ""
+ * ```
+ */
+export function thumb(
+  orig: string | null | undefined,
+  size: number,
+  fmt: "avif" | "webp" = "avif",
+): string {
+  if (!orig) return "";
+  const base = orig.replace("/images/", "");
+  const stem = base.replace(/\.[^.]+$/, "");
+  return `/thumbs/${size}/${stem}.${fmt}`;
+}
