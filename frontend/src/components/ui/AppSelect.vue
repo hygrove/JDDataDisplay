@@ -68,13 +68,11 @@ const inner = computed<number | string | undefined>({
 </template>
 
 <style scoped>
-/* 穿透覆盖：选中值与下拉面板字号都需跟随全局缩放系数 */
+/* 穿透覆盖：EP 的选择器正文写死 14px，需跟随全局缩放系数。
+   下挂面板被 teleport 到 body，scoped 选择器够不到；好在 EP 面板项用的是
+   var(--el-font-size-base)，已由 style.css 的映射层接上缩放，无需额外覆盖。 */
 .app-select :deep(.el-select__wrapper) {
   font-size: calc(13px * var(--font-scale));
-  min-height: 28px;
-}
-
-.app-select :deep(.el-select-dropdown__item) {
-  font-size: calc(13px * var(--font-scale));
+  min-height: calc(28px * var(--font-scale));
 }
 </style>

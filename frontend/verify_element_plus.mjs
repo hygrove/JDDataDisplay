@@ -25,6 +25,14 @@ const STYLE_CSS = join(SRC, "style.css");
 let pass = 0;
 let fail = 0;
 
+/** 去掉 HTML / JS / CSS 注释，避免注释里的示例被当成真实用法。 */
+function stripComments(text) {
+  return text
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^\s*\/\/.*$/gm, "");
+}
+
 function ok(label) {
   pass++;
   console.log(`  ✓ ${label}`);
@@ -96,7 +104,7 @@ for (const file of files) {
   const rel = relative(ROOT, file).replace(/\\/g, "/");
   // 收敛层目录豁免：它存在的意义就是包装 EP
   if (file.startsWith(UI_DIR)) continue;
-  const text = readFileSync(file, "utf8");
+  const text = stripComments(readFileSync(file, "utf8"));
   const exempt = ROOT_EXEMPT.get(rel) ?? new Set();
   const hits = [];
   for (const tag of EP_TAGS) {
@@ -115,14 +123,14 @@ for (const file of files) {
 }
 
 // ─────────────────────────────────────────────────────────────
-// ② 业务组件不得直接引用 --el-* 变量
+// ② 任何文件都不得直接引用 --el-* 变量
 //    颜色只从本项目令牌出：var(--color-brand) 等，由 style.css 映射到 EP。
+//    收敛层也不例外——包装组件应引用项目令牌，而不是 EP 变量。
 // ─────────────────────────────────────────────────────────────
 for (const file of files) {
   const rel = relative(ROOT, file).replace(/\\/g, "/");
   if (file === STYLE_CSS) continue; // 映射层自身当然要写 --el-*
-  if (file.startsWith(UI_DIR)) continue; // 收敛层可用 EP 语义类名，但不应直引 --el-* 变量
-  const text = readFileSync(file, "utf8");
+  const text = stripComments(readFileSync(file, "utf8"));
   const hits = [];
   // 匹配 var(--el-xxx) 形式
   for (const m of text.matchAll(/var\(\s*(--el-[a-z0-9-]+)\s*\)/g)) {
@@ -144,7 +152,7 @@ for (const file of files) {
 for (const file of files) {
   const rel = relative(ROOT, file).replace(/\\/g, "/");
   if (file === STYLE_CSS) continue;
-  const text = readFileSync(file, "utf8");
+  const text = stripComments(readFileSync(file, "utf8"));
   // 只看「定义」而非「使用」：--el-xxx: 值;
   const hits = [];
   for (const m of text.matchAll(/^\s*(--el-[a-z0-9-]+)\s*:/gm)) {
@@ -160,7 +168,7 @@ for (const file of files) {
 }
 
 // ─────────────────────────────────────────────────────────────
-// ④ 收敛层自身必须存在且导出齐四个组件
+// ④ 收敛层自身必须存在且导出齐五个组件
 //    少了任何一个，业务组件就会开始直接写 el-*，回到 ① 的问题。
 // ─────────────────────────────────────────────────────────────
 const uiIndex = join(UI_DIR, "index.ts");
@@ -175,6 +183,51 @@ if (uiText) {
   for (const name of ["AppButton", "AppNumberInput", "AppSelect", "AppTag", "AppCheckbox"]) {
     if (uiText.includes(name)) ok(`收敛层导出 ${name}`);
     else bad("收敛层导出缺失", `src/components/ui/index.ts 未导出 ${name}`);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// ⑤ 用到的每个 el-* 都必须在 main.ts 全局注册且有样式引入
+//    Vue 对未注册的全局组件不会在构建期报错，只会在运行时渲染成未知元素；
+//    AppNumberInput 曾因漏注册 ElInputNumber 而静默失效，静态校验全绿也发现不了。
+//    扫描范围：收敛层 + App.vue 的根 Provider。
+// ─────────────────────────────────────────────────────────────
+const mainText = readFileSync(join(SRC, "main.ts"), "utf8");
+
+/** el-input-number → ElInputNumber */
+function toPascal(tag) {
+  return tag
+    .split("-")
+    .map((s) => s.charAt(0).toUpperCase() + s.slice(1))
+    .join("");
+}
+
+/** 去掉注释后再收集 el-* 标签，避免注释里的示例被当成真实使用。 */
+function usedEpTags(file) {
+  const text = stripComments(readFileSync(file, "utf8"));
+  return [...new Set([...text.matchAll(/<el-([a-z-]+)[\s/>]/g)].map((m) => `el-${m[1]}`))];
+}
+
+for (const file of files) {
+  const rel = relative(ROOT, file).replace(/\\/g, "/");
+  if (!file.startsWith(UI_DIR) && rel !== "src/App.vue") continue;
+  for (const tag of usedEpTags(file)) {
+    const pascal = toPascal(tag);
+    const stylePath = `components/${tag.replace(/^el-/, "")}/style/css`;
+    if (mainText.includes(`component("${pascal}"`)) ok(`${rel} 使用的 ${tag} 已注册`);
+    else
+      bad(
+        "使用了未注册的 el-* 组件",
+        `${rel} → <${tag}>，但 main.ts 没有 component("${pascal}", ...)\n` +
+          `  Vue 只会在运行时把它渲染成未知元素，构建期不报错`,
+      );
+    if (mainText.includes(stylePath)) ok(`${rel} 使用的 ${tag} 已引入样式`);
+    else
+      bad(
+        "缺少 EP 组件样式引入",
+        `${rel} → <${tag}>，但 main.ts 没有 import "element-plus/es/${stylePath}"\n` +
+          `  组件会带默认外观渲染，脱离本项目的字号/圆角收敛`,
+      );
   }
 }
 

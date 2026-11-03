@@ -1175,12 +1175,6 @@ function exportExcel(): void {
   font-weight: 600;
 }
 
-/* 「销速算法说明」按钮：参数条里的次要动作 */
-.rp-btn-info {
-  height: 34px;
-  align-self: center;
-}
-
 /* 销速算法说明对话框 */
 .rp-modal {
   position: fixed;

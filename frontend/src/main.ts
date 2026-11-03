@@ -10,39 +10,27 @@ import App from "./App.vue";
 import { router } from "./router";
 import { readStoredScale } from "./stores/uiPrefs";
 import "./style.css";
-// Element Plus：按需引入（本项目只用到少量组件，见下方注册清单）。
-// 为什么按需而非全量：全量注册会把整个 EP 打进产物，而本项目实际只用
-// 表格 / 分页 / 标签 / 提示 等少数几个，收益远小于体积代价。
-// 组件清单见 references/element-plus-integration.md（架构手册 §6.2 单一事实来源）。
+// Element Plus：按需引入，只注册 components/ui/ 收敛层实际用到的组件。
+// 为什么按需而非全量：全量注册会把整个 EP 打进产物，而本项目只用到
+// 按钮 / 标签 / 下拉 / 数字输入 / 复选框等少数几个。
+// 收敛边界见 docs/adr/0019-tech-stack-layered-verdict.md 与 components/ui/index.ts。
 import {
-  ElTable,
-  ElTableColumn,
-  ElPagination,
-  ElTag,
-  ElTooltip,
-  ElPopover,
-  ElDatePicker,
   ElButton,
-  ElSelect,
-  ElOption,
-  ElIcon,
   ElCheckbox,
   ElConfigProvider,
+  ElInputNumber,
+  ElOption,
+  ElSelect,
+  ElTag,
 } from "element-plus";
 import zhCn from "element-plus/es/locale/lang/zh-cn";
-import "element-plus/es/components/table/style/css";
-import "element-plus/es/components/table-column/style/css";
-import "element-plus/es/components/pagination/style/css";
-import "element-plus/es/components/tag/style/css";
-import "element-plus/es/components/tooltip/style/css";
-import "element-plus/es/components/popover/style/css";
-import "element-plus/es/components/date-picker/style/css";
 import "element-plus/es/components/button/style/css";
-import "element-plus/es/components/select/style/css";
-import "element-plus/es/components/option/style/css";
-import "element-plus/es/components/icon/style/css";
 import "element-plus/es/components/checkbox/style/css";
 import "element-plus/es/components/config-provider/style/css";
+import "element-plus/es/components/input-number/style/css";
+import "element-plus/es/components/option/style/css";
+import "element-plus/es/components/select/style/css";
+import "element-plus/es/components/tag/style/css";
 
 // 挂载前把缩放系数写进 CSS 变量：首屏即按用户上次选的档位渲染，
 // 避免先按标准档（--font-scale:1）出字、挂载后再跳档导致的闪烁。
@@ -60,20 +48,15 @@ document.documentElement.style.setProperty("--font-scale", String(readStoredScal
 createApp(App)
   .use(createPinia())
   .use(router)
-  // Element Plus 中文语言包（分页/日期选择器的「月」「日」等文案）。
-  // 必须挂在 ElConfigProvider 上，见 App.vue —— 组件是全局注册的，
-  // 但 locale 需要由 ElConfigProvider 提供。
-  .component("ElTable", ElTable)
-  .component("ElTableColumn", ElTableColumn)
-  .component("ElPagination", ElPagination)
-  .component("ElTag", ElTag)
-  .component("ElTooltip", ElTooltip)
-  .component("ElPopover", ElPopover)
-  .component("ElDatePicker", ElDatePicker)
+  // Element Plus 全局注册：与 components/ui/ 的语义包装一一对应。
+  // 漏注册的后果不是构建报错，而是运行时渲染成未知元素（AppNumberInput
+  // 曾因漏注册 ElInputNumber 而静默失效）；verify:ep 现在会把这条断言化。
+  // 中文语言包必须挂在 ElConfigProvider 上，见 App.vue。
   .component("ElButton", ElButton)
-  .component("ElSelect", ElSelect)
-  .component("ElOption", ElOption)
-  .component("ElIcon", ElIcon)
   .component("ElCheckbox", ElCheckbox)
   .component("ElConfigProvider", ElConfigProvider)
+  .component("ElInputNumber", ElInputNumber)
+  .component("ElOption", ElOption)
+  .component("ElSelect", ElSelect)
+  .component("ElTag", ElTag)
   .mount("#app");

@@ -56,21 +56,26 @@ const epSize = computed(() => (props.iconOnly ? "small" : props.size));
 </template>
 
 <style scoped>
-/* 第 2 层 · 组件级覆盖：穿透 EP 的 scoped 内部样式。
-   EP 的按钮内容区有固定高度，字号缩放后文字会被裁切，
-   故这里把高度改为随内容自适应，并让字号跟随全局缩放系数。 */
-.app-btn :deep(.el-button__inner) {
+/* 第 2 层 · 组件级覆盖：EP 的按钮高度写死（32/24px）、小尺寸字号写死 12px，
+   字号缩放后文字会被裁切，故高度随内容增长、字号跟随全局系数。
+   选择器带 .el-button 提高优先级，压过 EP 的 .el-button--small 默认值。 */
+.app-btn.el-button {
+  height: auto;
+  min-height: calc(32px * var(--font-scale));
+  padding-block: calc(6px * var(--font-scale));
   font-size: calc(13px * var(--font-scale));
-  line-height: 1.4;
+  line-height: 1.2;
 }
 
 /* 纯图标按钮：去掉左右内边距，视觉上与图标对齐 */
-.app-btn--icon :deep(.el-button__inner) {
+.app-btn--icon.el-button {
   padding-inline: 0;
 }
 
 /* 表格内联的小按钮：更紧凑的内边距，适配密集表格的行高 */
-.app-btn :deep(.el-button--small) {
-  padding: 5px 9px;
+.app-btn.el-button--small {
+  min-height: calc(24px * var(--font-scale));
+  padding-block: calc(4px * var(--font-scale));
+  font-size: calc(12px * var(--font-scale));
 }
 </style>

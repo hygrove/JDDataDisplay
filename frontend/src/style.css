@@ -181,6 +181,12 @@
   --el-font-size: var(--el-font-size-base);
 }
 
+/* EP 在 .el-tag 上把字号写死为 12px（不引用 --el-font-size-base），
+   用双类名提高权重覆盖，保证标签也跟随 --font-scale。 */
+.el-tag.el-tag {
+  --el-tag-font-size: calc(12px * var(--font-scale));
+}
+
 * {
   margin: 0;
   padding: 0;

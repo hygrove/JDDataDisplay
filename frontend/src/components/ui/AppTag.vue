@@ -57,13 +57,8 @@ const useInkTint = computed(() => props.type === "success" || props.type === "da
 </template>
 
 <style scoped>
-/* 穿透覆盖：EP 标签字号写死，需跟随全局缩放系数 */
-.app-tag :deep(.el-tag__content) {
-  font-size: calc(12px * var(--font-scale));
-  font-weight: 500;
-}
-
-/* 深字浅底：把 EP 的浅色边框去掉，与项目的 -ink / -tint 配套色对齐 */
+/* 标签字号缩放由 style.css 的映射层统一覆盖（--el-tag-font-size 不跟
+   --el-font-size-base 走），这里只处理项目语义色。 */
 .app-tag--ink {
   border-color: transparent;
 }
