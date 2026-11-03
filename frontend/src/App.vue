@@ -2,6 +2,7 @@
 // 整体布局：左侧导航（模块 + 店铺切换），右侧主业务区。
 import { computed, onMounted } from "vue";
 import { useRoute, useRouter } from "vue-router";
+import zhCn from "element-plus/es/locale/lang/zh-cn";
 import { useModuleStore } from "./stores/module";
 import { useUiStore } from "./stores/ui";
 import { fetchManifest } from "./api";
@@ -99,6 +100,10 @@ function onShopClick(shop: string) {
 </script>
 
 <template>
+  <!-- Element Plus 全局配置：提供中文语言包（分页「共 N 条」、日期选择器的
+       「月/日/年」等文案）。组件是全局注册的，但 locale 必须由
+       ElConfigProvider 提供——不包这一层，EP 组件会显示英文。 -->
+  <el-config-provider :locale="zhCn">
   <div class="layout" data-testid="app-shell">
     <aside class="sider" data-testid="app-sider">
       <div class="logo">
@@ -174,6 +179,7 @@ function onShopClick(shop: string) {
 
   <!-- AI 对话悬浮面板（全局组件，右上角气泡入口；与路由无关，任何页面可用） -->
   <ChatPanel />
+  </el-config-provider>
 </template>
 
 <style scoped>

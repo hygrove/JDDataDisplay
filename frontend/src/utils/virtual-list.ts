@@ -1,6 +1,6 @@
 // 虚拟滚动的纯函数：行高取样策略 + 表格模式的占位高度计算。
 //
-// 为什么用 @tanstack/vue-virtual（项目已在 GenericTable.vue 用它）：
+// 为什么用 @tanstack/vue-virtual：
 //   「滚动位置 → 可见行区间」这摊数学交给库。手写一遍容易漏边界——
 //   视口高度未就绪（首帧只渲染一行）、滚过头（tbody 空掉表格塌陷）、
 //   行高变化（字号缩放）……每个都是「用户看到错行数据」级的坑。
@@ -13,6 +13,10 @@
 //   补货清单是 <table>，要保住表头吸顶（position:sticky）、表尾合计行吸底、
 //   以及原生表格的列宽布局。div 网格（绝对定位 + translateY）会把行从表格流里
 //   拿出来，列宽就失去依据了；占位行方案让表格结构原封不动。
+//
+// 注：早期有一个通用表格组件 GenericTable.vue 用 div 网格实现，已于
+// 2026-11-03 移除（零引用死代码，且 div 网格方案与上文的占位行方案冲突）。
+// 现存三张表（模块矩阵 / 库存矩阵 / 补货清单）都是原生 <table> + 占位行方案。
 import { computed, type ComputedRef, type Ref } from "vue";
 import { useVirtualizer } from "@tanstack/vue-virtual";
 

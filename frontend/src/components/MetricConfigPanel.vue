@@ -4,6 +4,7 @@
 // 勾选结果由 stores/metrics.ts 持久化到 localStorage，模块页与单品分析页共用。
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { METRICS, METRIC_GROUPS, DEFAULT_METRIC_KEYS } from "../metrics";
+import { AppButton, AppCheckbox } from "./ui";
 
 /**
  * 组件 Props。
@@ -89,6 +90,23 @@ function toggle(key: string) {
   if (next.has(key)) next.delete(key);
   else next.add(key);
   writeKeys([...next]);
+}
+
+/**
+ * el-checkbox 的 change 适配器：EP 回传勾选后的布尔值，
+ * 而 toggle 需要「被切换的指标 key」。这里把布尔值丢弃，
+ * 只把 key 传下去——切换语义由 toggle 自己按当前状态取反，
+ * 不依赖 EP 传回的值（避免受控/非受控切换时序影响）。
+ *
+ * @param {string} key - 被切换的指标 key。
+ * @returns {void} 无返回值。
+ * @example
+ * ```ts
+ * onCheckboxChange("orders");
+ * ```
+ */
+function onCheckboxChange(key: string) {
+  toggle(key);
 }
 
 /**
@@ -181,10 +199,9 @@ onBeforeUnmount(() => {
               class="mc-item" data-testid="metric-config-item"
               :class="{ on: selected.has(m.key as string) }"
             >
-              <input
-                type="checkbox"
-                :checked="selected.has(m.key as string)"
-                @change="toggle(m.key as string)"
+              <AppCheckbox
+                :model-value="selected.has(m.key as string)"
+                @change="onCheckboxChange(m.key as string)"
               />
               <span>{{ m.title }}</span>
             </label>
@@ -194,7 +211,7 @@ onBeforeUnmount(() => {
 
       <div class="mc-foot">
         <span>勾选后自动保存，刷新 / 换页面依然生效</span>
-        <button class="mc-done" @click="open = false">完成</button>
+        <AppButton type="primary" @click="open = false">完成</AppButton>
       </div>
     </div>
   </div>

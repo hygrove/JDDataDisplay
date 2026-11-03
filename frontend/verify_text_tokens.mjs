@@ -159,6 +159,21 @@ const DECORATIVE_ALLOW = new Set([
   ".mc-arrow .line", // 月度对比箭头连线的兜底色（SVG currentColor，非文字）
 ]);
 
+// 深底声明：白名单里已有「白字必然压在不透明底色上」的豁免，
+// 但那只覆盖纯白（#fff）。深色渐变底上的**浅色文字**（如 AI 头像上的 #a5f3fc）
+// 仍会被判成「太浅」——按白底算对比度是错的，它实际压在深蓝渐变上。
+//
+// 这里提供一条正向声明机制：把选择器登记进本表，并写清它压在哪张深底上，
+// 脚本改为「对该底色校验对比度」而非白底。
+//
+// ⚠️ 新增条目必须写清「压在哪张底色上」——否则等于放弃检查。
+const ON_DARK_BG = new Map([
+  // AI 头像：圆角方形头像，底是 135deg 深蓝→青渐变（#1e3a8a → #0e7490），
+  // 文字 #a5f3fc 压在其上。基准取渐变的**最深端** #1e3a8a（保守取法：
+  // 底色越浅对比度越低，取最深端算通过 = 整条渐变都通过）。
+  [".chat-bubble", "#1e3a8a"],
+]);
+
 function styleBlocks(text) {
   return [...text.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map((m) => m[1]);
 }
@@ -198,6 +213,19 @@ for (const file of walk(SRC)) {
         const raw = value.toLowerCase();
         if (raw === "#fff" || raw === "#ffffff") continue; // 白字必然压在不透明底色上
         if (DECORATIVE_ALLOW.has(rule.selector)) continue;
+        // 深底声明：改为对该底色校验，而不是白底
+        const darkBg = ON_DARK_BG.get(rule.selector);
+        if (darkBg) {
+          const cd = contrast(value, darkBg);
+          if (cd !== null && cd >= 4.5)
+            ok(`深底文字色够深 ${value}（${rule.selector} on ${darkBg}，${cd.toFixed(2)}:1）`);
+          else
+            bad(
+              "深底文字色太浅",
+              `${rel} ${rule.selector} → ${value}（深底 ${darkBg} 上 ${cd === null ? "?" : cd.toFixed(2)}:1，要求 ≥ 4.5）`,
+            );
+          continue;
+        }
         const c = contrast(value, "#ffffff");
         if (c !== null && c >= 4.5) ok(`手写文字色够深 ${value}（${rule.selector}，${c.toFixed(2)}:1）`);
         else

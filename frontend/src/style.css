@@ -84,6 +84,16 @@
   --color-violet: #8b5cf6;
   --color-violet-dark: #6d28d9;
 
+  /* 成功 / 危险的「深字 + 浅底」配套色（2026-10-31 新增）：
+     胶囊式状态提示需要「底色 + 文字色」成对出现，故成对定义，避免组件里各写各的。
+     - success-ink 是正文可读色（绿偏深），success-tint 是同色系最浅底；
+     - danger-ink / danger-tint 同理。
+     ⛔ 组件里引用这两个，⛔ 不要手写 #eaf3de / #fcebeb 之类的裸 hex。 */
+  --color-success-ink: #3b6d11;
+  --color-success-tint: #eaf3de;
+  --color-danger-ink: #a32d2d;
+  --color-danger-tint: #fcebeb;
+
   /* 圆角 */
   --radius-xs: 2px;
   --radius-sm: 4px;
@@ -92,6 +102,83 @@
   --radius-xl: 10px;
   --radius-pill: 999px;
   --radius-circle: 50%;
+}
+
+/* ============================================================
+   Element Plus 主题映射（第三方库主题 → 本项目 Design Tokens）
+   ============================================================
+   为什么需要这一层：
+     Element Plus 自带一整套 --el-* 主题变量。若放任它用默认值，
+     页面会同时存在「本项目令牌」与「EP 默认值」两套颜色源——
+     这正是架构手册 §6.2 反对的「多处各写一份」：改品牌色要改两处，
+     且改漏一处就会出现「按钮是红的、边框还是蓝的」这类漂移。
+     故此处把 EP 的主题变量**单向映射**到本项目令牌，
+     使「改一个 --color-brand 即全站（含 EP 组件）生效」。
+
+   维护约定：
+     - 本项目令牌是唯一事实来源；EP 变量只作为被映射的出口，不得反向定义。
+     - 新增 EP 主题能力时，在此追加映射，组件里仍只引用 EP 语义类名。
+     - 引用方式必须是 var(--color-xxx)：这样 EP 跟随令牌变，且令牌层仍是源头。
+   ============================================================ */
+:root {
+  /* 品牌色：EP 主色 = 本项目品牌红 */
+  --el-color-primary: var(--color-brand);
+  --el-color-primary-light-3: var(--color-brand-border);
+  --el-color-primary-light-5: var(--color-brand-border);
+  --el-color-primary-light-7: var(--color-brand-tint);
+  --el-color-primary-light-8: var(--color-brand-tint-2);
+  --el-color-primary-light-9: var(--color-brand-tint-3);
+  --el-color-primary-dark-2: var(--color-brand-dark);
+
+  /* 文字色阶：EP 的文字语义对齐本项目 slate 梯度 */
+  --el-text-color-primary: var(--color-text);
+  --el-text-color-regular: var(--color-text-2);
+  --el-text-color-secondary: var(--color-text-3);
+  --el-text-color-placeholder: var(--color-text-6);
+  --el-text-color-disabled: var(--color-text-6);
+
+  /* 边框 */
+  --el-border-color: var(--color-border);
+  --el-border-color-light: var(--color-border-2);
+  --el-border-color-lighter: var(--color-border-4);
+  --el-border-color-extra-light: var(--color-border-4);
+  --el-border-color-hover: var(--color-border-3);
+  --el-border-color-darker: var(--color-border-3);
+
+  /* 背景 */
+  --el-bg-color: var(--color-surface);
+  --el-bg-color-page: var(--color-bg);
+  --el-bg-color-overlay: var(--color-surface);
+  --el-fill-color-blank: var(--color-surface);
+  --el-fill-color-light: var(--color-surface-2);
+  --el-fill-color-lighter: var(--color-surface-3);
+  --el-fill-color: var(--color-surface-2);
+
+  /* 功能色 */
+  --el-color-success: var(--color-success);
+  --el-color-warning: var(--color-warn-2);
+  --el-color-danger: var(--color-danger);
+  --el-color-error: var(--color-danger);
+  --el-color-info: var(--color-text-5);
+
+  /* 圆角：EP 圆角统一收敛到本项目梯度 */
+  --el-border-radius-base: var(--radius-md);
+  --el-border-radius-small: var(--radius-sm);
+  --el-border-radius-round: var(--radius-pill);
+  --el-border-radius-circle: var(--radius-circle);
+
+  /* 字号：EP 字号跟随全局缩放系数（手册 §1.1 字号缩放铁律）。
+     系数写在 calc() 里 → 改 --font-scale 即全站（含 EP 组件）同步缩放。 */
+  --el-font-size-extra-small: calc(11px * var(--font-scale));
+  --el-font-size-small: calc(12px * var(--font-scale));
+  --el-font-size-base: calc(13px * var(--font-scale));
+  --el-font-size-medium: calc(14px * var(--font-scale));
+  --el-font-size-large: calc(16px * var(--font-scale));
+  --el-font-size-extra-large: calc(18px * var(--font-scale));
+  --el-font-size-huge: calc(22px * var(--font-scale));
+
+  /* 组件级默认值：让 EP 控件默认继承本项目字号缩放 */
+  --el-font-size: var(--el-font-size-base);
 }
 
 * {

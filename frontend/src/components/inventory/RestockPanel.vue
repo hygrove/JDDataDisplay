@@ -15,6 +15,7 @@
 // （2026-10-28 方案 A，详见 .scratch/restock-view-switch/measure.py 的测量）。
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { fetchRestockList } from "../../api";
+import { AppButton, AppNumberInput, AppSelect } from "../ui";
 import {
   THUMB_SIZE,
   availCellClass,
@@ -115,6 +116,17 @@ watch([days, safetyPct, windowDays], scheduleLoad);
 //    .scratch/restock-view-switch/measure.py 的测量结果。
 
 onMounted(() => void load());
+
+/**
+ * 暴露「立即重拉」给父组件（库存页的手动刷新按钮）。
+ *
+ * @remarks
+ * 父级的刷新按钮会重跑库存 ETL 并重拉数据；补货清单是自己管 `load()` 的子组件，
+ * 没有响应式 prop 变化可依赖，故显式暴露一个方法让父级调用。
+ * 用 `defineExpose` 而非把数据提到父级：补货的参数（天数/安全系数/销速窗口）
+ * 是本组件的局部状态，提到父级只会把简单的事复杂化。
+ */
+defineExpose({ reload: load });
 
 /**
  * 商品图降级档位：0=avif 缩略图 / 1=webp 缩略图 / 2=原图 / 3=占位。
@@ -342,22 +354,26 @@ function exportExcel(): void {
       <div class="rp-params">
         <label class="rp-param" title="补的货要撑到下次采购到货：7 天周期 + 到货延迟缓冲">
           <span>覆盖天数</span>
-          <input v-model.number="days" type="number" min="1" max="60" data-testid="restock-days">
+          <AppNumberInput v-model="days" :min="1" :max="60" data-testid="restock-days" />
         </label>
         <label class="rp-param" title="应对销速波动的缓冲（20% = 多备 2 成）">
           <span>安全系数</span>
-          <input v-model.number="safetyPct" type="number" min="0" max="500" step="5" data-testid="restock-safety">%
+          <AppNumberInput v-model="safetyPct" :min="0" :max="500" :step="5" data-testid="restock-safety" />%
         </label>
         <label class="rp-param" title="用哪个周期的出库量估算日均出库件数（有货天数修正缺货期低估）">
           <span>计算平均出库件数/天 周期选择</span>
-          <select v-model.number="windowDays" data-testid="restock-window">
-            <option :value="7">7 日</option>
-            <option :value="14">14 日</option>
-            <option :value="30">30 日</option>
-          </select>
+          <AppSelect
+            v-model="windowDays"
+            :options="[
+              { value: 7, label: '7 日' },
+              { value: 14, label: '14 日' },
+              { value: 30, label: '30 日' },
+            ]"
+            data-testid="restock-window"
+          />
         </label>
-        <button
-          class="rp-btn rp-btn-info"
+        <AppButton
+          type="info"
           data-testid="restock-algo-btn"
           :disabled="!data"
           title="查看销速算法说明（为什么会出现 ≈）"
@@ -365,7 +381,7 @@ function exportExcel(): void {
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg>
           销速算法说明
-        </button>
+        </AppButton>
         <span class="rp-formula">
           建议量 = 周期内出库件数 ÷ 周期内有货天数 × 期望库存覆盖天数 × (1 + 安全系数) − 现货库存 − 在途库存；
           有货天数不足 {{ algo.credMin }} 天时销速按 {{ algo.refWindow }} 日参照周期收缩估算（销速前标 ≈）
