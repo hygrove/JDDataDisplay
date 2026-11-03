@@ -4,7 +4,8 @@
 
 ## 背景与动机
 
-- **脚手架技能的默认栈与本项目实际栈不一致**：`fullstack-vf` 默认 `SQLModel + Alembic + PostgreSQL` + `Element Plus` + `openapi-typescript`。本项目实际是「手写 SQL + SQLite 单文件」+ 无组件库 + 手工对齐前端类型。两套并存会让 AI 在新项目里左右为难——这正是架构手册 §7.3 警告的「决策残留」。
+- **脚手架技能的默认栈与本项目实际栈不一致**：`fullstack-vf` 默认 `SQLModel + Alembic + PostgreSQL` + `Element Plus` + `openapi-typescript`。本项目改造前的实际栈是「手写 SQL + SQLite 单文件」+ 无组件库 + 手工对齐前端类型。两套并存会让 AI 在新项目里左右为难——这正是架构手册 §7.3 警告的「决策残留」。
+  （背景段记录的是**引入 Element Plus 之前**的快照；本文 §决策·二 已裁决引入 EP 2.14.7 并经收敛层接入。读本文做新项目选型时以 §决策 段为准。）
 - **ORM 与长表设计冲突**：本项目的事实表刻意只存可累加原始列（比率查询时算，见手册 §3.2），摄入路径是「整表重算 + 幂等 upsert」。ORM 在此处的抽象（对象-关系映射、增量更新、级联）不但用不上，反而会让人忍不住把派生比率写进表里——那正是手册标注的统计正确性命根子。
 - **组件库空白有真实代价**：项目手写 72 个 `<button>`、20 个 `<input>/<select>`，其中 `DateRangePicker.vue` 单文件 1033 行（自建日历 + 月份面板 + 年份跳转）。通用交互是组件库的主场，这部分自研属于重复造轮子。
 
@@ -12,7 +13,7 @@
 
 ### 一、分层裁决：脚手架管通用骨架，本项目 Skill 管数据层
 
-`fullstack-vf` 负责**通用骨架**（目录结构、CORS 装配、路由守卫、Pinia setup store、typegen 流水线），本项目的架构 Skill 负责**数据层与铁律**（长表 + 手写 SQL + 幂等 upsert + 三个 🔴 闸门）。
+`fullstack-vf` 负责**通用骨架**（目录结构、CORS 装配、路由守卫、Pinia setup store、typegen 流水线），本项目的架构 Skill 负责**数据层与铁律**（长表 + 手写 SQL + 幂等 upsert），并提供三个闸门脚本——对应手册两处 🔴 致命项（§2.1 静态挂载顺序、§3.2 比率不入库）加一条新增的可观测性下限（裸 print）。
 
 **数据层不用 ORM**：不引入 SQLModel 的 `table=True` 模型、不引入 Alembic 迁移。事实表 schema 变更走「重建 + 幂等 upsert」而非迁移脚本。
 
@@ -56,7 +57,13 @@
 
 - **新增机器闸门**：`frontend/verify_element_plus.mjs`（`npm run verify:ep`）把三条约定变成断言——① 业务组件不直接写 `el-*` 标签；② 业务组件不直引 `--el-*` 变量；③ `--el-*` 的唯一定义处是 `style.css` 映射层。已并入 `npm run verify` 链条。
 - **校验脚本扩容一处**：`verify_text_tokens.mjs` 新增「深底声明」机制（`ON_DARK_BG` 表）。此前 AI 头像上的 `#a5f3fc`（压在深蓝渐变底上）被按白底算对比度而误判为「太浅」——这是**改动前就存在的既有问题**，本次顺带修复：新增按真实底色校验的路径，而非放宽阈值。
-- **产物体积**：`index.css` 从 5KB 增至 144KB（EP 必要样式，按需引入已生效——未使用的 carousel/dialog/upload/tree 等样式均未进入产物）。`index.js` 530KB → 534KB，gzip 后增幅约 2KB。
-- **新增依赖**：`element-plus@2.14.7`、`@element-plus/icons-vue@2.3.2`。
-- **未决**：EP 的 `ElTable` / `ElPagination` / `ElTag` / `ElTooltip` / `ElPopover` / `ElDatePicker` 已注册但暂无业务使用点——为后续迁移预留。若长期不用应从 `main.ts` 移除注册与样式引入，避免「注册了但没人用」的僵尸依赖。
+- **产物体积**：首次引入时 `index.css` 从 5KB 增至 144KB（EP 必要样式）。2026-11-03 清理掉未使用组件的注册与样式引入后，`index.css` 为 91.9KB（gzip 13.6KB）。EP 按需引入已生效——未使用的 carousel/dialog/upload/tree 等样式均未进入产物。
+- **新增依赖**：`element-plus@2.14.7`。`@element-plus/icons-vue@2.3.2` 是 EP 自身的传递依赖，项目未直接使用。
+- **注册清单已收敛**：只注册 `ElButton` / `ElCheckbox` / `ElConfigProvider` / `ElInputNumber` / `ElOption` / `ElSelect` / `ElTag`，与 `components/ui/` 一一对应。原先为「后续迁移预留」的 `ElTable` / `ElPagination` / `ElTooltip` / `ElPopover` / `ElDatePicker` / `ElIcon` 已移除——按本 ADR 的结论，核心表格与日期选择器不迁移，留着只会成为僵尸依赖。
 - **验证方式**：`npm run build`（`vue-tsc -b` 零类型错误）+ `npm run verify`（18860 + 113 + 84 + 99 + 31 + 36 + 14 项断言全绿）。既有断言一条未挂，说明 EP 替换未破坏任何既有行为。
+
+## 维护修订（2026-11-03）
+
+- **修复漏注册**：`AppNumberInput` 使用 `<el-input-number>`，但 `main.ts` 漏注册 `ElInputNumber`、也漏引其样式。Vue 不会在构建期报错，运行时只渲染成未知元素——已补注册与样式。
+- **修复失效覆盖**：`AppButton` / `AppTag` 的样式覆盖引用了 EP 2.14 不存在的类名（`.el-button__inner` / `.el-tag__content`），字号缩放实际未生效。改为按 EP 真实类名与变量覆盖；`--el-tag-font-size` 统一在 `style.css` 映射层处理。
+- **闸门扩容**：`verify:ep` 新增第 ⑤ 条——收敛层与 `App.vue` 用到的每个 `el-*` 必须在 `main.ts` 注册且有样式引入。所有检查先剥离注释，避免注释里的示例误报。
