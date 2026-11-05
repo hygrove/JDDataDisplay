@@ -26,7 +26,7 @@
 
 ### 二、前端组件库：Element Plus，但必须经收敛层
 
-引入 Element Plus 2.14.7，但**业务组件不直接写 `el-*`**，一律经 `frontend/src/components/ui/` 的语义包装组件（`AppButton` / `AppNumberInput` / `AppSelect` / `AppTag` / `AppCheckbox`）。
+引入 Element Plus 2.14.7，但**业务组件不直接写 `el-*`**，一律经 `frontend/src/components/ui/` 的语义包装组件（`AppButton` / `AppNumberInput` / `AppSelect` / `AppTag` / `AppCheckbox` / `AppDialog`）。
 
 **理由**：
 - Element Plus 自带 `--el-*` 主题变量。若放任它用默认值，页面会同时存在「本项目令牌」与「EP 默认值」两套颜色源——正是手册 §6.2 反对的「多处各写一份」。故在 `style.css` 建立**单向映射层**：`--el-color-primary: var(--color-brand)`，使「改一个 `--color-brand` 即全站（含 EP 组件）生效」。
@@ -38,6 +38,8 @@
 - `DateRangePicker.vue` 的月份网格视图 + 「跳到最新/最早数据年」快捷跳转，`el-date-picker` 的 `daterange` 覆盖不了。**暂不迁移**；后续若月份面板退化为纯日期区间，可换用 `el-date-picker` + `el-popover`。
 - `MonthCompareTable.vue` 是 CSS Grid（非 table）布局，EP 无对应组件。**不迁移**。
 - `MetricIcon.vue`（手写 SVG 图标）/ `CountUp.vue`（滚动计数）是业务专属，EP 无对应。**不迁移**。
+
+**自建弹层已收敛到 `el-dialog`**：`SettingsControl.vue`（设置面板）与 `RestockPanel.vue`（销速算法说明）原先各自实现 `Teleport` + 遮罩 + Esc 监听 + 关闭按钮。现统一经 `AppDialog` 包装 `el-dialog`，由 EP 提供焦点陷阱、滚动锁、遮罩关闭与 `destroy-on-close`；两处手写壳层样式（`.set-overlay` / `.rp-modal-box` 等）随之删除。业务侧保留原有 `data-testid`，既有端到端断言不受影响。
 
 ### 三、删掉 `GenericTable.vue`（零引用死代码）
 
@@ -55,15 +57,18 @@
 
 ## Consequences
 
-- **新增机器闸门**：`frontend/verify_element_plus.mjs`（`npm run verify:ep`）把三条约定变成断言——① 业务组件不直接写 `el-*` 标签；② 业务组件不直引 `--el-*` 变量；③ `--el-*` 的唯一定义处是 `style.css` 映射层。已并入 `npm run verify` 链条。
+- **新增机器闸门**：`frontend/verify_element_plus.mjs`（`npm run verify:ep`）把约定变成断言——① 业务组件不直接写 `el-*` 标签；② 业务组件不直引 `--el-*` 变量；③ `--el-*` 的唯一定义处是 `style.css` 映射层；④ 收敛层必须导出全部语义组件；⑤ 收敛层与 `App.vue` 用到的 `el-*` 必须已注册且有样式引入。已并入 `npm run verify` 链条。
 - **校验脚本扩容一处**：`verify_text_tokens.mjs` 新增「深底声明」机制（`ON_DARK_BG` 表）。此前 AI 头像上的 `#a5f3fc`（压在深蓝渐变底上）被按白底算对比度而误判为「太浅」——这是**改动前就存在的既有问题**，本次顺带修复：新增按真实底色校验的路径，而非放宽阈值。
-- **产物体积**：首次引入时 `index.css` 从 5KB 增至 144KB（EP 必要样式）。2026-11-03 清理掉未使用组件的注册与样式引入后，`index.css` 为 91.9KB（gzip 13.6KB）。EP 按需引入已生效——未使用的 carousel/dialog/upload/tree 等样式均未进入产物。
+- **产物体积**：首次引入时 `index.css` 从 5KB 增至 144KB（EP 必要样式）。2026-11-03 清理未使用组件的注册与样式、并迁入 `el-dialog` 后，`index.css` 为 97.07KB（gzip 14.66KB）。EP 按需引入已生效——未使用的 carousel/upload/tree 等样式均未进入产物。
 - **新增依赖**：`element-plus@2.14.7`。`@element-plus/icons-vue@2.3.2` 是 EP 自身的传递依赖，项目未直接使用。
-- **注册清单已收敛**：只注册 `ElButton` / `ElCheckbox` / `ElConfigProvider` / `ElInputNumber` / `ElOption` / `ElSelect` / `ElTag`，与 `components/ui/` 一一对应。原先为「后续迁移预留」的 `ElTable` / `ElPagination` / `ElTooltip` / `ElPopover` / `ElDatePicker` / `ElIcon` 已移除——按本 ADR 的结论，核心表格与日期选择器不迁移，留着只会成为僵尸依赖。
-- **验证方式**：`npm run build`（`vue-tsc -b` 零类型错误）+ `npm run verify`（18860 + 113 + 84 + 99 + 31 + 36 + 14 项断言全绿）。既有断言一条未挂，说明 EP 替换未破坏任何既有行为。
+- **注册清单已收敛**：只注册 `ElButton` / `ElCheckbox` / `ElConfigProvider` / `ElDialog` / `ElInputNumber` / `ElOption` / `ElSelect` / `ElTag`，与 `components/ui/` 一一对应。原先为「后续迁移预留」的 `ElTable` / `ElPagination` / `ElTooltip` / `ElPopover` / `ElDatePicker` / `ElIcon` 已移除——按本 ADR 的结论，核心表格与日期选择器不迁移，留着只会成为僵尸依赖。
+- **验证方式**：`npm run build`（`vue-tsc -b` 零类型错误）+ `npm run verify`（10 + 18853 + 138 + 84 + 99 + 31 + 36 + 14 = 19265 项断言全绿）。既有断言一条未挂，说明 EP 替换未破坏任何既有行为。
 
 ## 维护修订（2026-11-03）
 
 - **修复漏注册**：`AppNumberInput` 使用 `<el-input-number>`，但 `main.ts` 漏注册 `ElInputNumber`、也漏引其样式。Vue 不会在构建期报错，运行时只渲染成未知元素——已补注册与样式。
 - **修复失效覆盖**：`AppButton` / `AppTag` 的样式覆盖引用了 EP 2.14 不存在的类名（`.el-button__inner` / `.el-tag__content`），字号缩放实际未生效。改为按 EP 真实类名与变量覆盖；`--el-tag-font-size` 统一在 `style.css` 映射层处理。
 - **闸门扩容**：`verify:ep` 新增第 ⑤ 条——收敛层与 `App.vue` 用到的每个 `el-*` 必须在 `main.ts` 注册且有样式引入。所有检查先剥离注释，避免注释里的示例误报。
+- **修复令牌映射被 EP 覆盖（关键）**：`style.css` 的 `--el-*` 映射原写在 `:root`，与 EP `base.css` 的 `:root` 同特异性；EP 样式后加载，导致映射整体失效（实测 primary 仍是 EP 默认 `#409eff`、font-base 仍是 `14px`、overlay 仍是 `#00000080`）。改为 `:root:root`（特异性 0,2,0）后，实测 primary 恢复 `#e1251b`、font-base 为 `calc(13px * var(--font-scale))`、overlay 为项目令牌。**这是映射层能否生效的前提，不是可选优化**。
+- **弹层迁移到 `AppDialog`**：`SettingsControl.vue` 与 `RestockPanel.vue` 的自建遮罩层改为经 `AppDialog` 包装 `el-dialog`。因为 `el-dialog` 被 teleport 到 `body`，`AppDialog` 内对其外壳（`.el-dialog` / `__header` / `__body`）的样式必须用 `:global()` 才能命中；直接写在 scoped 样式里会静默失效。此前两处 modal 的 Esc 监听、滚动锁、遮罩点击关闭均由 EP 接管，业务组件删除对应手写逻辑。
+- **已知遗留**：`RestockPanel.vue` 中 `.rp-param input, .rp-param select` 的尺寸规则在参数区改用 `AppNumberInput` / `AppSelect` 后不再命中，参数区高度由 EP 组件自身尺寸决定。若后续需要精确复刻原 16px/34px 参数栏，应在 `AppNumberInput` / `AppSelect` 上加尺寸变体，而不是回写裸选择器。

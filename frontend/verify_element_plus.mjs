@@ -118,7 +118,7 @@ for (const file of files) {
     bad(
       "业务组件直接用了 el-* 标签",
       `${rel} → ${hits.join(", ")}\n` +
-        `  请改用 components/ui 的语义包装组件（AppButton / AppNumberInput / AppSelect / AppTag / AppCheckbox）`,
+        `  请改用 components/ui 的语义包装组件（AppButton / AppNumberInput / AppSelect / AppTag / AppCheckbox / AppDialog）`,
     );
 }
 
@@ -168,7 +168,7 @@ for (const file of files) {
 }
 
 // ─────────────────────────────────────────────────────────────
-// ④ 收敛层自身必须存在且导出齐五个组件
+// ④ 收敛层自身必须存在且导出齐六个组件
 //    少了任何一个，业务组件就会开始直接写 el-*，回到 ① 的问题。
 // ─────────────────────────────────────────────────────────────
 const uiIndex = join(UI_DIR, "index.ts");
@@ -180,7 +180,7 @@ try {
 }
 
 if (uiText) {
-  for (const name of ["AppButton", "AppNumberInput", "AppSelect", "AppTag", "AppCheckbox"]) {
+  for (const name of ["AppButton", "AppNumberInput", "AppSelect", "AppTag", "AppCheckbox", "AppDialog"]) {
     if (uiText.includes(name)) ok(`收敛层导出 ${name}`);
     else bad("收敛层导出缺失", `src/components/ui/index.ts 未导出 ${name}`);
   }

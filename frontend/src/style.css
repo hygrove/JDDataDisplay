@@ -119,8 +119,13 @@
      - 本项目令牌是唯一事实来源；EP 变量只作为被映射的出口，不得反向定义。
      - 新增 EP 主题能力时，在此追加映射，组件里仍只引用 EP 语义类名。
      - 引用方式必须是 var(--color-xxx)：这样 EP 跟随令牌变，且令牌层仍是源头。
+
+   ⚠️ 选择器必须写成 :root:root（双写提高权重）：
+     EP 的 base.css 也在 :root 上定义同名变量，且随按需样式在 style.css 之后加载；
+     权重相同时后加载者胜出，映射会整层失效（实测主色仍是 EP 蓝 #409eff）。
+     双写 :root 后（0,2,0）无论加载顺序如何，本项目映射都稳定压过 EP 默认值。
    ============================================================ */
-:root {
+:root:root {
   /* 品牌色：EP 主色 = 本项目品牌红 */
   --el-color-primary: var(--color-brand);
   --el-color-primary-light-3: var(--color-brand-border);
@@ -154,6 +159,9 @@
   --el-fill-color-lighter: var(--color-surface-3);
   --el-fill-color: var(--color-surface-2);
 
+  /* 遮罩：沿用项目原有的深蓝薄遮罩（AppDialog 的全局外观） */
+  --el-overlay-color-lighter: rgba(15, 23, 42, 0.32);
+
   /* 功能色 */
   --el-color-success: var(--color-success);
   --el-color-warning: var(--color-warn-2);
@@ -185,6 +193,12 @@
    用双类名提高权重覆盖，保证标签也跟随 --font-scale。 */
 .el-tag.el-tag {
   --el-tag-font-size: calc(12px * var(--font-scale));
+}
+
+/* AppDialog 遮罩的轻微模糊（遮罩被 teleport 到 body，组件 scoped 样式够不到） */
+.app-dialog-overlay {
+  backdrop-filter: blur(1.5px);
+  -webkit-backdrop-filter: blur(1.5px);
 }
 
 * {

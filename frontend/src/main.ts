@@ -18,6 +18,7 @@ import {
   ElButton,
   ElCheckbox,
   ElConfigProvider,
+  ElDialog,
   ElInputNumber,
   ElOption,
   ElSelect,
@@ -27,6 +28,7 @@ import zhCn from "element-plus/es/locale/lang/zh-cn";
 import "element-plus/es/components/button/style/css";
 import "element-plus/es/components/checkbox/style/css";
 import "element-plus/es/components/config-provider/style/css";
+import "element-plus/es/components/dialog/style/css";
 import "element-plus/es/components/input-number/style/css";
 import "element-plus/es/components/option/style/css";
 import "element-plus/es/components/select/style/css";
@@ -55,6 +57,7 @@ createApp(App)
   .component("ElButton", ElButton)
   .component("ElCheckbox", ElCheckbox)
   .component("ElConfigProvider", ElConfigProvider)
+  .component("ElDialog", ElDialog)
   .component("ElInputNumber", ElInputNumber)
   .component("ElOption", ElOption)
   .component("ElSelect", ElSelect)

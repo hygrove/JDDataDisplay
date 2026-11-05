@@ -58,3 +58,11 @@ export { default as AppCheckbox } from "./AppCheckbox.vue";
  * 涨跌标签请继续用项目自己的 .up/.down 类。
  */
 export { default as AppTag } from "./AppTag.vue";
+
+/**
+ * 应用对话框：包住 el-dialog，统一标题栏、关闭按钮、内边距与字号缩放。
+ *
+ * 为什么自建遮罩要换成它：焦点陷阱、Esc 关闭、滚动锁、层级管理
+ * 都是无障碍细节，自建版本容易漏；EP 已做对。
+ */
+export { default as AppDialog } from "./AppDialog.vue";
