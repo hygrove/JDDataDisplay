@@ -4,6 +4,7 @@
 **范围**：`ResourceData/店铺日常运营数据/` 的**月报 JSON** → `backend/app/data/app.db` 新增 `ops_*` 表。
 **不碰**：`daily_detail`（单品长表）、`inventory_*`（库存快照）、现有前端视图与全局样式。
 **2026-11-06 补记**：新增只读 HTTP 接口需动 `main.py` 一行 `include_router`（见文末补记节），这是本 ADR 范围的显式扩展。
+**编号说明（2026-11-06 合并时补记）**：`feature/element-plus-unification` 分支另有一篇同号 ADR（技术栈分层裁决），因本 ADR 先合入 `main` 而保留 `0019`；对方已顺延为 `0020-tech-stack-layered-verdict.md`。
 
 ## 背景与动机
 

@@ -13,8 +13,9 @@
 // 关键词的防抖在父级做，面板拿到的已是提交后的值）。
 // 视图切换（城市 ⇄ SKU）**不重拉**：两种装配一次取全，本地切表渲染
 // （2026-10-28 方案 A，详见 .scratch/restock-view-switch/measure.py 的测量）。
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { fetchRestockList } from "../../api";
+import { AppButton, AppDialog, AppNumberInput, AppSelect } from "../ui";
 import {
   THUMB_SIZE,
   availCellClass,
@@ -117,6 +118,17 @@ watch([days, safetyPct, windowDays], scheduleLoad);
 onMounted(() => void load());
 
 /**
+ * 暴露「立即重拉」给父组件（库存页的手动刷新按钮）。
+ *
+ * @remarks
+ * 父级的刷新按钮会重跑库存 ETL 并重拉数据；补货清单是自己管 `load()` 的子组件，
+ * 没有响应式 prop 变化可依赖，故显式暴露一个方法让父级调用。
+ * 用 `defineExpose` 而非把数据提到父级：补货的参数（天数/安全系数/销速窗口）
+ * 是本组件的局部状态，提到父级只会把简单的事复杂化。
+ */
+defineExpose({ reload: load });
+
+/**
  * 商品图降级档位：0=avif 缩略图 / 1=webp 缩略图 / 2=原图 / 3=占位。
  *
  * @remarks
@@ -182,14 +194,6 @@ function ex(key: string): string {
   const v = algo.value.ex[key];
   return v === undefined ? "—" : fmt(v);
 }
-
-/** Esc 关闭对话框。 */
-function onKeydown(e: KeyboardEvent): void {
-  if (e.key === "Escape") showAlgo.value = false;
-}
-
-onMounted(() => window.addEventListener("keydown", onKeydown));
-onUnmounted(() => window.removeEventListener("keydown", onKeydown));
 
 /**
  * 当前视图下是否没有任何行（空态提示）。
@@ -342,22 +346,26 @@ function exportExcel(): void {
       <div class="rp-params">
         <label class="rp-param" title="补的货要撑到下次采购到货：7 天周期 + 到货延迟缓冲">
           <span>覆盖天数</span>
-          <input v-model.number="days" type="number" min="1" max="60" data-testid="restock-days">
+          <AppNumberInput v-model="days" :min="1" :max="60" data-testid="restock-days" />
         </label>
         <label class="rp-param" title="应对销速波动的缓冲（20% = 多备 2 成）">
           <span>安全系数</span>
-          <input v-model.number="safetyPct" type="number" min="0" max="500" step="5" data-testid="restock-safety">%
+          <AppNumberInput v-model="safetyPct" :min="0" :max="500" :step="5" data-testid="restock-safety" />%
         </label>
         <label class="rp-param" title="用哪个周期的出库量估算日均出库件数（有货天数修正缺货期低估）">
           <span>计算平均出库件数/天 周期选择</span>
-          <select v-model.number="windowDays" data-testid="restock-window">
-            <option :value="7">7 日</option>
-            <option :value="14">14 日</option>
-            <option :value="30">30 日</option>
-          </select>
+          <AppSelect
+            v-model="windowDays"
+            :options="[
+              { value: 7, label: '7 日' },
+              { value: 14, label: '14 日' },
+              { value: 30, label: '30 日' },
+            ]"
+            data-testid="restock-window"
+          />
         </label>
-        <button
-          class="rp-btn rp-btn-info"
+        <AppButton
+          type="info"
           data-testid="restock-algo-btn"
           :disabled="!data"
           title="查看销速算法说明（为什么会出现 ≈）"
@@ -365,7 +373,7 @@ function exportExcel(): void {
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg>
           销速算法说明
-        </button>
+        </AppButton>
         <span class="rp-formula">
           建议量 = 周期内出库件数 ÷ 周期内有货天数 × 期望库存覆盖天数 × (1 + 安全系数) − 现货库存 − 在途库存；
           有货天数不足 {{ algo.credMin }} 天时销速按 {{ algo.refWindow }} 日参照周期收缩估算（销速前标 ≈）
@@ -627,25 +635,14 @@ function exportExcel(): void {
     </div>
 
     <!-- 销速算法说明对话框：讲清 ≈ 是怎么算出来的（数字全由后端真实函数算出） -->
-    <div
-      v-if="showAlgo && data"
-      class="rp-modal"
+    <AppDialog
+      v-model="showAlgo"
+      title="销速算法说明（为什么会出现 ≈）"
+      :width="780"
       data-testid="restock-algo-modal"
-      @click.self="showAlgo = false"
+      close-testid="restock-algo-close"
     >
-      <div class="rp-modal-box" role="dialog" aria-modal="true" aria-label="销速算法说明">
-        <div class="rp-modal-head">
-          <h3>销速算法说明（为什么会出现 ≈）</h3>
-          <button
-            class="rp-modal-close"
-            data-testid="restock-algo-close"
-            aria-label="关闭"
-            @click="showAlgo = false"
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
-          </button>
-        </div>
-        <div class="rp-modal-body">
+      <div class="rp-modal-body">
           <section class="rp-algo-sec">
             <h4>为什么不能直接「出库 ÷ 有货天数」</h4>
             <p>
@@ -748,9 +745,8 @@ function exportExcel(): void {
             当前参数：可信门槛 {{ algo.credMin }} 天 · 突发封顶 {{ algo.burstCap }} 倍 ·
             参照窗 {{ algo.refWindow }} 日 · 销速窗口 {{ algo.windowDays }} 日
           </section>
-        </div>
       </div>
-    </div>
+    </AppDialog>
   </div>
 </template>
 
@@ -1159,67 +1155,8 @@ function exportExcel(): void {
   font-weight: 600;
 }
 
-/* 「销速算法说明」按钮：参数条里的次要动作 */
-.rp-btn-info {
-  height: 34px;
-  align-self: center;
-}
-
-/* 销速算法说明对话框 */
-.rp-modal {
-  position: fixed;
-  inset: 0;
-  background: rgba(15, 23, 42, 0.45);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
-  padding: 24px;
-}
-.rp-modal-box {
-  background: var(--color-surface);
-  border: 1px solid var(--color-border-2);
-  border-radius: var(--radius-lg, 8px);
-  box-shadow: 0 18px 48px rgba(15, 23, 42, 0.28);
-  width: 100%;
-  max-width: 780px;
-  max-height: 84vh;
-  display: flex;
-  flex-direction: column;
-}
-.rp-modal-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 13px 18px;
-  border-bottom: 1px solid var(--color-divider);
-}
-.rp-modal-head h3 {
-  margin: 0;
-  font-size: calc(15px * var(--font-scale));
-  color: var(--color-text-strong);
-}
-.rp-modal-close {
-  border: 0;
-  background: transparent;
-  padding: 4px;
-  cursor: pointer;
-  color: var(--color-text-3);
-  border-radius: 6px;
-  line-height: 0;
-}
-.rp-modal-close:hover {
-  color: var(--color-text-strong);
-  background: var(--color-surface-2);
-}
-.rp-modal-close svg {
-  width: 17px;
-  height: 17px;
-}
+/* 销速算法说明对话框：外壳（遮罩/标题/关闭/滚动）由 AppDialog 提供 */
 .rp-modal-body {
-  padding: 14px 18px 18px;
-  overflow: auto;
   font-size: calc(13px * var(--font-scale));
   line-height: 1.75;
   color: var(--color-text-2);

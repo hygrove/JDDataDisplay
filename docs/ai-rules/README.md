@@ -6,6 +6,16 @@
 
 ---
 
+## 总纲 · 验证可信度缺口原则（元规则，覆盖 §0–§7）
+
+- **约束**：任何改动**不允许靠人工禁令兜底安全**。安全必须用**可重复、自动、且无法被"构建通过 / 绿灯"伪装**的客观检查来证明。本手册里的禁止项（§1–§6）是**过渡性止血**，不是终点。
+- **为什么**：本项目反复出现的险情——构建过 ≠ 真的能用、半成品被定时任务扫进生产、长表被静默删、红线被 grep 误判——共性是**反馈环断裂 + 验证靠人肉**。靠"出一次险情加一条禁令"补偿，禁令会无限膨胀直到撑爆上下文（本文件因此被迫从主文件拆出）；而真正的病灶是**系统不给可信、快速、真实的反馈**，于是用规则手册替代自动化检查。
+- **方向（而非清单）**：当某条禁令能被自动化检查取代时，**优先修检查、再删禁令**。AI 助理的安全价值在于"帮把验证做成系统能力"（自动导入冒烟 / 真浏览器断言 / 幂等管道 / pre-commit / CI），而非"替人记住清单"。
+- **怎么验证这条原则本身**：每次新增禁令时自问——"它能不能变成一道跑得起来的检查？"能 → 排期做成脚本（归入附录 B），做成了就从手册正文降级为引用。手册只保留**暂时无法自动化**的约束。
+- **落地工具**：`docs/ai-rules/verification-gaps.md`——逐条把 §1–§6 的禁令标成「已覆盖 / 部分覆盖 / 仅手册」并给出「可建 / 已自动化」的迁移路线，是总纲的操作化清单。
+
+---
+
 ## 0. 进项目第一件事（必做清单）
 
 1. 读 `AGENTS.md`（已被 IDE 注入）→ 本文件 → 相关 ADR。
@@ -161,14 +171,42 @@
 
 ## 附录 B：验证脚本清单（改对应模块后必跑）
 
-- **organize 全套**：`backend/jobs/verify_organize*.py`（`make-fixtures`/`snapshot`/`diff`/`selftest`/`env`/`accept <源根>` 等子命令；`accept ResourceData` 一键闸门）。
-- **库存快照淘汰**：`backend/jobs/verify_inventory_retention.py`（`python -m backend.jobs.verify_inventory_retention`）——8 组场景：保留集判定（含落后店降级）、损坏文件不删、同店同日多文件不删、健康检查门控、执行后三集合相等、幂等、**中断自愈**（④-1/④-2 后崩溃重跑收敛）、dry-run 零副作用。全程在临时目录造 fixture，⛔ 不碰生产数据。
-- **前端**：`frontend/verify_month_compare.mjs`、`frontend/verify_agg.mjs`（`npm run verify:month` / `verify:agg`，需 8000 在跑）、`frontend/verify_text_tokens.mjs`（`npm run verify:tokens`，纯静态，**不需 8000**；守最浅文字可读性）。
-- **后端自愈**：改完 `python -c "from backend.app.main import app"`。
-- ⚠️ `verify_all.py` 与 `verify_promo_*` 已在 `78eb10f` 删除，**不要引用**。
+> ⚠️ 本附录是「有哪些检查可跑」的索引；**每条禁令是否已被自动化覆盖，见 `docs/ai-rules/verification-gaps.md`（禁令 → 可自动化检查映射表）**。两处任一与代码不符，以代码为准并顺手修正（手册也会漂移，见总纲）。
 
+### 后端 · organize 套件（`backend/jobs/verify_organize*.py`，均为独立 `__main__` 入口）
+- `verify_organize.py`（工单 01 底座）：子命令 `make-fixtures` / `snapshot` / `diff` / `selftest` / `env`——逐格比对 + 自证有牙齿。⚠️ **已无 `accept` 子命令**（原验收闸门已独立成 `verify_organize_acceptance.py`）。
+- `verify_organize_decision.py`（工单 02）：判定层与真实规则 / 真实摄入结果对得上（5 项证据）。
+- `verify_organize_execute.py`（工单 03）：执行层（真搬文件 / write-ahead 清单 / 幂等 / 可回滚 / 逐格不变）。
+- `verify_organize_quarantine.py`（工单 04）：隔离 + 哨兵（被隔离文件独有 key → ERROR 告警）。
+- `verify_organize_report.py`（工单 05）：五段报告 + 断档检测 + 60 天回收站清理。
+- `verify_organize_acceptance.py`（工单 06，即原 `accept` 闸门）：全量端到端 A/B 双库逐格不变 + `processed_file` 核对 + 汇总报告。
+- `verify_organize_rollback.py`（工单 07）：隔离文件回滚通道（`rollback()` 同时遍历归档与隔离清单）。
 
-> ⚠️ **库存模块的测试需要真实数据**：`backend/tests/test_inventory_api.py` 读 `config.DB_PATH` 指向的库，库为空时 34 个用例会大面积失败（`no such table: inventory_daily`）——那**不是**代码回归，是环境缺数据。跑之前先设 `JD_DB_PATH` 指向有数据的库。
+### 后端 · 库存快照淘汰
+- `backend/jobs/verify_inventory_retention.py`（`python -m backend.jobs.verify_inventory_retention`）——**9 类**场景：保留集判定（含落后店降级）、损坏文件不删、同店同日多文件不删、健康检查门控、执行后三集合相等、幂等、**中断自愈**（④-1/④-2 后崩溃重跑收敛）、dry-run 零副作用、VACUUM 回收磁盘。全程临时目录造 fixture，⛔ 不碰生产数据。
+
+### 后端 · 单元/纯函数测试（stdlib `unittest`，⛔ 无 pytest）
+- `backend/tests/test_alert_rules.py`：预警三档 / 可信销速三级估计 / 补货量。
+- `backend/tests/test_erp_map.py`：ERP 映射。
+- `backend/tests/test_inventory_api.py`：库存 API。**⚠️ 需真实 DB**，空库时大面积失败（`no such table: inventory_daily`）——那**不是**回归，是缺数据；跑前设 `JD_DB_PATH` 指向有数据的库。
+- 跑法（仓库根）：`python -m unittest backend.tests.test_alert_rules -v`（其余类推）。
+
+### 后端 · 自愈冒烟（非文件，是条命令）
+- 改完必跑：`python -c "from backend.app.main import app"`（真导入，抓 `NameError` 类导入期错误；`py_compile` 查不出）。
+
+### 前端 · 纯函数断言（`.mjs`，已并入 `npm run verify`）
+- `npm run verify:tokens` → `verify_text_tokens.mjs`：最浅文字可读性 / 令牌单调性 / 禁手写浅灰（纯静态，**不需 8000**）。
+- `npm run verify:month` → `verify_month_compare.mjs`：月份对比口径（需 8000 在跑）。
+- `npm run verify:agg` → `verify_agg.mjs`：聚合断言（需 8000 在跑）。
+- `npm run verify:inventory` → `verify_inventory_display.mjs`：库存/补货展示判定（矩阵表与补货工作台共用实现）。
+- `npm run verify:virtual` → `verify_virtual_list.mjs`：虚拟滚动行高映射。
+- `npm run verify:font` → `verify_font.mjs`：字号缩放令牌化（防回退）。
+
+### 前端 · 真浏览器视觉回归（⛔ 未并入 `npm run verify`）
+- `verify_visual_font.mjs`：字号缩放全链路 + localStorage 持久化。需 `npm run dev` 在 5173 跑 + `npm install --no-save playwright`（系统 Edge channel），再 `node verify_visual_font.mjs`；截图落 `.scratch/font-scale/`。
+
+### 已删除（勿引用）
+- `verify_all.py`、`verify_promo_*`：`78eb10f` 删除。
 
 ## 附录 C：不要做的（历史撤销项）
 

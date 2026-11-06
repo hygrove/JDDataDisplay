@@ -27,6 +27,7 @@ from ..jobs import config
 from .api import router as api_router
 from .chat_api import router as chat_router
 from .inventory_api import router as inventory_router
+from .inventory_refresh import router as inventory_refresh_router
 from .ops_daily_api import router as ops_daily_router
 
 # FRONTEND_DIST：前端 npm run build 的产物目录，生产模式下页面全部由这里提供
@@ -51,6 +52,9 @@ app.add_middleware(GZipMiddleware, minimum_size=1024)
 app.include_router(api_router)
 # 库存管理 API（/api/inventory/...）
 app.include_router(inventory_router)
+# 库存手动刷新（/api/inventory/refresh）：**写库**端点，与上面的纯查询路由分开注册，
+# 便于一眼看清「哪些库存端点会写库」。它与 /api/refresh 的区别：只跑库存链路，不碰 POP 单品数据。
+app.include_router(inventory_refresh_router)
 # AI 对话（/api/chat/...：config / completions SSE / 报告导出）。
 # 与业务路由平行注册；chat 链路对数据库只读（spec：.scratch/ai-chat/spec.md）。
 app.include_router(chat_router)

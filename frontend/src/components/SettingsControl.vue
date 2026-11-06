@@ -5,17 +5,15 @@
 // 齿轮**不再挂在 logo 行内**——挂在 logo 旁会挤压「JD 数据平台」文字
 // （logo 是 flex 行，齿轮占位后文字被压缩）。现改为侧栏底部独立一行，
 // 按钮形态为「⚙ 设置」整行可点，语义更直白、也留出了整行扩展位。
-// 点击弹出设置对话框（Teleport 到 body），字号缩放是其中第一个设置分组。
+// 点击弹出设置对话框（AppDialog → el-dialog，Teleport 到 body），
+// 字号缩放是其中第一个设置分组。
 // 未来新增设置项（主题色等）时：在 set-body 里追加 .set-group 分组即可，
 // 入口与对话框框架不变。
 //
-// 关闭方式：右上角 ×、点击遮罩、Esc。
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
-import {
-  useUiPrefsStore,
-  FONT_SCALES,
-  FONT_SCALE_LABELS,
-} from "../stores/uiPrefs";
+// 关闭方式：右上角 ×、点击遮罩、Esc（焦点陷阱/滚动锁由 el-dialog 统一处理）。
+import { computed, ref } from "vue";
+import { useUiPrefsStore, FONT_SCALES, FONT_SCALE_LABELS } from "../stores/uiPrefs";
+import { AppDialog } from "./ui";
 
 const uiPrefs = useUiPrefsStore();
 
@@ -54,14 +52,6 @@ function pick(i: number): void {
   if (i < 0 || i >= FONT_SCALES.length) return;
   uiPrefs.apply(FONT_SCALES[i]);
 }
-
-/** Esc 关闭对话框。 */
-function onKey(e: KeyboardEvent): void {
-  if (e.key === "Escape") open.value = false;
-}
-
-onMounted(() => window.addEventListener("keydown", onKey));
-onBeforeUnmount(() => window.removeEventListener("keydown", onKey));
 </script>
 
 <template>
@@ -89,28 +79,14 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKey));
     <span class="set-btn-text">设置</span>
   </button>
 
-  <Teleport to="body">
-    <div
-      v-if="open"
-      class="set-overlay"
-      data-testid="settings-dialog"
-      @click.self="open = false"
-    >
-      <div class="set-card" role="dialog" aria-modal="true" aria-label="设置">
-        <div class="set-head">
-          <span class="set-title">设置</span>
-          <button
-            type="button"
-            class="set-close"
-            aria-label="关闭设置"
-            data-testid="settings-close"
-            @click="open = false"
-          >
-            ×
-          </button>
-        </div>
-
-        <div class="set-body">
+  <AppDialog
+    v-model="open"
+    title="设置"
+    :width="320"
+    data-testid="settings-dialog"
+    close-testid="settings-close"
+  >
+    <div class="set-body">
           <!-- 字号分组：未来新设置项（如主题色）在此追加 .set-group -->
           <div class="set-group">
             <div class="set-row1">
@@ -156,10 +132,8 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKey));
             </div>
             <div class="set-hint">调整全站正文字号；图表内标签保持不变</div>
           </div>
-        </div>
-      </div>
     </div>
-  </Teleport>
+  </AppDialog>
 </template>
 
 <style scoped>
@@ -198,55 +172,9 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKey));
   transform: rotate(40deg);
 }
 
-/* 遮罩 + 对话框 */
-.set-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 400;
-  background: rgba(15, 23, 42, 0.32);
-  backdrop-filter: blur(1.5px);
-  -webkit-backdrop-filter: blur(1.5px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.set-card {
-  width: 320px;
-  max-width: calc(100vw - 40px);
-  background: var(--color-surface);
-  border-radius: 12px;
-  box-shadow: 0 12px 40px rgba(15, 23, 42, 0.22);
-  overflow: hidden;
-}
-.set-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 13px 16px;
-  border-bottom: 1px solid var(--color-border-2);
-}
-.set-title {
-  font-size: calc(15px * var(--font-scale));
-  font-weight: 600;
-  color: var(--color-text);
-}
-.set-close {
-  width: 24px;
-  height: 24px;
-  border: none;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--color-text-5);
-  font-size: calc(17px * var(--font-scale));
-  line-height: 1;
-  cursor: pointer;
-}
-.set-close:hover {
-  background: var(--color-surface-2);
-  color: var(--color-text);
-}
+/* 正文：内边距由 AppDialog 统一提供，这里不再叠加 */
 .set-body {
-  padding: 16px;
+  padding: 0;
 }
 .set-group {
   padding-bottom: 4px;

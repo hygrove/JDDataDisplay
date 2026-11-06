@@ -302,6 +302,44 @@ export interface BatchStatus {
   modules?: string[];
 }
 
+/**
+ * 库存手动刷新结果（POST /api/inventory/refresh 的返回）。
+ *
+ * @remarks
+ * 与 `BatchStatus` 分开：那条是「整条批处理」的状态（重跑全链路，含 POP 单品数据）；
+ * 这条只描述**库存链路**的四步（探测保留集 → 摄入 → 缩略图 → 快照淘汰）。
+ */
+export interface InventoryRefreshResult {
+  /** 是否整体成功；摄入失败为 false（淘汰失败不影响此字段） */
+  ok: boolean;
+  /** 结果短语，供前端直接显示（"已是最新数据" / "已更新 N 个文件 · M 行" 等） */
+  reason: string;
+  /** 本次是否有文件内容变化（false = 源表没动过，秒回） */
+  changed: boolean;
+  /** 探测到的库存源文件数 */
+  files: number;
+  /** 本次写入库的行数 */
+  rows: number;
+  /** 实际变更并重写库的文件数 */
+  changed_files: number;
+  /** 每店本次写入行数（{店铺: 行数}） */
+  shop_rows: Record<string, number>;
+  /** 快照淘汰实际使用的模式（"dry-run" = 只出清单不动手） */
+  retention_mode: string;
+  /** 淘汰决策里保留的文件数 */
+  retention_kept: number;
+  /** 淘汰决策里待删的文件数 */
+  retention_dropped: number;
+  /** 本次新生成的缩略图文件数 */
+  thumbs: number;
+  /** 本次刷新总耗时（秒） */
+  duration_seconds: number;
+  /** 逐步骤明细（每步耗时与结果摘要），用于排查卡在哪一步 */
+  steps: Array<{ step: string; ok: boolean; seconds: number; detail: string }>;
+  /** 失败原因；成功时为空串 */
+  error: string;
+}
+
 /** 指标 key 的联合类型，由 MetricRecord 的字段名派生 */
 export type MetricKey = keyof MetricRecord;
 
@@ -815,30 +853,4 @@ export interface RestockListResponse {
   grand_total: number;
   /** 涉及的 SKU 个数 */
   sku_count: number;
-}
-
-/**
- * 库存链路手动刷新的结果（前端 `postInventoryRefresh()` 的返回类型）。
- *
- * @remarks
- * ⚠️ **类型补洞**：`api.ts` 自 HEAD 起就 import 本类型，但本文件一直没有定义；
- * `vue-tsc -b` 靠 `tsconfig.tsbuildinfo` 增量缓存掩盖了这个错误，改动 `api.ts`
- * 触发全量重检才暴露。后端目前没有 `/api/inventory/refresh` 端点，且该函数
- * 在全仓无调用点，所以字段按 `api.ts` 注释（是否更新 / 行数 / 耗时 / 步骤明细）
- * 声明为**可选**，不臆造必填结构；等后端端点落地时按真实 Pydantic 模型对齐。
- * 本次只补类型，不改动那个孤儿函数，避免牵动另一条在途链路。
- */
-export interface InventoryRefreshResult {
-  /** 刷新是否成功；失败时后端可能以 HTTP 200 + ok:false 返回 */
-  ok: boolean;
-  /** 失败原因 */
-  error?: string | null;
-  /** 是否真的更新了数据 */
-  updated?: boolean;
-  /** 本次写入行数 */
-  rows?: number;
-  /** 耗时（毫秒） */
-  elapsed_ms?: number;
-  /** 逐步骤执行明细 */
-  steps?: Array<{ name: string; ok: boolean; detail?: string }>;
 }

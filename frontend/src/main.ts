@@ -10,6 +10,29 @@ import App from "./App.vue";
 import { router } from "./router";
 import { readStoredScale } from "./stores/uiPrefs";
 import "./style.css";
+// Element Plus：按需引入，只注册 components/ui/ 收敛层实际用到的组件。
+// 为什么按需而非全量：全量注册会把整个 EP 打进产物，而本项目只用到
+// 按钮 / 标签 / 下拉 / 数字输入 / 复选框等少数几个。
+// 收敛边界见 docs/adr/0020-tech-stack-layered-verdict.md 与 components/ui/index.ts。
+import {
+  ElButton,
+  ElCheckbox,
+  ElConfigProvider,
+  ElDialog,
+  ElInputNumber,
+  ElOption,
+  ElSelect,
+  ElTag,
+} from "element-plus";
+import zhCn from "element-plus/es/locale/lang/zh-cn";
+import "element-plus/es/components/button/style/css";
+import "element-plus/es/components/checkbox/style/css";
+import "element-plus/es/components/config-provider/style/css";
+import "element-plus/es/components/dialog/style/css";
+import "element-plus/es/components/input-number/style/css";
+import "element-plus/es/components/option/style/css";
+import "element-plus/es/components/select/style/css";
+import "element-plus/es/components/tag/style/css";
 
 // 挂载前把缩放系数写进 CSS 变量：首屏即按用户上次选的档位渲染，
 // 避免先按标准档（--font-scale:1）出字、挂载后再跳档导致的闪烁。
@@ -24,4 +47,19 @@ document.documentElement.style.setProperty("--font-scale", String(readStoredScal
  * // 由 index.html 引入本模块后自动执行，无需手动调用：
  * // <script type="module" src="/src/main.ts"></script>
  */
-createApp(App).use(createPinia()).use(router).mount("#app");
+createApp(App)
+  .use(createPinia())
+  .use(router)
+  // Element Plus 全局注册：与 components/ui/ 的语义包装一一对应。
+  // 漏注册的后果不是构建报错，而是运行时渲染成未知元素（AppNumberInput
+  // 曾因漏注册 ElInputNumber 而静默失效）；verify:ep 现在会把这条断言化。
+  // 中文语言包必须挂在 ElConfigProvider 上，见 App.vue。
+  .component("ElButton", ElButton)
+  .component("ElCheckbox", ElCheckbox)
+  .component("ElConfigProvider", ElConfigProvider)
+  .component("ElDialog", ElDialog)
+  .component("ElInputNumber", ElInputNumber)
+  .component("ElOption", ElOption)
+  .component("ElSelect", ElSelect)
+  .component("ElTag", ElTag)
+  .mount("#app");

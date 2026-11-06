@@ -11,6 +11,7 @@ import {
   fetchInventoryRows,
   fetchInventorySlowCities,
   inventoryMatrixExportUrl,
+  postInventoryRefresh,
   putAlertThresholds,
 } from "../api";
 import { useInventoryMetricsStore } from "../stores/inventoryMetrics";
@@ -422,6 +423,76 @@ function onFilterShop(s: string): void {
   onFilterChange();
 }
 
+// ---------------- 手动刷新（只刷库存数据，不碰单品数据）----------------
+
+/**
+ * 刷新状态：idle（空闲） / running（进行中） / done（成功） / error（失败）。
+ *
+ * @remarks
+ * `done` 与 `error` 都带一句人话（`refreshMsg`），直接显示在按钮旁的胶囊里。
+ */
+const refreshState = ref<"idle" | "running" | "done" | "error">("idle");
+/** 刷新结果提示文案（胶囊内容）。 */
+const refreshMsg = ref("");
+/** 上次刷新的时间戳（按钮左侧展示）；null = 还没在本会话刷新过。 */
+const lastRefreshAt = ref<string | null>(null);
+/** 补货工作台的组件引用：刷新成功后要让它重拉（它自己管 load()，父级只能通过 ref 调）。 */
+const restockRef = ref<InstanceType<typeof RestockPanel> | null>(null);
+
+/**
+ * 手动刷新库存数据。
+ *
+ * @remarks
+ * 流程：POST /api/inventory/refresh（后端重跑库存摄入 + 缩略图 + 快照淘汰，
+ * **不重跑 POP 单品数据**）→ 成功后重拉本页所有数据。
+ *
+ * ⚠️ **meta 必须一起重拉**：库存快照日期会随刷新变化（「数据截至」那个标注
+ * 读的是 meta.shop_dates），只重拉 rows 的话日期标注会停在旧值。
+ *
+ * ⚠️ **不重置筛选与分页**：用户是在看某个筛选结果时点的刷新，
+ * 突然跳回第一页会让人以为数据被清空了。
+ */
+async function refreshInventory(): Promise<void> {
+  // 运行中再点：直接忽略（后端也有 503 闸门，这里先挡一层少一次无谓请求）
+  if (refreshState.value === "running") return;
+  refreshState.value = "running";
+  refreshMsg.value = "正在读取最新库存源表…";
+  try {
+    const r = await postInventoryRefresh();
+    if (!r.ok) {
+      // 后端摄入失败：HTTP 200 但 ok=false。数据没更新，此时**不要**重拉页面
+      // （重拉只会把同一份旧数据再渲染一遍，让人误以为"刷新了但没变"）。
+      refreshState.value = "error";
+      refreshMsg.value = r.error || "刷新失败";
+      return;
+    }
+    // 刷新成功：重拉全部数据（meta + 明细 + 分布 + 滞销城 + 预警）
+    await loadMeta();
+    await loadData();
+    // 补货工作台：它自己管 load()，父级通过 ref 触发重拉
+    void restockRef.value?.reload?.();
+    refreshState.value = "done";
+    refreshMsg.value = r.reason;
+    lastRefreshAt.value = new Date().toLocaleTimeString("zh-CN", {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+  } catch (e) {
+    // 网络异常 / 503（并发刷新）/ 服务未重启（端点 404）
+    refreshState.value = "error";
+    refreshMsg.value = String(e);
+  }
+}
+
+/** 刷新按钮的文案：运行中显示「刷新中…」，其余显示固定文案。 */
+const refreshBtnText = computed<string>(() =>
+  refreshState.value === "running" ? "刷新中…" : "刷新库存数据",
+);
+
+/** 状态胶囊的样式类：按状态取对配色。 */
+const refreshPillClass = computed<string>(() => `inv-refresh-pill is-${refreshState.value}`);
+
 onMounted(async () => {
   // 路由级遮罩交棒（与 SpuAnalysisView 同一套约定）：chunk 已下载解析、
   // 组件挂载完毕，撤掉全屏遮罩；数据等待期由下方骨架屏（v-if="!data"）接管。
@@ -441,6 +512,42 @@ onMounted(async () => {
       <div>
         <h1 class="inv-title">库存管理</h1>
         <p class="inv-sub">多门店 · 多城市现货 / 周转 / 出库矩阵 · 库存预警</p>
+      </div>
+      <!-- 手动刷新（2026-10-31 新增）：只重跑库存链路（摄入 + 缩略图 + 快照淘汰），
+           **不重跑 POP 单品数据**，故耗时秒级。
+           放标题栏而非工具栏：补货工作台那个 pane 没有 .inv-tools 区，
+           放这里才能「写一次、两个 Tab 都生效」。
+           描边蓝（而非实心蓝）——旁边的「导出表格」才是实心蓝，刷新是辅助动作。 -->
+      <div class="inv-head-tools">
+        <span v-if="lastRefreshAt" class="inv-refresh-time">上次刷新 {{ lastRefreshAt }}</span>
+        <button
+          class="inv-refresh-btn"
+          :disabled="refreshState === 'running'"
+          data-testid="inv-refresh-btn"
+          title="重新读取库存源表并入库（含快照淘汰）。只刷新库存数据，不影响单品数据。"
+          @click="refreshInventory"
+        >
+          <!-- 刷新图标：spinning 类跟随刷新状态，进行中持续旋转（纯 CSS，不改 store） -->
+          <span class="inv-refresh-ico" :class="{ spinning: refreshState === 'running' }">
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2.2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <polyline points="23 4 23 10 17 10" />
+              <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+            </svg>
+          </span>
+          <span>{{ refreshBtnText }}</span>
+        </button>
+        <!-- 结果胶囊：成功/失败各一种配色，运行中显示进度文案 -->
+        <span v-if="refreshState !== 'idle'" class="inv-refresh-pill" :class="refreshPillClass" data-testid="inv-refresh-pill">
+          {{ refreshMsg }}
+        </span>
       </div>
     </header>
 
@@ -673,7 +780,7 @@ onMounted(async () => {
             </label>
           </div>
         </div>
-        <RestockPanel :shop="shop" :keyword="keyword" />
+        <RestockPanel ref="restockRef" :shop="shop" :keyword="keyword" />
       </template>
     </div>
 </template>
@@ -727,6 +834,91 @@ onMounted(async () => {
   margin-top: 4px;
   font-size: calc(12.5px * var(--font-scale));
   color: var(--color-text-5);
+}
+/* ---------- 手动刷新（标题栏右侧）---------- */
+/* 标题栏右侧的工具区：上次刷新时间 + 刷新按钮 + 结果胶囊 */
+.inv-head-tools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.inv-refresh-time {
+  font-size: calc(12px * var(--font-scale));
+  color: var(--color-text-5);
+  white-space: nowrap;
+}
+/* 刷新按钮：描边蓝（白底蓝字蓝框）——与工具栏里实心蓝的「导出表格」形成主次之分，
+   刷新是辅助动作，不该抢主操作的视觉位。禁用态只降透明度，不改配色。 */
+.inv-refresh-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 14px;
+  border: 1px solid var(--color-brand);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-brand);
+  font-size: calc(12.5px * var(--font-scale));
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.inv-refresh-btn svg {
+  width: 14px;
+  height: 14px;
+}
+.inv-refresh-btn:hover:not(:disabled) {
+  background: var(--color-brand-tint);
+}
+/* 进行中：浅蓝底 + 蓝字，仍是品牌蓝系，只是"退到背景里"表达"正在忙" */
+.inv-refresh-btn:disabled {
+  background: var(--color-brand-tint);
+  color: var(--color-brand);
+  cursor: not-allowed;
+}
+/* 刷新图标旋转：只在刷新中转；尊重系统减动效偏好 */
+.inv-refresh-ico {
+  display: inline-flex;
+  align-items: center;
+}
+.inv-refresh-ico.spinning svg {
+  animation: inv-refresh-spin 0.8s linear infinite;
+}
+@keyframes inv-refresh-spin {
+  to { transform: rotate(360deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .inv-refresh-ico.spinning svg {
+    animation: none;
+  }
+}
+/* 结果胶囊：成功=绿、失败=红、进行中=蓝。⛔ 走令牌不写魔法色值
+   （浅底 + 深字成对取自 style.css 的 success/danger 配套色）。 */
+.inv-refresh-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: var(--radius-pill);
+  font-size: calc(12px * var(--font-scale));
+  white-space: nowrap;
+  max-width: 420px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.inv-refresh-pill.is-running {
+  background: var(--color-brand-tint);
+  color: var(--color-brand);
+}
+.inv-refresh-pill.is-done {
+  background: var(--color-success-tint);
+  color: var(--color-success-ink);
+}
+.inv-refresh-pill.is-error {
+  background: var(--color-danger-tint);
+  color: var(--color-danger-ink);
 }
 /* 视图切换（库存矩阵 / 补货工作台）+ 图例（2026-10 新增） */
 .inv-viewtabs {
