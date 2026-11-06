@@ -128,6 +128,17 @@ function onShopClick(shop: string) {
         >
           {{ m.title }}
         </router-link>
+        <!-- 店铺运营数据：独立路由，不进 manifest v-for。
+             ⛔ 不能放到下面的「店铺」分组：那一组带 v-if="route.params.moduleId"，
+             独立路由没有 moduleId 参数，整组不会渲染。 -->
+        <router-link
+          class="nav-item"
+          :class="{ active: route.path === '/ops-daily' }"
+          to="/ops-daily"
+          data-testid="app-nav-ops-daily"
+        >
+          店铺运营数据
+        </router-link>
       </div>
 
       <div v-if="route.params.moduleId" class="nav-section grow" data-testid="app-nav-shops">

@@ -27,6 +27,7 @@ from ..jobs import config
 from .api import router as api_router
 from .chat_api import router as chat_router
 from .inventory_api import router as inventory_router
+from .ops_daily_api import router as ops_daily_router
 
 # FRONTEND_DIST：前端 npm run build 的产物目录，生产模式下页面全部由这里提供
 FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
@@ -53,6 +54,9 @@ app.include_router(inventory_router)
 # AI 对话（/api/chat/...：config / completions SSE / 报告导出）。
 # 与业务路由平行注册；chat 链路对数据库只读（spec：.scratch/ai-chat/spec.md）。
 app.include_router(chat_router)
+# 店铺运营数据（/api/ops-daily/meta、/data）：只读 ops_* 表，独立页面专用。
+# 必须挂在 SPA 回退路由 /{full_path:path} 之前，否则会被吞成 index.html。
+app.include_router(ops_daily_router)
 
 
 # 启动钩子：确保 SQLite 表已存在（幂等）。

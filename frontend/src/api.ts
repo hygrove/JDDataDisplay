@@ -4,6 +4,8 @@
 //    生产是单端口 8000 同源部署，开发时由 vite 的 proxy 转发，
 //    写死域名会让「换端口部署」或「走 https」时全部请求失败。
 import { splitSseFrames, parseSseFrame } from "./modules/chat";
+import { queryString, PAGE_SIZE } from "./modules/opsDaily";
+import type { OpsDailyData, OpsDailyMeta, OpsQuery } from "./modules/opsDaily";
 import type {
   BatchStatus,
   InventoryAlertsSummary,
@@ -39,8 +41,10 @@ const BASE = "/api";
  * const manifest = await get<Manifest>("/manifest");
  * ```
  */
-async function get<T>(url: string): Promise<T> {
-  const res = await fetch(BASE + url);
+async function get<T>(url: string, signal?: AbortSignal): Promise<T> {
+  // signal 可选：店铺运营页筛选变化时要取消在途请求，避免旧响应覆盖新结果。
+  // 不传时行为与原来完全一致，现有调用方无需改动。
+  const res = await fetch(BASE + url, signal ? { signal } : undefined);
   // 把状态码 + 后端详情文本一并塞进错误，便于直接把 message 显示在页面上定位问题
   if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
   return (await res.json()) as T;
@@ -784,4 +788,45 @@ export async function exportChatReport(
   });
   if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
   return res.blob();
+}
+
+/**
+ * 拉取店铺运营指标字典（/api/ops-daily/meta）。
+ *
+ * @remarks
+ * 字典是列与公式的唯一来源；前端不写死列数。signal 用于路由离开时取消请求。
+ *
+ * @param signal - 可选的取消信号。
+ * @returns 指标字典、数据起止日期与可筛选项。
+ * @throws {Error} 接口非 2xx 或网络中断。
+ * @example
+ * ```ts
+ * const meta = await fetchOpsDailyMeta();
+ * meta.metrics.length; // 24
+ * ```
+ */
+export function fetchOpsDailyMeta(signal?: AbortSignal): Promise<OpsDailyMeta> {
+  return get<OpsDailyMeta>("/ops-daily/meta", signal);
+}
+
+/**
+ * 拉取店铺运营数据（/api/ops-daily/data）。
+ *
+ * @remarks
+ * 默认每页 PAGE_SIZE 行（性能契约 §4.1）。导出时由调用方指定
+ * page / page_size 分批拉取，⛔ 不用 all=true 一次性拉全量 JSON。
+ *
+ * @param q - 查询参数（from / to 必填）。
+ * @param signal - 可选的取消信号，筛选变化时用于丢弃旧请求。
+ * @returns 当页行 + 整体聚合（KPI 卡）+ 月度趋势点（方案 C 图表）+ 总数。
+ * @throws {Error} 接口非 2xx 或网络中断。
+ * @example
+ * ```ts
+ * const d = await fetchOpsDailyData({ from: "2026-08-01", to: "2026-10-31" });
+ * d.rows.length; // 50
+ * ```
+ */
+export function fetchOpsDailyData(q: OpsQuery, signal?: AbortSignal): Promise<OpsDailyData> {
+  const params = queryString({ ...q, page_size: q.page_size ?? PAGE_SIZE });
+  return get<OpsDailyData>(`/ops-daily/data?${params}`, signal);
 }

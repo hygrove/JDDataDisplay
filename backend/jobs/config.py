@@ -11,6 +11,7 @@
   BATCH_RETRY_ENABLED    是否启用重试（默认关闭）
   BATCH_RETRY_MAX_ATTEMPTS / BATCH_RETRY_BASE_DELAY  重试次数与退避基数
   JD_ORGANIZE            源表整理器执行模式 off | dry-run（默认）| on
+  JD_OPS_DAILY_DIR       店铺日常运营数据（月报 JSON）目录，默认 ResourceData/店铺日常运营数据
 
 示例：
     >>> from backend.jobs import config
@@ -58,6 +59,10 @@ POP_IMAGE_DIR_NAME = "单品spu图片"
 # INVENTORY_SOURCE_DIR：库存明细的数据源目录（独立于 POP 的「数据源表目录」）。
 # 库存表（家配/医拜/卡求自营库存明细）放在 ResourceData/库存数据表/ 下
 INVENTORY_SOURCE_DIR = Path(os.getenv("JD_INVENTORY_DIR", BACKEND_DIR.parent / "ResourceData" / "库存数据表"))
+
+# OPS_DAILY_SOURCE_DIR：店铺日常运营数据（月报 JSON）目录，供 ops_daily 读取。
+# 与 POP 单品明细、库存快照是三条独立链路：各有自己的源目录与库表，互不写入对方的表。
+OPS_DAILY_SOURCE_DIR = Path(os.getenv("JD_OPS_DAILY_DIR", POP_SOURCE_DIR / "店铺日常运营数据"))
 
 # INV_PIC_DIR：库存 SKU 商品图目录（数据源，**只读**）。
 # 下面是 4 个业务线子目录：jpzy(家配) / kqzy(卡求) / ybzy(医拜) / pop(POP 模块)，

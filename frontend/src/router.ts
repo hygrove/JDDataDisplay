@@ -7,6 +7,8 @@ const ModuleView = () => import("./views/ModuleView.vue");
 const SpuAnalysisView = () => import("./views/SpuAnalysisView.vue");
 // 库存管理模块：独立指标体系，单独懒加载，不拖慢首屏。
 const InventoryView = () => import("./views/InventoryView.vue");
+// 店铺运营数据：独立页（不在 manifest 模块体系内），同样懒加载成独立 chunk。
+const OpsDailyView = () => import("./views/OpsDailyView.vue");
 
 // 首页空白占位（App.vue 会在拉到 manifest 后自动跳转到第一个模块）。
 // ⚠️ 必须用 render 函数而不是 template 字符串：生产构建用的是 runtime-only 版本 Vue，
@@ -18,10 +20,12 @@ const HomeBlank = { render: () => null };
  * 全局路由实例（history 模式）。
  *
  * @remarks
- * 三条路由：
+ * 五条路由：
  * - `/` 首页空白占位，由 App.vue 拉到 manifest 后自动跳转到第一个模块；
  * - `/module/:moduleId` 模块页（SPU 明细）；
- * - `/module/:moduleId/spu/:spu` 单品分析页，可带 `?shop=xxx` 指定店铺。
+ * - `/module/:moduleId/spu/:spu` 单品分析页，可带 `?shop=xxx` 指定店铺；
+ * - `/inventory` 库存管理（独立指标体系，不在 manifest 模块体系内）；
+ * - `/ops-daily` 店铺运营数据（独立页，同样不在 manifest 模块体系内）。
  *
  * @example
  * ```ts
@@ -53,22 +57,30 @@ export const router = createRouter({
       name: "inventory",
       component: InventoryView,
     },
+    {
+      // 店铺运营数据（独立页；不注册 modules/index.ts、不进 manifest v-for、
+      // 不落入 /module/:moduleId，三重隔离避免影响单品明细与库存页）
+      path: "/ops-daily",
+      name: "ops-daily",
+      component: OpsDailyView,
+    },
   ],
 });
 
-// 路由级加载遮罩：两个懒加载大 chunk 的路由，点击跳转后要等 chunk 下载+解析，
+// 路由级加载遮罩：懒加载 chunk 的三个独立页，点击跳转后要等 chunk 下载+解析，
 // 这段时间内目标组件还没挂载、自身遮罩不会出现。这里在「跳转一开始」就亮起
 // 全屏遮罩，组件挂载后再由目标视图 onMounted 把 navigating 复位（交棒给页面
 // 自身的骨架屏 / 遮罩）：
 // - spu-analysis：依赖 echarts 的大 chunk；
-// - inventory：库存页 chunk + 首屏数据接口（meta + 三接口并发）。
+// - inventory：库存页 chunk + 首屏数据接口（meta + 三接口并发）；
+// - ops-daily：新页 chunk + 首屏 meta / data 并发。
 //
 // ⚠️ useUiStore() 必须在导航发生的**运行时**调用（此时 Pinia 已装配），
 //    不能放在模块顶层——模块顶层执行时机早于 Pinia 安装，会抛「no active Pinia」。
 router.beforeEach((to) => {
-  // 只对懒加载大 chunk 的两个路由点亮：其它导航本来就很快，
+  // 只对懒加载 chunk 的三个独立页点亮：其它导航本来就很快，
   // 加遮罩反而会造成闪烁
-  if (to.name === "spu-analysis" || to.name === "inventory") {
+  if (to.name === "spu-analysis" || to.name === "inventory" || to.name === "ops-daily") {
     useUiStore().setNavigating(true);
   }
 });
