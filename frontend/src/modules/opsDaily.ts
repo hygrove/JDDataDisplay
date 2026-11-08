@@ -852,7 +852,7 @@ export interface ShopSelectOption {
   groupLabel?: string;
   /** 类型徽章文案 */
   badge?: string;
-  /** 语义色调键，供 CSS 上底色（未知类型走默认样式） */
+  /** 语义色调键，供 CSS 决定悬停底色（未知类型走中性 hover） */
   tone?: string;
 }
 
@@ -869,10 +869,10 @@ const UNCLASSIFIED_GROUP = "__unclassified__";
  * 多一项即自动多一组，本函数 0 改码；中文标注复用 `shopTypeLabel`，不会
  * 像写死 `self/pop` 那样把新类型错标成「自营」。
  *
- * ⚠️ 边界：`tone` 只是字符串键，收敛层 CSS 目前只为 self/pop 定义了明显
- * 底色，**第 3 类会自动成组但没有专属底色**（走中性默认样式，功能不受损）。
- * 若要给它配色，需在 `style.css` 加令牌 + `AppSelect.vue` 加一组色调变量，
- * 见 SPEC §14「已知边界②」。
+ * ⚠️ 边界：`tone` 只是字符串键，收敛层 CSS 目前只为 self/pop 定义了
+ * **hover 专属底色**，第 3 类会自动成组但 hover 走中性浅灰（功能不受损）。
+ * 若要给它配色，需在 `style.css` 加令牌 + `AppSelect.vue` 的 `.as-host-*`
+ * 加一组变量，见 SPEC §14「已知边界②」。
  *
  * ⚠️ 映射必须来自 `/meta.shop_type_by_shop`（库内 `GROUP BY shop`），⛔ 不能
  * 从当前页 `/data` 的 50 行反推——那受筛选影响会漏店。**映射缺失时整体降级

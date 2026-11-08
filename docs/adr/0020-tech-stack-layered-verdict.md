@@ -89,5 +89,14 @@
 - **边界不变**：核心表格仍不迁移（`ElTable` / `ElPagination` / `ElTooltip` / `ElPopover` / `ElIcon` 仍不注册）；指标矩阵继续原生 `<table>` + sticky + `v-memo`，每页 50 行性能契约不变。本次迁移的是**筛选栏的第二个控件**——店铺下拉从原生 `<select>` 换成收敛层 `AppSelect`（EP `el-select`）。
 - **动机**：17 家店名字相近，原生 `<option>` 无法可靠加分组/徽章/底色（原生 `option` 的背景色渲染受浏览器与系统主题影响，本次未做跨浏览器实测，故不以此作为唯一依据），也无法搜索。收敛层是「EP 的唯一合法引用点」，增强它而不是在业务页直写 `el-*`，正是 11-08 ①B 补记里确立的解法。
 - **落地与兼容**：`AppSelectOption` 新增**全部可选**的 `group` / `groupLabel` / `badge` / `tone`，props 新增可选 `filterable` / `noMatchText`；内部 `groups` computed 在无任何分组时返回 `null`，保持旧扁平渲染 ⇒ 库存页 `RestockPanel` 的参数下拉 **0 行为变化**。新增 `ElOptionGroup` 注册与 `option-group/style/css` 样式引入，由 `verify:ep` ⑤ 自动校验（149 → **151/0**）。
-- **⚠️ teleport 带来的令牌位置修正**：下拉面板 teleport 到 `body`，既拿不到 `.ops-daily` 的局部 CSS 变量，也不受组件 scoped 样式管辖。故「明显底色」的 6 个语义令牌**新增到全局 `style.css :root`**（⛔ 只新增、不改任何既有值，全站品牌色零变化），选项内容样式用非 scoped `<style>` + `popper-class="app-select-popper"` 前缀限定，⛔ 不定义 `--el-*` 变量。这是对静态预览「只在 ops 页局部定义」措辞的如实修正，已登记工单 10 与 SPEC §14。
+- **⚠️ teleport 带来的令牌位置修正**：下拉面板 teleport 到 `body`，既拿不到 `.ops-daily` 的局部 CSS 变量，也不受组件 scoped 样式管辖。故「明显底色」的 6 个语义令牌**新增到全局 `style.css :root`**（⛔ 只新增、不改任何既有值，全站品牌色零变化），选项内容样式用非 scoped `<style>` + `popper-class="app-select-popper"` 前缀限定，⛔ 不定义 `--el-*` 变量。这是对静态预览「只在 ops 页局部定义」措辞的如实修正，已登记工单 10 与 SPEC §14；⚠️ **D10（18:1x）后这组令牌只在鼠标悬停时铺整行**，常驻改为白底，见下节。
 - **验证**：`npm run build` ✅（2292 modules）；`npm run verify` 全链 ✅；真浏览器 CDP **15/15**（滚动吸顶、分组与明显底色实测、搜索、换店铺真重查、点外部收起回归、控制台 0 错误）。详见工单 10。
+
+## 维护修订（2026-11-08 18:1x，D10）：teleport 面板的「变量作用域 + hover 层级」
+
+- **触发**：用户拿实测截图对比方案预览，指出常驻底色与预览不符且「鼠标移入店铺都没有提示」。根因不是配色，而是**把类型底色铺在 `el-option` 内部 div**：EP 的 hover 高亮加在父 `<li class="el-select-dropdown__item">` 上，被子层不透明底色完全遮住 ⇒ 静态断言与 `grep` 都发现不了，只能靠真浏览器 + 真实鼠标位移。
+- **两条可复用的收敛层纪律**（本次新增，适用于所有 teleport 到 `body` 的 EP 浮层）：
+  1. **要染整行，class 与变量必须挂在 `li` 上**：`el-option` 的 `class` 会透传到 `<li>`；CSS 自定义属性只向下继承，**父元素读不到子元素变量**，故 `--as-*` 定义在 `.as-host-*`（li）而非内部 div，色条 / 徽章靠继承取同一组值。
+  2. **hover 规则的特定性必须压过 EP 自带 `.el-select-dropdown__item:hover` 的浅灰**（用 `.app-select-popper .el-select-dropdown__item.as-host:hover`，⛔ 不用 `!important`），否则「移入有提示」会静默退化成灰色而非语义色。
+- **结果**：常驻改回预览的白底（色条 + 文字徽章仍带类型色，色弱 / 黑白打印可读），明显底色只在 hover 时铺整行；未知 tone 用 `var(--as-bg, var(--color-surface-2))` 降级中性浅灰，字典驱动 0 改码。库存页扁平 options 无 tone ⇒ 0 影响。
+- **验证**：真浏览器 CDP **18/18**（`Input.dispatchMouseEvent` 的 `mouseMoved` 触发真实伪类状态，⛔ `Runtime.evaluate` 改不了 `:hover`）+ 常驻 / 自营 hover / POP hover 三态截图人工比对；`npm run verify` 全链 ✅（tokens 21362/0、ep 151/0）。详见 SPEC v1.8 §15 与工单 11。
