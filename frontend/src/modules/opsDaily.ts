@@ -27,6 +27,8 @@ export interface OpsDailyMeta {
   data_through: string | null;
   shops: string[];
   shop_types: string[];
+  /** 店铺 → 类型映射（D9）。老服务可能没有此字段 ⇒ 可选，前端须降级为扁平下拉。 */
+  shop_type_by_shop?: Record<string, string>;
   total_rows: number;
 }
 
@@ -813,4 +815,129 @@ export function classifyOpsError(e: unknown): OpsErrorVerdict {
 export function shopTypeLabel(t: string): string {
   const labels: Record<string, string> = { self: "自营", pop: "POP" };
   return labels[t] ?? t;
+}
+
+/**
+ * 「指标勾选」浮层是否应因一次页面点击而收起（判定与渲染分离，ai-rules §3）。
+ *
+ * @remarks
+ * 只接收「浮层是否打开」与「点击是否落在浮层根内」两个布尔量，⛔ 不接收 DOM 节点：
+ * 这样纯函数能在 node 断言里直接跑，视图只负责把 `root.contains(target)` 的结果传进来。
+ * 两个条件缺一不可：未打开时不做无谓赋值；点在根内（按钮本身 / 勾选项）必须保持展开，
+ * 否则一勾选项面板就消失。
+ *
+ * @param open - 浮层当前是否展开。
+ * @param targetInside - 本次点击目标是否在浮层根元素内。
+ * @returns `true` 表示应收起浮层。
+ * @example
+ * ```ts
+ * shouldCloseMetricPanel(true, false); // true  → 点了页面别处，收起
+ * shouldCloseMetricPanel(true, true);  // false → 点面板内部，保持
+ * shouldCloseMetricPanel(false, false); // false → 本来就没开
+ * ```
+ */
+export function shouldCloseMetricPanel(open: boolean, targetInside: boolean): boolean {
+  return open && !targetInside;
+}
+
+/** 店铺下拉选项（供收敛层 `AppSelect` 消费）。 */
+export interface ShopSelectOption {
+  /** 选项值：店铺名；空串代表「全部店铺」 */
+  value: string;
+  /** 显示文案 */
+  label: string;
+  /** 分组键（类型原始值）；缺省表示不分组 */
+  group?: string;
+  /** 分组标题（含数量），由字典生成 */
+  groupLabel?: string;
+  /** 类型徽章文案 */
+  badge?: string;
+  /** 语义色调键，供 CSS 上底色（未知类型走默认样式） */
+  tone?: string;
+}
+
+/** 已知类型的展示优先序：只决定谁排前面，不决定集合（与图表 TYPE_ORDER 一致）。 */
+const SHOP_TYPE_ORDER = ["self", "pop"];
+/** 映射缺失或类型不在字典时归入的兜底分组。 */
+const UNCLASSIFIED_GROUP = "__unclassified__";
+
+/**
+ * 由字典构建店铺下拉选项（判定与渲染分离，ai-rules §3）。
+ *
+ * @remarks
+ * 分组与徽章**由 `/meta.shop_types` 字典驱动**：新增第 3 类时 `shopTypes`
+ * 多一项即自动多一组，本函数 0 改码；中文标注复用 `shopTypeLabel`，不会
+ * 像写死 `self/pop` 那样把新类型错标成「自营」。
+ *
+ * ⚠️ 边界：`tone` 只是字符串键，收敛层 CSS 目前只为 self/pop 定义了明显
+ * 底色，**第 3 类会自动成组但没有专属底色**（走中性默认样式，功能不受损）。
+ * 若要给它配色，需在 `style.css` 加令牌 + `AppSelect.vue` 加一组色调变量，
+ * 见 SPEC §14「已知边界②」。
+ *
+ * ⚠️ 映射必须来自 `/meta.shop_type_by_shop`（库内 `GROUP BY shop`），⛔ 不能
+ * 从当前页 `/data` 的 50 行反推——那受筛选影响会漏店。**映射缺失时整体降级
+ * 为扁平下拉**（不分组 / 无徽章 / 无底色），保证老服务配新前端不白屏。
+ *
+ * @param shops - `/meta.shops`，后端已按店名排序。
+ * @param shopTypes - `/meta.shop_types`，库内 `DISTINCT shop_type`。
+ * @param typeByShop - `/meta.shop_type_by_shop`；可缺省（老服务）。
+ * @returns 选项数组；首项恒为「全部店铺」（value 为空串，不分组）。
+ * @example
+ * ```ts
+ * buildShopSelectOptions(["A", "B"], ["pop"], { A: "pop", B: "pop" })[1];
+ * // { value: "A", label: "A", group: "pop", groupLabel: "POP（2 家）", badge: "POP", tone: "pop" }
+ * ```
+ */
+export function buildShopSelectOptions(
+  shops: string[],
+  shopTypes: string[],
+  typeByShop?: Record<string, string> | null,
+): ShopSelectOption[] {
+  const leading: ShopSelectOption[] = [{ value: "", label: "全部店铺" }];
+  const map = typeByShop ?? {};
+  // 老服务 / 未导入数据：整体扁平降级，页面仍可用。
+  if (!Object.keys(map).length) {
+    return [...leading, ...shops.map((s) => ({ value: s, label: s }))];
+  }
+
+  const known = SHOP_TYPE_ORDER.filter((t) => shopTypes.includes(t));
+  const extra = shopTypes.filter((t) => !SHOP_TYPE_ORDER.includes(t)).sort();
+  const order = [...known, ...extra];
+
+  const buckets = new Map<string, string[]>();
+  for (const s of shops) {
+    const t = map[s];
+    const key = t && order.includes(t) ? t : UNCLASSIFIED_GROUP;
+    const bucket = buckets.get(key);
+    if (bucket) bucket.push(s);
+    else buckets.set(key, [s]);
+  }
+
+  const out: ShopSelectOption[] = [...leading];
+  for (const t of order) {
+    const items = buckets.get(t) ?? [];
+    if (!items.length) continue;
+    const label = shopTypeLabel(t);
+    for (const s of items) {
+      out.push({
+        value: s,
+        label: s,
+        group: t,
+        groupLabel: `${label}（${items.length} 家）`,
+        badge: label,
+        tone: t,
+      });
+    }
+  }
+  const unclassified = buckets.get(UNCLASSIFIED_GROUP) ?? [];
+  for (const s of unclassified) {
+    out.push({
+      value: s,
+      label: s,
+      group: UNCLASSIFIED_GROUP,
+      groupLabel: `未分类（${unclassified.length} 家）`,
+      badge: "未分类",
+    });
+  }
+  return out;
 }

@@ -108,6 +108,38 @@ def main() -> int:
     check(len(meta.get("shops", [])) == 17, "筛选项 17 个店铺")
     check(meta.get("total_rows") == 1564, "meta.total_rows = 1564")
 
+    # 2026-11-08 D9：店铺 → 类型映射，供筛选下拉的分组 / 徽章 / 底色。
+    # 必须来自库内 DISTINCT，⛔ 不在后端写死 self/pop，也不从当前页 50 行反推
+    # （后者受筛选影响会漏店）。老服务没这个字段时前端走单组扁平降级。
+    type_by_shop = meta.get("shop_type_by_shop")
+    is_map = isinstance(type_by_shop, dict)
+    check(is_map, "/meta 下发 shop_type_by_shop 字典")
+    check(
+        is_map and len(type_by_shop) == 17,
+        f"映射覆盖全部 17 店（实为 {len(type_by_shop) if is_map else '缺失'}）",
+    )
+    check(
+        is_map and set(type_by_shop) == set(meta.get("shops", [])),
+        "映射 key 集合 == /meta.shops 集合",
+    )
+    check(
+        is_map and set(type_by_shop.values()) <= set(meta.get("shop_types", [])),
+        "映射值全部来自 /meta.shop_types（字典驱动，不写死类型）",
+    )
+    # 独立重算：直接查库逐项比对，避免「自己验自己」。
+    # MIN(shop_type) 让「一店多类型」的异常未来也有确定值，不随行序漂移。
+    with closing(ops_daily.get_conn()) as conn:
+        pairs = {
+            r[0]: r[1]
+            for r in conn.execute(
+                "SELECT shop, MIN(shop_type) FROM ops_shop_daily GROUP BY shop"
+            )
+        }
+    check(
+        is_map and type_by_shop == pairs,
+        "映射与库内 GROUP BY shop / MIN(shop_type) 独立重算逐项一致",
+    )
+
     print("\n[2] 参数校验与分页")
     check(client.get("/api/ops-daily/data").status_code == 422, "缺 from/to → 422")
     check(

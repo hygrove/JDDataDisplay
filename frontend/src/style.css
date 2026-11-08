@@ -51,6 +51,22 @@
   /* 分隔线强调档（hover / 需要看得见的细线）：比 --color-divider 深一档。 */
   --color-divider-strong: #94a3b8;
 
+  /* 店铺类型语义色（D9 · 明显底色，2026-11-08 用户拍板：自营蓝 / POP 琥珀）。
+     ⚠️ 必须放全局 :root：el-select 的下拉面板 teleport 到 body，拿不到
+     ops 页的局部变量。只新增、不修改任何既有令牌 ⇒ 全站品牌色零变化。
+     未知类型不在此列，收敛层走默认中性样式（字典驱动，新增类型 0 改码）。 */
+  --color-shop-self-bg: #e6efff;
+  --color-shop-self-fg: #1e40af;
+  --color-shop-self-line: #b9d0fb;
+  --color-shop-pop-bg: #fff3e2;
+  --color-shop-pop-fg: #b45309;
+  --color-shop-pop-line: #f6d7a7;
+
+  /* 吸顶筛选栏阴影（D9）：整条阴影收敛为令牌，组件只写 var(...)。
+     ⚠️ 几何参数与颜色一起放这里，是因为二者共同决定「悬浮感」，
+     散在组件里会退化成魔法值（ai-rules §2）。新增阴影请在此追加，别回组件手写。 */
+  --shadow-sticky: 0 6px 16px rgba(15, 23, 42, 0.08);
+
   /* 品牌红 */
   --color-brand: #e1251b;
   --color-brand-dark: #c81e14;

@@ -13,7 +13,7 @@
 // 导出按 500 行/批、并发 4 拉取，不经 DOM，用 Array.join 拼 CSV。
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef } from "vue";
 import { useUiStore } from "../stores/ui";
-import { AppDateRangePicker } from "../components/ui";
+import { AppDateRangePicker, AppSelect } from "../components/ui";
 import { fetchOpsDailyData, fetchOpsDailyMeta } from "../api";
 import {
   EXPORT_BATCH,
@@ -23,6 +23,7 @@ import {
   PAGE_SIZE,
   MONTHLY_CHART,
   buildMonthlyChart,
+  buildShopSelectOptions,
   buildOpsCsv,
   classifyOpsError,
   defaultRange,
@@ -35,6 +36,7 @@ import {
   formatValue,
   isMissing,
   previousRange,
+  shouldCloseMetricPanel,
   spanMom,
   trendClass,
   type OpsDailyMeta,
@@ -85,6 +87,11 @@ const dateRange = computed<[string, string] | null>({
   },
 });
 const panelOpen = ref(false);
+/**
+ * 「指标勾选」浮层的根元素：按钮与浮层**同属一个根**。
+ * ⚠️ 不能只把浮层当根——点按钮时会被判定成「外部点击」，刚展开就立刻收起。
+ */
+const panelWrapRef = ref<HTMLElement | null>(null);
 const formulaOpen = ref(false);
 const exporting = ref(false);
 const exportDoneBatches = ref(0);
@@ -244,6 +251,24 @@ async function bootstrap(): Promise<void> {
   else if (ok) state.value = "empty";
 }
 
+/**
+ * 店铺下拉选项（D9）：分组 / 徽章 / 色调全部由 `/meta` 字典驱动。
+ * ⚠️ 老服务没有 `shop_type_by_shop` 时，纯函数降级为扁平列表（页面不白屏）。
+ */
+const shopSelectOptions = computed(() =>
+  buildShopSelectOptions(
+    meta.value?.shops ?? [],
+    meta.value?.shop_types ?? [],
+    meta.value?.shop_type_by_shop,
+  ),
+);
+
+/** AppSelect 的值类型比 `shop` 宽（number|string|undefined），统一收敛成 string。 */
+function onShopChange(v: number | string | undefined): void {
+  shop.value = v == null ? "" : String(v);
+  onFilterChange();
+}
+
 /** 筛选变化：250ms 防抖后回到第 1 页重新查询。 */
 function onFilterChange(): void {
   if (debounceTimer) clearTimeout(debounceTimer);
@@ -341,9 +366,51 @@ async function exportCsv(): Promise<void> {
   }
 }
 
-onMounted(() => void bootstrap());
+/**
+ * 点击浮层外部时收起「指标勾选」。
+ *
+ * @remarks
+ * 用 `pointerdown` 而不是 `click`：①按下即判定，早于按钮自身的 `@click` toggle，
+ * 不存在「刚点开就被同一次点击关掉」的时序竞态；②部分组件（含 EP 浮层）会在
+ * `click` 上 `stopPropagation`，用 click 会让「点别处」根本收不到事件；
+ * ③同时覆盖鼠标与触屏。是否收起交给纯函数判定，视图只传 `contains` 的结果。
+ *
+ * @param e - 文档上的指针按下事件。
+ * @returns 无返回值。
+ * @example
+ * ```ts
+ * // 由 document 的 pointerdown 监听触发；点面板内部时保持展开
+ * ```
+ */
+function onDocPointerDown(e: PointerEvent): void {
+  const root = panelWrapRef.value;
+  const targetInside = !!root && root.contains(e.target as Node);
+  if (shouldCloseMetricPanel(panelOpen.value, targetInside)) panelOpen.value = false;
+}
+
+/**
+ * 按 Esc 收起浮层（键盘习惯，与 MetricConfigPanel 的既有行为一致）。
+ *
+ * @param e - 键盘事件。
+ * @returns 无返回值。
+ * @example
+ * ```ts
+ * // 由 document 的 keydown 监听触发
+ * ```
+ */
+function onEsc(e: KeyboardEvent): void {
+  if (e.key === "Escape" && panelOpen.value) panelOpen.value = false;
+}
+
+onMounted(() => {
+  document.addEventListener("pointerdown", onDocPointerDown);
+  document.addEventListener("keydown", onEsc);
+  void bootstrap();
+});
 
 onBeforeUnmount(() => {
+  document.removeEventListener("pointerdown", onDocPointerDown);
+  document.removeEventListener("keydown", onEsc);
   controller?.abort();
   if (debounceTimer) clearTimeout(debounceTimer);
   ui.setNavigating(false);
@@ -390,10 +457,17 @@ onBeforeUnmount(() => {
         </label>
         <label class="od-field">
           <span>店铺</span>
-          <select v-model="shop" @change="onFilterChange">
-            <option value="">全部店铺</option>
-            <option v-for="s in meta?.shops ?? []" :key="s" :value="s">{{ s }}</option>
-          </select>
+          <!-- D9：收敛层下拉（搜索 + 按类型分组 + 文字徽章 + 明显底色）。
+               映射缺失时由纯函数降级为扁平列表，不影响筛选功能。 -->
+          <AppSelect
+            :model-value="shop"
+            :options="shopSelectOptions"
+            :width="190"
+            filterable
+            no-match-text="没有匹配的店铺"
+            data-testid="ops-shop-select"
+            @update:model-value="onShopChange"
+          />
         </label>
         <label class="od-field">
           <span>类型</span>
@@ -406,6 +480,20 @@ onBeforeUnmount(() => {
             </option>
           </select>
         </label>
+        <!-- D9 实时结果条：换条件走既有防抖重查，total 更新后这里自动刷新。 -->
+        <div class="od-result-bar" data-testid="ops-result-bar">
+          <span class="orb-chip">筛选结果</span>
+          <span v-if="state === 'loading'" class="orb-note">正在按新条件查询…</span>
+          <template v-else>
+            <span>共 <b>{{ total }}</b> 行</span>
+            <span class="orb-sep">·</span>
+            <span>{{ from }} ~ {{ to }}</span>
+            <span class="orb-sep">·</span>
+            <span>{{ shop || "全部店铺" }} / {{ shopType ? shopTypeLabel(shopType) : "全部类型" }}</span>
+            <span class="orb-sep">·</span>
+            <span>数据截至 <b>{{ meta?.data_through || "--" }}</b></span>
+          </template>
+        </div>
       </section>
 
       <section class="od-kpis" aria-label="核心指标">
@@ -588,8 +676,14 @@ onBeforeUnmount(() => {
       </section>
 
       <section class="od-tools">
-        <div class="od-panel-wrap">
-          <button class="od-btn-ghost" type="button" :aria-expanded="panelOpen" @click="panelOpen = !panelOpen">
+        <div class="od-panel-wrap" ref="panelWrapRef">
+          <button
+            class="od-btn-ghost"
+            type="button"
+            :aria-expanded="panelOpen"
+            data-testid="ops-metric-panel-btn"
+            @click="panelOpen = !panelOpen"
+          >
             指标勾选（{{ selectedKeys.length }}/{{ meta?.metrics.length ?? 0 }}）
           </button>
           <div v-if="panelOpen" class="od-panel" data-testid="ops-metric-panel">
@@ -758,7 +852,13 @@ onBeforeUnmount(() => {
 }
 .od-sub strong { color: var(--color-text-3); font-weight: 600; }
 
+/* D9 吸顶筛选栏：sticky 相对 .main（页面滚动容器），与 .od-scroll 内
+   表格表头的 sticky 分属两个滚动容器，互不冲突。
+   ⚠️ z-index 必须低于指标浮层 .od-panel(20)，否则会盖住下拉。 */
 .od-filters {
+  position: sticky;
+  top: 0;
+  z-index: 10;
   display: flex;
   flex-wrap: wrap;
   gap: 12px;
@@ -767,7 +867,48 @@ onBeforeUnmount(() => {
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sticky);
 }
+/* 补缝：.main 20px + .ops-daily 22px padding，吸顶后上方会露出滚过的内容，
+   用一条向上延伸的同底色遮挡盖住（真浏览器实测过）。 */
+.od-filters::before {
+  content: "";
+  position: absolute;
+  top: -24px;
+  left: -26px;
+  right: -26px;
+  height: 26px;
+  background: var(--color-bg);
+  pointer-events: none;
+}
+/* D9 实时结果条：随筛选重查自动刷新，不新增端点 */
+.od-result-bar {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 2px;
+  padding-top: 9px;
+  border-top: 1px dashed var(--color-brand-border-2);
+  font-size: calc(11.5px * var(--font-scale));
+  color: var(--color-text-3);
+}
+.od-result-bar b {
+  color: var(--color-text-strong);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.orb-chip {
+  background: var(--color-brand-tint);
+  color: var(--color-brand-darker);
+  border: 1px solid var(--color-brand-border-2);
+  border-radius: 5px;
+  padding: 1px 7px;
+  font-weight: 600;
+}
+.orb-sep { color: var(--color-border-2); }
+.orb-note { color: var(--color-text-5); }
 .od-field {
   display: flex;
   flex-direction: column;

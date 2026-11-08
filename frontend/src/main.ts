@@ -22,6 +22,7 @@ import {
   ElDialog,
   ElInputNumber,
   ElOption,
+  ElOptionGroup,
   ElSelect,
   ElTag,
 } from "element-plus";
@@ -33,6 +34,7 @@ import "element-plus/es/components/date-picker/style/css";
 import "element-plus/es/components/dialog/style/css";
 import "element-plus/es/components/input-number/style/css";
 import "element-plus/es/components/option/style/css";
+import "element-plus/es/components/option-group/style/css";
 import "element-plus/es/components/select/style/css";
 import "element-plus/es/components/tag/style/css";
 
@@ -63,6 +65,7 @@ createApp(App)
   .component("ElDialog", ElDialog)
   .component("ElInputNumber", ElInputNumber)
   .component("ElOption", ElOption)
+  .component("ElOptionGroup", ElOptionGroup)
   .component("ElSelect", ElSelect)
   .component("ElTag", ElTag)
   .mount("#app");

@@ -103,9 +103,9 @@
 | 脚本 | 守住的禁令 | 覆盖状态 | 是否进闸门 |
 |---|---|---|---|
 | `backend/jobs/verify_ops_daily.py`（48 断言） | §1 数据真相（受保护表指纹/回滚）、§2 SSOT（19 原子 + 5 派生不落库）、§3 验证铁律 | 已覆盖 | ⛔ 手动跑（临时库，不接 CI） |
-| `backend/jobs/verify_ops_daily_api.py`（54 断言） | §3 真发请求 / `response_model` / 只读隔离、§2 字典驱动（`shop_types` 取自库内 `DISTINCT`、默认页大小 50） | 已覆盖 | ⛔ 手动跑（TestClient） |
-| `frontend/verify_ops_daily.mjs`（116 断言） | §3 判定与渲染分离（`classifyOpsError` / `shopTypeLabel`）、§5 最浅文字与字号令牌化（配合 `verify:font`） | 已覆盖 | ✅ `npm run verify:ops` |
-| `frontend/verify_element_plus.mjs`（149 断言） | §2 SSOT（第三方 `--el-*` 单向映射到本项目令牌、业务层不直写 `el-*`），ADR-0020 决策二 | 已覆盖 | ✅ `npm run verify:ep` |
+| `backend/jobs/verify_ops_daily_api.py`（59 断言） | §3 真发请求 / `response_model` / 只读隔离、§2 字典驱动（`shop_types` 取自库内 `DISTINCT`、`shop_type_by_shop` 与库内 `GROUP BY shop` 独立重算一致、默认页大小 50） | 已覆盖 | ⛔ 手动跑（TestClient） |
+| `frontend/verify_ops_daily.mjs`（146 断言） | §3 判定与渲染分离（`classifyOpsError` / `shopTypeLabel`）、§5 最浅文字与字号令牌化（配合 `verify:font`） | 已覆盖 | ✅ `npm run verify:ops` |
+| `frontend/verify_element_plus.mjs`（151 断言） | §2 SSOT（第三方 `--el-*` 单向映射到本项目令牌、业务层不直写 `el-*`），ADR-0020 决策二 | 已覆盖 | ✅ `npm run verify:ep` |
 | `frontend/verify_inventory_refresh.mjs`（真浏览器 E2E） | §3「grep dist 不证明浏览器生效」 | 部分覆盖 | ⛔ 未接入：需 playwright + 8013 独立后端 + 临时 DB；文件头已注明运行前提 |
 
 **仍未闭合的缺口**（不因本次登记而消除）：`verify_inventory_refresh.mjs` 是唯一需要额外依赖与独立端口的真浏览器脚本，`§3` 那行「部分覆盖」维持不变；把真浏览器套件系统纳入 CI 仍是 §3 / §5 里标注「可建」的待办。

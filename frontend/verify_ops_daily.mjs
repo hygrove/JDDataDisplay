@@ -27,7 +27,9 @@ import {
   monthMom,
   orderMetricsForDisplay,
   previousRange,
+  buildShopSelectOptions,
   queryString,
+  shouldCloseMetricPanel,
   spanMom,
   trendClass,
 } from "./src/modules/opsDaily.ts";
@@ -270,6 +272,51 @@ eq(classifyOpsError("boom").message, "boom", "error 态带回原始错误文案"
 eq(shopTypeLabel("self"), "自营", "self 显示「自营」");
 eq(shopTypeLabel("pop"), "POP", "pop 显示「POP」");
 eq(shopTypeLabel("other"), "other", "未知类型原样显示，不误标成自营");
+
+// ---- 浮层收起判定：点页面别处收起，点面板内部保持，未打开时不动作 ----
+eq(shouldCloseMetricPanel(true, false), true, "展开时点外部 → 收起");
+eq(shouldCloseMetricPanel(true, true), false, "展开时点面板内部 → 保持");
+eq(shouldCloseMetricPanel(false, false), false, "未展开时点外部 → 不动作");
+eq(shouldCloseMetricPanel(false, true), false, "未展开时点内部 → 不动作");
+eq(shouldCloseMetricPanel(true, false) === !shouldCloseMetricPanel(true, true), true,
+  "内外点击判定互斥，不会同时收起与保持");
+
+// ---- D9 店铺下拉：分组 / 徽章 / 色调全部字典驱动，映射缺失时扁平降级 ----
+// ⛔ 用脱敏占位店名（§6.1 推前扫描④），数量与真实一致：自营 6 / POP 11。
+const selfShops = "ABCDEF".split("").map((c) => `自营示例店${c}`);
+const popShops = "ABCDEFGHIJK".split("").map((c) => `POP示例店${c}`);
+const allShops = [...selfShops, ...popShops];
+const typeMap = Object.fromEntries([
+  ...selfShops.map((s) => [s, "self"]),
+  ...popShops.map((s) => [s, "pop"]),
+]);
+const shopOpts = buildShopSelectOptions(allShops, ["pop", "self"], typeMap);
+eq(shopOpts[0], { value: "", label: "全部店铺" }, "首项是「全部店铺」且不分组");
+eq(shopOpts.length, 18, "1 个置顶项 + 17 家店");
+eq(shopOpts.filter((o) => o.group === "self").length, 6, "自营组 6 家");
+eq(shopOpts.filter((o) => o.group === "pop").length, 11, "POP 组 11 家");
+eq(shopOpts.findIndex((o) => o.group === "self") < shopOpts.findIndex((o) => o.group === "pop"),
+  true, "自营排在 POP 前（与图表 TYPE_ORDER 一致）");
+eq(shopOpts.find((o) => o.group === "self").groupLabel, "自营（6 家）", "分组标题带数量与中文标注");
+eq(shopOpts.find((o) => o.group === "pop").badge, "POP", "徽章文案走 shopTypeLabel");
+eq(shopOpts.find((o) => o.group === "self").tone, "self", "色调键是类型原始值，供 CSS 上底色");
+eq(new Set(shopOpts.map((o) => o.value)).size, 18, "每个店铺只出现一次（含置顶项）");
+// 新增第 3 类：后端字典多一项即自动成组，前端 0 改码
+const third = buildShopSelectOptions([...allShops, "新类示例店"], ["pop", "self", "other"],
+  { ...typeMap, "新类示例店": "other" });
+eq(third.filter((o) => o.group === "other").length, 1, "第 3 类自动成组");
+eq(third.find((o) => o.group === "other").badge, "other", "未知类型徽章原样回显，不误标自营");
+// 老服务没下发映射：不白屏，全部扁平
+const fallback = buildShopSelectOptions(allShops, ["pop", "self"], undefined);
+eq(fallback.length, 18, "映射缺失仍输出全部店铺");
+eq(fallback.every((o) => !o.group && !o.badge && !o.tone), true,
+  "映射缺失降级为扁平下拉（无分组 / 无徽章 / 无底色）");
+// 部分映射缺失：归「未分类」而不是丢店
+const partial = buildShopSelectOptions(allShops, ["pop", "self"],
+  { ...typeMap, [allShops[0]]: undefined });
+eq(partial.length, 18, "部分映射缺失不丢店");
+eq(partial.filter((o) => o.group === "__unclassified__").length, 1, "缺映射的店归「未分类」");
+eq(buildShopSelectOptions([], ["pop", "self"], typeMap).length, 1, "空店铺列表只有「全部店铺」");
 
 console.log(`\n合计：PASS ${pass} / FAIL ${fail}`);
 if (fail) {

@@ -83,3 +83,11 @@
 - **落地**：新建 `components/ui/AppDateRangePicker.vue`（第 7 个语义包装），业务页只认 `AppDateRangePicker` 与 `[from, to] | null` 字符串数组，用 `dateRange` computed 桥接既有 `from` / `to` ref，避免为换控件把 `baseQuery` / `previousRange` / 导出文件名一整串改成数组下标；`main.ts` 注册 `ElDatePicker` + 引入 `date-picker/style/css`；`verify:ep` ④ 导出检查数组 6 → 7，⑤ 自动校验注册与样式（实测 149/0）。
 - **代价（如实登记）**：新增懒加载 chunk `DateRangePicker-*.js` 18.75 kB（gzip 7.35 kB）+ 同名 CSS 9.81 kB（gzip 1.87 kB），不进首屏包。这是「一个筛选控件换一个整体交互」付出的体积，接受并监控。
 - **验证**：`npm run build` ✅、`npm run verify` 全链 ✅、真浏览器（8014 隔离 DB + Edge CDP）**16/16**，含「全区间把新日期推回控件」与「换日期后真的重查数据」两条交互断言。详见 `.scratch/ops-daily/SPEC.md` v1.5 §12 与工单 08。
+
+## 维护修订（2026-11-08 16:45，D9）：筛选栏第二个控件迁移，收敛层 `AppSelect` 增强
+
+- **边界不变**：核心表格仍不迁移（`ElTable` / `ElPagination` / `ElTooltip` / `ElPopover` / `ElIcon` 仍不注册）；指标矩阵继续原生 `<table>` + sticky + `v-memo`，每页 50 行性能契约不变。本次迁移的是**筛选栏的第二个控件**——店铺下拉从原生 `<select>` 换成收敛层 `AppSelect`（EP `el-select`）。
+- **动机**：17 家店名字相近，原生 `<option>` 无法可靠加分组/徽章/底色（原生 `option` 的背景色渲染受浏览器与系统主题影响，本次未做跨浏览器实测，故不以此作为唯一依据），也无法搜索。收敛层是「EP 的唯一合法引用点」，增强它而不是在业务页直写 `el-*`，正是 11-08 ①B 补记里确立的解法。
+- **落地与兼容**：`AppSelectOption` 新增**全部可选**的 `group` / `groupLabel` / `badge` / `tone`，props 新增可选 `filterable` / `noMatchText`；内部 `groups` computed 在无任何分组时返回 `null`，保持旧扁平渲染 ⇒ 库存页 `RestockPanel` 的参数下拉 **0 行为变化**。新增 `ElOptionGroup` 注册与 `option-group/style/css` 样式引入，由 `verify:ep` ⑤ 自动校验（149 → **151/0**）。
+- **⚠️ teleport 带来的令牌位置修正**：下拉面板 teleport 到 `body`，既拿不到 `.ops-daily` 的局部 CSS 变量，也不受组件 scoped 样式管辖。故「明显底色」的 6 个语义令牌**新增到全局 `style.css :root`**（⛔ 只新增、不改任何既有值，全站品牌色零变化），选项内容样式用非 scoped `<style>` + `popper-class="app-select-popper"` 前缀限定，⛔ 不定义 `--el-*` 变量。这是对静态预览「只在 ops 页局部定义」措辞的如实修正，已登记工单 10 与 SPEC §14。
+- **验证**：`npm run build` ✅（2292 modules）；`npm run verify` 全链 ✅；真浏览器 CDP **15/15**（滚动吸顶、分组与明显底色实测、搜索、换店铺真重查、点外部收起回归、控制台 0 错误）。详见工单 10。

@@ -81,6 +81,10 @@ class OpsMetricMeta(BaseModel):
     data_through: Optional[str] = None
     shops: list[str] = Field(default_factory=list)
     shop_types: list[str] = Field(default_factory=list)
+    #: 店铺 → 类型映射（D9）。供筛选下拉按类型分组 / 加徽章 / 上底色；
+    #: 值来自库内 DISTINCT，⛔ 不写死 self/pop，也不从当前页 50 行反推。
+    #: 缺省为空字典：老服务或未导入数据时，前端降级为单组扁平下拉。
+    shop_type_by_shop: dict[str, str] = Field(default_factory=dict)
     total_rows: int = 0
 
 
@@ -337,7 +341,9 @@ def get_meta() -> OpsMetricMeta:
     """下发基准指标字典、可筛选店铺 / 类型与数据截至日期（只读）。
 
     Returns:
-        OpsMetricMeta: 24 项字典（19 原子 + 5 派生）+ 筛选项 + ``data_through``。
+        OpsMetricMeta: 24 项字典（19 原子 + 5 派生）+ 筛选项 + 店铺类型映射
+        + ``data_through``。``shop_type_by_shop`` 来自库内 ``GROUP BY shop``，
+        字典为空时前端降级为扁平下拉。
 
     Raises:
         HTTPException: 字典或事实表不可用时 503。
@@ -362,6 +368,17 @@ def get_meta() -> OpsMetricMeta:
                     "SELECT DISTINCT shop_type FROM ops_shop_daily ORDER BY shop_type"
                 )
             ]
+            # D9：店铺 → 类型映射。GROUP BY + MIN 是给「一店多类型」的
+            # 确定性兜底：取字典序最小值，不随行序漂移。当前 17 家店实测
+            # 为一对一，但不把该结论写成前置条件——将来出现多类型也能稳定出值。
+            # ⛔ 不能用当前页 /data 的 50 行反推：受筛选影响会漏店。
+            type_by_shop = {
+                r[0]: r[1]
+                for r in conn.execute(
+                    "SELECT shop, MIN(shop_type) FROM ops_shop_daily "
+                    "GROUP BY shop ORDER BY shop"
+                )
+            }
             total = conn.execute("SELECT COUNT(*) FROM ops_shop_daily").fetchone()[0]
         except sqlite3.Error as exc:
             raise HTTPException(
@@ -388,6 +405,7 @@ def get_meta() -> OpsMetricMeta:
         data_through=through,
         shops=shops,
         shop_types=shop_types,
+        shop_type_by_shop=type_by_shop,
         total_rows=int(total),
     )
 
