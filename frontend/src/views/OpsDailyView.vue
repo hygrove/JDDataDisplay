@@ -92,6 +92,18 @@ const panelOpen = ref(false);
  * ⚠️ 不能只把浮层当根——点按钮时会被判定成「外部点击」，刚展开就立刻收起。
  */
 const panelWrapRef = ref<HTMLElement | null>(null);
+/**
+ * D11：吸顶补缝只在真正吸顶时出现。
+ * ⚠️ 补缝（::before）为「遮住滚过内容」而向上延伸 24px，但初始 scrollTop=0
+ * 时它同样存在，实测盖住 .od-sub 底部 8px ⇒ 副标题只显示上半截（用户截图反馈）。
+ */
+const filtersStuck = ref(false);
+let mainScrollEl: HTMLElement | null = null;
+
+/** 只有 .main 真的滚动过，才需要补缝与悬浮投影。 */
+function onMainScroll(): void {
+  filtersStuck.value = (mainScrollEl?.scrollTop ?? 0) > 0;
+}
 const formulaOpen = ref(false);
 const exporting = ref(false);
 const exportDoneBatches = ref(0);
@@ -405,12 +417,18 @@ function onEsc(e: KeyboardEvent): void {
 onMounted(() => {
   document.addEventListener("pointerdown", onDocPointerDown);
   document.addEventListener("keydown", onEsc);
+  mainScrollEl = document.querySelector<HTMLElement>('[data-testid="app-main"]');
+  mainScrollEl?.addEventListener("scroll", onMainScroll, { passive: true });
+  // 浏览器可能恢复上次的滚动位置，挂载时先同步一次状态。
+  onMainScroll();
   void bootstrap();
 });
 
 onBeforeUnmount(() => {
   document.removeEventListener("pointerdown", onDocPointerDown);
   document.removeEventListener("keydown", onEsc);
+  mainScrollEl?.removeEventListener("scroll", onMainScroll);
+  mainScrollEl = null;
   controller?.abort();
   if (debounceTimer) clearTimeout(debounceTimer);
   ui.setNavigating(false);
@@ -444,7 +462,7 @@ onBeforeUnmount(() => {
     </section>
 
     <template v-else>
-      <section class="od-filters" aria-label="筛选条件">
+      <section class="od-filters" :class="{ 'is-stuck': filtersStuck }" aria-label="筛选条件">
         <label class="od-field">
           <span>日期区间</span>
           <!-- D7：一个控件框选起止，值桥接见 dateRange computed。
@@ -867,10 +885,13 @@ onBeforeUnmount(() => {
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
-  box-shadow: var(--shadow-sticky);
+  /* D11：投影只在真正吸顶时出现 —— 初始状态它不是浮动层，见下方 .is-stuck。 */
 }
 /* 补缝：.main 20px + .ops-daily 22px padding，吸顶后上方会露出滚过的内容，
-   用一条向上延伸的同底色遮挡盖住（真浏览器实测过）。 */
+   用一条向上延伸的同底色遮挡盖住（真浏览器实测过）。
+   ⚠️ D11：scrollTop=0 时这条 26px 补缝实测盖住 .od-sub 底部 8px（副标题
+   只显示一半）⇒ 改为只在 .is-stuck 时可见。⛔ 用 opacity 而非 display:none：
+   D9 的 CDP 断言依赖 getComputedStyle(::before).height === '26px'。 */
 .od-filters::before {
   content: "";
   position: absolute;
@@ -880,7 +901,12 @@ onBeforeUnmount(() => {
   height: 26px;
   background: var(--color-bg);
   pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.12s ease;
 }
+/* D11：只有 .main 真的滚动过，才补缝 + 投影。 */
+.od-filters.is-stuck::before { opacity: 1; }
+.od-filters.is-stuck { box-shadow: var(--shadow-sticky); }
 /* D9 实时结果条：随筛选重查自动刷新，不新增端点 */
 .od-result-bar {
   width: 100%;
