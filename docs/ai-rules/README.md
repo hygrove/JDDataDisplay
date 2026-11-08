@@ -189,7 +189,11 @@
 - `backend/tests/test_alert_rules.py`：预警三档 / 可信销速三级估计 / 补货量。
 - `backend/tests/test_erp_map.py`：ERP 映射。
 - `backend/tests/test_inventory_api.py`：库存 API。**⚠️ 需真实 DB**，空库时大面积失败（`no such table: inventory_daily`）——那**不是**回归，是缺数据；跑前设 `JD_DB_PATH` 指向有数据的库。
-- 跑法（仓库根）：`python -m unittest backend.tests.test_alert_rules -v`（其余类推）。
+- 跑法（**必须在 `backend/` 目录下**）：`python -m unittest tests.test_alert_rules -v`（其余类推）。⚠️ 2026-11-08 实测：从仓库根跑 `python -m unittest backend.tests.test_alert_rules` 会报 `ModuleNotFoundError: No module named 'jobs'`——测试模块内是 `from jobs.xxx import ...`，只有把 `backend/` 作为包根才解析得到；从 `backend/` 目录跑 137 个用例全绿。
+
+### 后端 · ops-daily 独立断言（⛔ 不用 pytest，独立 `__main__` 入口）
+- `python -m backend.jobs.verify_ops_daily`（**46 断言**，临时库）：表结构 / 指标字典 / 1564 行导入 / NULL 与 0 / 8-9 月源真值重算 / 10 月假零 / 幂等 / 增删改查与人工保护 / 删除墓碑 / 受保护表指纹与回滚 / 畸形源文件。
+- `python -m backend.jobs.verify_ops_daily_api`（**52 断言**，TestClient 真发请求）：`/meta` 字典 24 项、参数校验与分页、三条件筛选与 DB 直查一致、派生 `SUM/SUM` 独立重算、`monthly` 全库月份口径、字典驱动新增项 0 改码出列、`response_model` 与 OpenAPI、10 张表只读隔离。⚠️ 必须从**仓库根**以 `-m` 形式跑；直接跑文件路径会 `ModuleNotFoundError`。
 
 ### 后端 · 自愈冒烟（非文件，是条命令）
 - 改完必跑：`python -c "from backend.app.main import app"`（真导入，抓 `NameError` 类导入期错误；`py_compile` 查不出）。
@@ -201,9 +205,12 @@
 - `npm run verify:inventory` → `verify_inventory_display.mjs`：库存/补货展示判定（矩阵表与补货工作台共用实现）。
 - `npm run verify:virtual` → `verify_virtual_list.mjs`：虚拟滚动行高映射。
 - `npm run verify:font` → `verify_font.mjs`：字号缩放令牌化（防回退）。
+- `npm run verify:ops` → `verify_ops_daily.mjs`（**105 断言**）：店铺运营页纯函数层——月度环比与符号、SVG 几何与徽章位置、刻度与线型、字典驱动列、NULL/0 显示、分批导出与 CSV BOM、请求参数拼装。
+- `npm run verify:ep` → `verify_element_plus.mjs`（**144 断言**）：Element Plus 收敛层静态检查——业务组件不直写 `el-*` 标签 / 不直引或自定义 `--el-*` 变量、收敛层 6 个组件齐备、每个用到的 EP 组件均已注册且引入样式。
 
 ### 前端 · 真浏览器视觉回归（⛔ 未并入 `npm run verify`）
 - `verify_visual_font.mjs`：字号缩放全链路 + localStorage 持久化。需 `npm run dev` 在 5173 跑 + `npm install --no-save playwright`（系统 Edge channel），再 `node verify_visual_font.mjs`；截图落 `.scratch/font-scale/`。
+- `verify_inventory_refresh.mjs`：库存页「手动刷新」按钮的端到端回归（按钮位置 / 配色 / 禁用与旋转 / 状态胶囊 / 真的发出 POST 且 200 / 数据重拉 / 补货 Tab 同效）。需**独立测试后端在 8013** + `npm install --no-save playwright`（系统 Edge channel）+ `JD_DB_PATH` / `JD_DATA_DIR` 指向临时目录隔离写库与缩略图；淘汰步骤默认 `dry-run`。⛔ 它会真触发摄入，⛔ 不可对生产库跑。脚本自身头部有运行前提说明，未接入 `npm run verify` 是因为需要额外依赖与独立端口。
 
 ### 已删除（勿引用）
 - `verify_all.py`、`verify_promo_*`：`78eb10f` 删除。

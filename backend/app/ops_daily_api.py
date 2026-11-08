@@ -35,7 +35,10 @@ from ..jobs import ops_daily
 router = APIRouter(prefix="/api/ops-daily")
 
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
-_DEFAULT_PAGE_SIZE = 200
+# 默认每页 50 行：与 SPEC §4.1 性能契约一致。⛔ 不要改成 200 —— 前端虽会
+# 强传 PAGE_SIZE=50，但裸调 /data 的调用方（脚本 / 导出兜底 / 后续新页面）
+# 不该拿到比契约更大的结果集，否则「页面耗时只与当前页行数相关」会破功。
+_DEFAULT_PAGE_SIZE = 50
 _MAX_PAGE_SIZE = 500
 # 全量导出的硬上限：现有数据 1564 行，留足余量也防住误用导致的超大响应。
 # 超过上限直接报错而不是静默截断——截断会破坏「导出 = 筛选全量行」的承诺。
@@ -407,7 +410,10 @@ def get_data(
     Args:
         start: 起始日期（含），Query 别名 ``from``（Python 关键字不能作参数名）。
         end: 结束日期（含），Query 别名 ``to``。
-        shop / shop_type: 可选精确筛选；shop_type 只接受 ``self`` / ``pop``。
+        shop / shop_type: 可选精确筛选。``shop_type`` 的合法值来自库内
+            ``DISTINCT shop_type``（由 ``/meta.shop_types`` 下发），⛔ 不在后端
+            写死 self/pop —— 新增类型时前后端都应 0 改码；传入未知类型按普通
+            筛选处理（返回空结果），不报 400。
         page / page_size: 服务端分页，复用项目既有 PagedRows 契约。
         all_rows: 导出模式开关，Query 别名 ``all``。
 
@@ -421,8 +427,9 @@ def get_data(
         raise HTTPException(status_code=400, detail="from / to 必须是 YYYY-MM-DD")
     if start > end:
         raise HTTPException(status_code=400, detail="from 不得晚于 to")
-    if shop_type is not None and shop_type not in ("self", "pop"):
-        raise HTTPException(status_code=400, detail="shop_type 只能是 self 或 pop")
+    # ⛔ 不写死 ("self", "pop")：类型集合的唯一来源是库内 DISTINCT shop_type，
+    # /meta.shop_types 已下发给前端渲染下拉。未知类型只是筛不到行，不是参数错误。
+    # 这样新增第 3 类时筛选侧与图表侧（by_type 动态键）行为一致，都无需改码。
 
     with closing(_conn()) as conn:
         metrics, pairs = _metric_defs(conn)

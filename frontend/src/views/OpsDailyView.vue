@@ -22,9 +22,11 @@ import {
   MONTHLY_CHART,
   buildMonthlyChart,
   buildOpsCsv,
+  classifyOpsError,
   defaultRange,
   defaultSelectedKeys,
   exportPages,
+  shopTypeLabel,
   formatTrend,
   formatValue,
   isMissing,
@@ -135,18 +137,14 @@ const metricGroups = computed(() => [
 ]);
 
 /**
- * 把接口异常映射到页面状态。
+ * 把接口异常映射到页面状态（视图只做赋值，判定在 opsDaily.ts 纯函数层）。
  *
- * @remarks 401 / 403 单独走「无权限」态，避免把权限问题显示成「网络错误」误导用户重试。
+ * @remarks 401 / 403 走「无权限」态；纯函数 `classifyOpsError` 有独立 node 断言。
  */
 function applyError(e: unknown): void {
-  const msg = e instanceof Error ? e.message : String(e);
-  if (/\b(401|403)\b|无权限|Forbidden|Unauthorized/i.test(msg)) {
-    state.value = "denied";
-  } else {
-    state.value = "error";
-    errorText.value = msg;
-  }
+  const verdict = classifyOpsError(e);
+  state.value = verdict.state;
+  if (verdict.state === "error") errorText.value = verdict.message;
 }
 
 /** 拉取字典并初始化默认区间 / 默认勾选列。 */
@@ -373,10 +371,13 @@ onBeforeUnmount(() => {
         </label>
         <label class="od-field">
           <span>类型</span>
+          <!-- 选项来自 /meta.shop_types（库内 DISTINCT shop_type）：新增第 3 类时
+               前端 0 改码自动多一项；显示名走 shopTypeLabel 纯函数，未知类型原样显示。 -->
           <select v-model="shopType" @change="onFilterChange">
             <option value="">全部类型</option>
-            <option value="pop">POP</option>
-            <option value="self">自营</option>
+            <option v-for="t in meta?.shop_types ?? []" :key="t" :value="t">
+              {{ shopTypeLabel(t) }}
+            </option>
           </select>
         </label>
       </section>
@@ -633,7 +634,7 @@ onBeforeUnmount(() => {
                 >
                   <td class="od-sticky">{{ row.date }}</td>
                   <td class="od-sticky od-sticky-2">{{ row.shop }}</td>
-                  <td>{{ row.shop_type === "pop" ? "POP" : "自营" }}</td>
+                  <td>{{ shopTypeLabel(row.shop_type) }}</td>
                   <td
                     v-for="m in visibleMetrics"
                     :key="m.metric_key"
@@ -1015,10 +1016,10 @@ onBeforeUnmount(() => {
 /* 表头已改单行：不再有第二行 sticky 偏移，也不再有分组表头样式 */
 .od-th-derived { color: var(--color-brand-dark) !important; }
 .od-unit { margin-left: 3px; font-weight: 400; color: var(--color-text-5); }
-.od-table td:first-child,
-.od-table td:nth-child(2),
-.od-table th:first-child,
-.od-table th:nth-child(2) { text-align: left; }
+/* ⛔ 不用 :nth-child（ai-rules §5：依赖「每行列数相同」这个隐藏前提，
+   勾选指标改变列数时极易错位）。前两列本来就有 od-sticky 类，直接按类选中。 */
+.od-table td.od-sticky,
+.od-table th.od-sticky { text-align: left; }
 .od-sticky { position: sticky; left: 0; z-index: 2; background: var(--color-surface); }
 .od-sticky-2 { left: 96px; }
 .od-table thead .od-sticky { z-index: 4; background: var(--color-surface-head); }

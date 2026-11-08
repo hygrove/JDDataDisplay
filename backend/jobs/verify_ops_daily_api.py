@@ -118,16 +118,25 @@ def main() -> int:
         client.get("/api/ops-daily/data", params={"from": "2026-10-31", "to": "2026-08-01"}).status_code == 400,
         "from 晚于 to → 400",
     )
+    # 2026-11-08：⛔ 不再断言「未知 shop_type → 400」。类型集合改由库内
+    # DISTINCT shop_type 驱动（/meta.shop_types），写死白名单会让新增第 3 类时
+    # 筛选侧与图表侧行为不一致。未知类型按普通筛选返回空结果即可。
+    unknown = client.get(
+        "/api/ops-daily/data",
+        params={"from": "2026-08-01", "to": "2026-10-31", "shop_type": "xxx"},
+    )
+    check(unknown.status_code == 200, "未知 shop_type 不报 400（字典驱动，不写死 self/pop）")
+    check(unknown.json()["total"] == 0, "未知 shop_type 按普通筛选返回 0 行")
     check(
-        client.get("/api/ops-daily/data", params={"from": "2026-08-01", "to": "2026-10-31", "shop_type": "xxx"}).status_code == 400,
-        "shop_type 非法 → 400",
+        set(meta.get("shop_types", [])) == {"self", "pop"},
+        f"/meta.shop_types 来自库内 DISTINCT shop_type（实为 {meta.get('shop_types')}）",
     )
     base = {"from": "2026-08-01", "to": "2026-10-31"}
     r = client.get("/api/ops-daily/data", params=base)
     check(r.status_code == 200, "GET /data 返回 200")
     data = r.json()
     check(data.get("total") == 1564, f"total = 1564（实为 {data.get('total')}）")
-    check(len(data.get("rows", [])) == 200, "默认每页 200 行")
+    check(len(data.get("rows", [])) == 50, "默认每页 50 行（SPEC §4.1 性能契约）")
     keys = {m["metric_key"] for m in metrics}
     check(
         all(set(row["values"]) == keys for row in data["rows"]),
@@ -139,20 +148,24 @@ def main() -> int:
     check(not (first_ids & second_ids), "第 1 / 2 页无重复行")
 
     print("\n[3] 三条件筛选与 DB 直查一致")
-    # 必须挑一个确实有 pop 行的店铺：若取 shops[0] 恰好是自营店，
+    # 必须挑一个 9 月确实有 pop 行的店铺：若取 shops[0] 恰好是自营店，
     # 「0 == 0」也能通过断言，却完全没验到筛选逻辑（自检时抓到过这个弱断言）。
-    shop = next(
-        (x["shop"] for x in data["rows"] if x["shop_type"] == "pop"),
-        meta["shops"][0],
-    )
-    filt = {**base, "shop": shop, "shop_type": "pop", "from": "2026-09-01", "to": "2026-09-30"}
-    fr = client.get("/api/ops-daily/data", params=filt).json()
+    # ⚠️ 默认页大小从 200 收到 50 后，不能再依赖「首页里碰巧有 pop 行」，
+    # 直接从 DB 取样本店铺；顺带去掉脚本里写死的真实店名（§6.1 推前扫描④）。
     with closing(ops_daily.get_conn()) as conn:
+        hit = conn.execute(
+            "SELECT shop FROM ops_shop_daily WHERE shop_type = 'pop' "
+            "AND date BETWEEN ? AND ? LIMIT 1",
+            ("2026-09-01", "2026-09-30"),
+        ).fetchone()
+        shop = hit[0] if hit else meta["shops"][0]
         expected = conn.execute(
             "SELECT COUNT(*) FROM ops_shop_daily "
             "WHERE date >= ? AND date <= ? AND shop = ? AND shop_type = ?",
             ("2026-09-01", "2026-09-30", shop, "pop"),
         ).fetchone()[0]
+    filt = {**base, "shop": shop, "shop_type": "pop", "from": "2026-09-01", "to": "2026-09-30"}
+    fr = client.get("/api/ops-daily/data", params=filt).json()
     check(expected > 0, f"筛选样本非空（{shop} 在 9 月有 {expected} 行），断言不空转")
     check(fr["total"] == expected, f"筛选 total 与 DB 直查一致（{fr['total']} == {expected}）")
     check(
@@ -178,7 +191,7 @@ def main() -> int:
                     row_mismatches += 1
             elif got is None or abs(got - val) > 1e-9:
                 row_mismatches += 1
-    check(row_mismatches == 0, f"200 行 × 5 派生与独立公式零误差（不一致 {row_mismatches} 处）")
+    check(row_mismatches == 0, f"50 行 × 5 派生与独立公式零误差（不一致 {row_mismatches} 处）")
 
     # summary = 筛选范围整体先求和再相除，用 DB 直查独立聚合
     with closing(ops_daily.get_conn()) as conn:

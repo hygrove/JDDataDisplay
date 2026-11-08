@@ -677,3 +677,54 @@ export function spanMom(values: Array<number | null | undefined>): MonthMom {
   if (values.length < 2) return { text: EMPTY, cls: "flat" };
   return monthMom(values[values.length - 1], values[0]);
 }
+
+/** `classifyOpsError()` 的结果：页面状态 + 可直接显示的错误文案。 */
+export interface OpsErrorVerdict {
+  state: "denied" | "error";
+  message: string;
+}
+
+/**
+ * 把接口异常映射成页面状态（判定与渲染分离，ai-rules §3 / 手册 §1.3）。
+ *
+ * @remarks
+ * 401 / 403 单独走「无权限」态，避免把权限问题显示成「网络错误」误导用户重试。
+ * 放在纯函数层是为了能写 node 断言：视图只负责把结果赋给 `state` / `errorText`。
+ * 只匹配「状态码 + 明确的权限词」，不把任意含 40x 的业务文案误判成无权限。
+ *
+ * @param e - catch 到的任意值（Error / 字符串 / 网络异常的 DOMException）。
+ * @returns 状态判定与原始错误文案；`denied` 时 message 仍填原文，便于排查。
+ * @example
+ * ```ts
+ * classifyOpsError(new Error("401 Unauthorized")).state; // "denied"
+ * classifyOpsError(new Error("500 网关超时")).state;     // "error"
+ * ```
+ */
+export function classifyOpsError(e: unknown): OpsErrorVerdict {
+  const message = e instanceof Error ? e.message : String(e);
+  const denied = /\b(401|403)\b|无权限|Forbidden|Unauthorized/i.test(message);
+  return { state: denied ? "denied" : "error", message };
+}
+
+/**
+ * 店铺类型的显示名。
+ *
+ * @remarks
+ * 类型集合本身来自 `/meta.shop_types`（库内 `DISTINCT shop_type`），⛔ 本函数
+ * 只做**已知类型的中文标注**，不参与筛选、不决定是否画线；遇到新增的第 3 类
+ * 原样返回其 key，避免像旧写法 `x === "pop" ? "POP" : "自营"` 那样把新类型
+ * 错标成「自营」。
+ *
+ * @param t - 库内的 shop_type 原始值。
+ * @returns 下拉框 / 表格里显示的文案。
+ * @example
+ * ```ts
+ * shopTypeLabel("self");      // "自营"
+ * shopTypeLabel("pop");       // "POP"
+ * shopTypeLabel("new_type");  // "new_type"
+ * ```
+ */
+export function shopTypeLabel(t: string): string {
+  const labels: Record<string, string> = { self: "自营", pop: "POP" };
+  return labels[t] ?? t;
+}

@@ -164,17 +164,22 @@ def main() -> int:
 
         # --- 5. NULL / 0 语义 ---
         print("[5] 占位符与真实零的区分")
+        # 2026-11-08：用「数值」定位样本行，不再把真实店名写进源码
+        # （§6.1 推前扫描④）。⛔ 不能改用 promo_clicks IS NULL 之类的语义条件来选，
+        # 否则断言会变成「自己选自己」的同义反复；销售额是独立定位键。
         r1 = conn.execute(
             "SELECT * FROM ops_shop_daily WHERE date='2026-10-01' "
-            "AND shop='慧采自营' AND shop_type='self'"
+            "AND ABS(sales_amount - 2178.90) < 1e-6 LIMIT 1"
         ).fetchone()
-        check(r1["promo_clicks"] is None, "`/` → SQL NULL（10月慧采自营点击量）")
+        check(r1 is not None, "定位到 10-01 销售额 2178.90 的样本行")
+        check(r1["promo_clicks"] is None, "`/` → SQL NULL（样本行点击量）")
         check(r1["compensation_amount"] == 0, "`0` → 真实的 0（赔付金额）")
         check(abs(r1["sales_amount"] - 2178.90) < 1e-6, "销售额数值无损")
         r2 = conn.execute(
             "SELECT * FROM ops_shop_daily WHERE date='2026-10-01' "
-            "AND shop='钻芯水饮电器旗舰店' AND shop_type='pop'"
+            "AND ABS(promo_order_amount - 1483.50) < 1e-6 LIMIT 1"
         ).fetchone()
+        check(r2 is not None, "定位到 10-01 推广成交金额 1483.50 的样本行")
         check(
             r2["jd_union_order_amount"] == 0 and r2["promo_order_amount"] == 1483.50,
             "0.00 不被误判为缺失；推广成交金额取自原「成交额」",
@@ -288,7 +293,7 @@ def main() -> int:
         # 用源文件里真实存在的一行验证「删除不复活」：人工行本就没有源文件支撑，说服力不足
         real = conn.execute(
             "SELECT id, date, shop, shop_type FROM ops_shop_daily "
-            "WHERE date='2026-10-02' AND shop='慧采自营'"
+            "WHERE date='2026-10-02' LIMIT 1"
         ).fetchone()
         key = (real["date"], real["shop"], real["shop_type"])
         o.delete_row(conn, row_id=real["id"])
@@ -303,7 +308,7 @@ def main() -> int:
         check(conn.execute(exists, key).fetchone()[0] == 1, "restore 后重新导入补回该行")
         # 人工修订保护：修改一行后重跑导入，值不被源文件覆盖
         target = conn.execute(
-            "SELECT id FROM ops_shop_daily WHERE date='2026-10-01' AND shop='慧采自营'"
+            "SELECT id FROM ops_shop_daily WHERE date='2026-10-01' LIMIT 1"
         ).fetchone()[0]
         o.update_row(conn, target, {"sales_amount": 99999.0})
         o.import_monthly(conn, SRC, MONTHS)

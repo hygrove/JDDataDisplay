@@ -13,7 +13,9 @@ import {
   PAGE_SIZE,
   buildMonthlyChart,
   buildOpsCsv,
+  classifyOpsError,
   csvCell,
+  shopTypeLabel,
   defaultRange,
   defaultSelectedKeys,
   exportPages,
@@ -61,8 +63,9 @@ eq(qs.includes("from=2026-08-01"), true, "查询串含 from");
 eq(qs.includes("to=2026-10-31"), true, "查询串含 to");
 eq(qs.includes("page=1"), true, "查询串默认第 1 页");
 eq(qs.includes(`page_size=${PAGE_SIZE}`), true, "查询串默认每页 50 行");
-eq(queryString({ from: "2026-08-01", to: "2026-08-31", shop: "医拜旗舰店", shop_type: "pop", page: 3 })
-  .includes("shop=%E5%8C%BB%E6%8B%9C%E6%97%97%E8%88%B0%E5%BA%97"), true, "中文店铺名正确编码");
+// ⛔ 用脱敏占位店名（§6.1 推前扫描④），编码值现算而不是写死中文 URL 串。
+eq(queryString({ from: "2026-08-01", to: "2026-08-31", shop: "示例店", shop_type: "pop", page: 3 })
+  .includes(`shop=${encodeURIComponent("示例店")}`), true, "中文店铺名正确编码");
 eq(PAGE_SIZE, 50, "每页 50 行（性能契约 §4.1）");
 eq(EXPORT_BATCH, 500, "导出每批 500 行");
 eq(EXPORT_CONCURRENCY, 4, "导出并发上限 4");
@@ -219,6 +222,19 @@ eq(extra.lines.map((l) => l.key), ["self", "pop", "other"], "新类型自动追�
 eq(extra.lines[2].color, "var(--color-brand)", "未知类型回退到局部主蓝令牌");
 eq(extra.lines[2].dash !== "", true, "新类型自动分配不同线型，不写死类型枚举");
 eq(extra.lines[2].hollow, true, "新类型用空心点，与实心自营区分");
+
+// ---- 判定与渲染分离：错误分类与类型显示名都在纯函数层（ai-rules §3 / 手册 §1.3）----
+eq(classifyOpsError(new Error("401 Unauthorized")).state, "denied", "401 → 无权限态");
+eq(classifyOpsError(new Error("403 Forbidden")).state, "denied", "403 → 无权限态");
+eq(classifyOpsError(new Error("无权限访问")).state, "denied", "中文无权限文案 → 无权限态");
+eq(classifyOpsError("500 网关超时").state, "error", "普通 5xx → 错误态");
+eq(classifyOpsError(new DOMException("AbortError")).state, "error", "取消的请求按普通错误处理");
+eq(classifyOpsError(undefined).state, "error", "非 Error 抛出值不崩溃");
+eq(classifyOpsError(new Error("401 Unauthorized")).message, "401 Unauthorized", "denied 仍保留原始错误文案");
+eq(classifyOpsError("boom").message, "boom", "error 态带回原始错误文案");
+eq(shopTypeLabel("self"), "自营", "self 显示「自营」");
+eq(shopTypeLabel("pop"), "POP", "pop 显示「POP」");
+eq(shopTypeLabel("other"), "other", "未知类型原样显示，不误标成自营");
 
 console.log(`\n合计：PASS ${pass} / FAIL ${fail}`);
 if (fail) {

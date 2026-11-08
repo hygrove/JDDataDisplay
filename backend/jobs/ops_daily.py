@@ -20,7 +20,7 @@
   python -m backend.jobs.ops_daily derived --start 2026-08-01 --end 2026-10-31 --group-by shop
   python -m backend.jobs.ops_daily update --id 1 --set sales_amount=1234.5
   python -m backend.jobs.ops_daily delete --id 1
-  python -m backend.jobs.ops_daily restore --date 2026-10-01 --shop 慧采自营 --shop-type self
+  python -m backend.jobs.ops_daily restore --date 2026-10-01 --shop <店铺名> --shop-type self
   python -m backend.jobs.ops_daily dict
   python -m backend.jobs.ops_daily guard
 """
@@ -243,7 +243,27 @@ def get_conn(db_path: Path | None = None) -> sqlite3.Connection:
 
 
 def ensure_schema(conn: sqlite3.Connection) -> None:
-    """幂等建表并写入基准指标字典；重复调用不改动既有数据行。"""
+    """幂等建表并写入基准指标字典；重复调用不改动既有数据行。
+
+    ⚠️ 必须放在 ``with conn:`` 事务**之外**调用：``executescript()`` 会隐式
+    提交当前事务，塞进事务里会让「导入失败即整体回滚」的保证失效。
+
+    Args:
+        conn: 已打开的 SQLite 连接（由调用方负责关闭）。
+
+    Returns:
+        None。
+
+    Raises:
+        sqlite3.Error: 建表或字典写入失败时由 SQLite 抛出，不做吞异常。
+
+    Example:
+        >>> with get_conn(tmp_db) as conn:  # doctest: +SKIP
+        ...     pass
+        >>> conn = get_conn(tmp_db)        # doctest: +SKIP
+        >>> ensure_schema(conn)           # doctest: +SKIP
+        >>> conn.close()                  # doctest: +SKIP
+    """
     conn.executescript(schema_sql())
     conn.commit()
 
@@ -548,7 +568,23 @@ def list_rows(
 
 
 def get_row(conn: sqlite3.Connection, row_id: int) -> sqlite3.Row | None:
-    """按主键取一行（查）。"""
+    """按主键取一行（CRUD 的「查」），返回含 ``is_manual`` 等元数据的完整行。
+
+    Args:
+        conn: 已打开且已建表的 SQLite 连接。
+        row_id: ``ops_shop_daily.id`` 主键。
+
+    Returns:
+        sqlite3.Row | None: 找到则返回该行；不存在返回 ``None``（不抛异常，
+            便于调用方用 ``is None`` 判断而不是捕获异常）。
+
+    Raises:
+        sqlite3.Error: 表不存在或连接不可用时由 SQLite 抛出。
+
+    Example:
+        >>> row = get_row(conn, 1)       # doctest: +SKIP
+        >>> row["shop"] if row else None # doctest: +SKIP
+    """
     return conn.execute("SELECT * FROM ops_shop_daily WHERE id = ?", (row_id,)).fetchone()
 
 
@@ -668,7 +704,27 @@ def delete_row(
 
 
 def restore_row(conn: sqlite3.Connection, date: str, shop: str, shop_type: str) -> bool:
-    """撤销删除墓碑（恢复）：下次导入会重新写入该 key。"""
+    """撤销删除墓碑：下次导入会重新把该 ``(date, shop, shop_type)`` 写回库。
+
+    只删墓碑记录，**不会立刻把数据行插回去**；恢复发生在下一次
+    ``import_monthly()``。这样「撤销删除」与「重新摄入」共用同一条幂等路径。
+
+    Args:
+        conn: 已打开的 SQLite 连接。
+        date: 日期，``YYYY-MM-DD``。
+        shop: 店铺名。
+        shop_type: 店铺类型（库内 ``DISTINCT shop_type`` 之一）。
+
+    Returns:
+        bool: 确实删掉了墓碑返回 ``True``；本来就没有墓碑返回 ``False``。
+
+    Raises:
+        sqlite3.Error: 写库失败时由 SQLite 抛出，``with conn:`` 会回滚。
+
+    Example:
+        >>> restore_row(conn, "2026-10-01", "示例店", "self")  # doctest: +SKIP
+        True
+    """
     with conn:
         cur = conn.execute(
             "DELETE FROM ops_row_tombstone WHERE date = ? AND shop = ? AND shop_type = ?",
@@ -737,7 +793,26 @@ def derived_rows(
 
 
 def metric_dict_rows(conn: sqlite3.Connection) -> list[sqlite3.Row]:
-    """读取库内的基准指标字典（查）。"""
+    """读取库内基准指标字典，按 ``sort_order`` 升序（列的唯一事实来源）。
+
+    前端列数、列名、单位、公式与精度全部由这里下发，⛔ 调用方不得另写一份
+    列清单或硬编码 24 这个数字。
+
+    Args:
+        conn: 已打开且已建表的 SQLite 连接。
+
+    Returns:
+        list[sqlite3.Row]: 字典行列表（当前 24 行 = 19 原子 + 5 派生）；
+            表为空时返回空列表，不抛异常。
+
+    Raises:
+        sqlite3.Error: 表不存在或连接不可用时由 SQLite 抛出。
+
+    Example:
+        >>> rows = metric_dict_rows(conn)                    # doctest: +SKIP
+        >>> [r["metric_key"] for r in rows if r["kind"] == "derived"]  # doctest: +SKIP
+        ['conversion_rate', 'avg_price', 'ppc', 'roi', 'jd_union_commission_rate']
+    """
     return conn.execute(
         "SELECT * FROM ops_metric_dict ORDER BY sort_order"
     ).fetchall()
