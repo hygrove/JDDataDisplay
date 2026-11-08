@@ -1,7 +1,8 @@
 <script setup lang="ts">
 // 店铺运营数据页（方案 A+B+C 图表）：B 指标矩阵打底 + A 顶部 4 张 KPI 卡 +
 // C 月度销售额趋势（按店铺类型拆解 + 月份之间环比徽章）。
-// ⚠️ 表头是单行指标名，不再标注「原子 / 派生」分组；派生公式走 title 悬停。
+// ⚠️ 表头是单行指标名，不再标注「原子 / 派生」分组；派生公式走中文 title 悬停（D7）。
+//    列序由 orderMetricsForDisplay 按「分母锚点」投影，DB sort_order 仍是存储序 SSOT（D7）。
 //
 // 三重隔离：独立路由 /ops-daily，不注册 modules/index.ts、不进 manifest v-for、
 // 不落入 /module/:moduleId ⇒ 单品明细与库存页 0 改动。
@@ -12,6 +13,7 @@
 // 导出按 500 行/批、并发 4 拉取，不经 DOM，用 Array.join 拼 CSV。
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef } from "vue";
 import { useUiStore } from "../stores/ui";
+import { AppDateRangePicker } from "../components/ui";
 import { fetchOpsDailyData, fetchOpsDailyMeta } from "../api";
 import {
   EXPORT_BATCH,
@@ -26,6 +28,8 @@ import {
   defaultRange,
   defaultSelectedKeys,
   exportPages,
+  metricTitle,
+  orderMetricsForDisplay,
   shopTypeLabel,
   formatTrend,
   formatValue,
@@ -63,6 +67,23 @@ const to = ref("");
 const shop = ref("");
 const shopType = ref("");
 const selectedKeys = ref<string[]>([]);
+
+/**
+ * 日期区间控件的 v-model 桥接（D7）：EP 用 `[from, to]` 数组，
+ * 页面状态与接口查询仍是两个独立的 `from` / `to` ref，避免为换控件
+ * 把 baseQuery、previousRange、导出文件名等一整串逻辑改成数组下标。
+ * 清空（null）刻意忽略：`clearable=false` 且空区间会让首屏失去数据。
+ */
+const dateRange = computed<[string, string] | null>({
+  // 显式返回类型：否则数组字面量会被推断成 string[]，与二元元组契约不匹配。
+  get: (): [string, string] | null =>
+    from.value && to.value ? [from.value, to.value] : null,
+  set: (v: [string, string] | null) => {
+    if (!v) return;
+    from.value = v[0];
+    to.value = v[1];
+  },
+});
 const panelOpen = ref(false);
 const formulaOpen = ref(false);
 const exporting = ref(false);
@@ -89,10 +110,13 @@ const metricsByKey = computed(() => {
   return map;
 });
 
-/** 当前勾选列（顺序恒按字典 sort_order，勾选只决定「有哪些列」）。 */
+/**
+ * 当前勾选列（D7）：顺序恒按「分母锚点」展示序，勾选只决定「有哪些列」。
+ * 表格与导出 CSV 共用它 ⇒ 两者列序自动一致（SPEC F-05）。
+ */
 const visibleMetrics = computed<OpsMetric[]>(() => {
   const picked = new Set(selectedKeys.value);
-  return (meta.value?.metrics ?? []).filter((m) => picked.has(m.metric_key));
+  return orderMetricsForDisplay(meta.value?.metrics ?? []).filter((m) => picked.has(m.metric_key));
 });
 
 const derivedAll = computed(() => (meta.value?.metrics ?? []).filter((m) => m.kind === "derived"));
@@ -153,7 +177,7 @@ async function loadMeta(): Promise<boolean> {
     const m = await fetchOpsDailyMeta();
     meta.value = m;
     if (!selectedKeys.value.length) {
-      // 8 原子 + 2 派生：首屏就能在同一行表头里看到派生重算值。
+      // D7：默认全选 24 列，首屏即可看到全部指标与派生重算值。
       selectedKeys.value = defaultSelectedKeys(m.metrics);
     }
     if (m.data_through) {
@@ -355,12 +379,14 @@ onBeforeUnmount(() => {
     <template v-else>
       <section class="od-filters" aria-label="筛选条件">
         <label class="od-field">
-          <span>起始日期</span>
-          <input v-model="from" type="date" :max="to" @change="onFilterChange" />
-        </label>
-        <label class="od-field">
-          <span>结束日期</span>
-          <input v-model="to" type="date" :min="from" :max="meta?.data_through || undefined" @change="onFilterChange" />
+          <span>日期区间</span>
+          <!-- D7：一个控件框选起止，值桥接见 dateRange computed。
+               起 ≤ 止由 EP 保证；上限用收敛层的 disabledDate 挡住 data_through 之后。 -->
+          <AppDateRangePicker
+            v-model="dateRange"
+            :max="meta?.data_through || undefined"
+            @change="onFilterChange"
+          />
         </label>
         <label class="od-field">
           <span>店铺</span>
@@ -448,7 +474,8 @@ onBeforeUnmount(() => {
               :class="`trend-${b.cls}`"
             >{{ b.symbol }} {{ b.text }}</span>
           </span>
-          <span class="od-legend-note">徽章 = <strong>相对上一个月的环比</strong>，绿涨红跌</span>
+          <!-- D7：删掉「徽章 = 相对上一个月的环比，绿涨红跌」说明行。
+               语义不蒸发：真实环比样例自带 ▲/▼ 与涨跌色，完整口径并入下方 SVG 的 aria-label。 -->
         </div>
 
         <div v-if="!chartHasMoms" class="od-chart-empty" data-testid="ops-chart-empty">
@@ -460,7 +487,7 @@ onBeforeUnmount(() => {
               class="od-svg"
               :viewBox="`0 0 ${MONTHLY_CHART.width} ${MONTHLY_CHART.height}`"
               role="img"
-              aria-label="自营实线与 POP 虚线的月度销售额双折线图，折线上方标注月份之间的环比"
+              aria-label="自营实线与 POP 虚线的月度销售额双折线图，折线上方标注月份之间的环比（相对上一个月），绿涨红跌"
             >
               <!-- 单位统一放这里：刻度改 1 位小数并去掉「万」后缀后不会再顶出画布 -->
               <text x="14" y="18" class="od-axis-title">单位：万元</text>
@@ -610,7 +637,8 @@ onBeforeUnmount(() => {
           <div v-else class="od-scroll">
             <table class="od-table">
               <!-- 表头只保留一行指标名：不再标注「原子 / 派生」分组（用户 2026-11-06 要求）。
-                   派生列的公式仍走 title 悬停；勾选面板里的分组文字不是表头，不受影响。 -->
+                   派生列的公式走中文 title 悬停（D7）；列序按分母锚点投影（D7）；
+                   勾选面板里的分组文字不是表头，不受影响。 -->
               <thead>
                 <tr>
                   <th class="od-sticky">日期</th>
@@ -619,7 +647,7 @@ onBeforeUnmount(() => {
                   <th
                     v-for="m in visibleMetrics"
                     :key="m.metric_key"
-                    :title="m.formula || m.cn_name"
+                    :title="metricTitle(m, meta?.metrics ?? [])"
                     :class="{ 'od-th-derived': m.kind === 'derived' }"
                   >
                     {{ m.cn_name }}<small v-if="m.unit" class="od-unit">{{ m.unit }}</small>
@@ -867,8 +895,6 @@ onBeforeUnmount(() => {
 .od-legend-demo .trend-up { color: var(--color-up); }
 .od-legend-demo .trend-down { color: var(--color-down); }
 .od-legend-demo .trend-flat { color: var(--color-text-5); }
-.od-legend-note { margin-left: auto; font-size: calc(12px * var(--font-scale)); font-weight: 400; color: var(--color-text-5); }
-.od-legend-note strong { color: var(--color-text-3); font-weight: 600; }
 
 .od-chart-empty { padding: 28px 12px; text-align: center; font-size: calc(12.5px * var(--font-scale)); color: var(--color-text-3); }
 .od-chart-split { display: grid; grid-template-columns: minmax(0, 2.2fr) minmax(0, 1fr); gap: 14px; align-items: start; }

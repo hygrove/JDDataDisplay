@@ -12,12 +12,13 @@ import { readStoredScale } from "./stores/uiPrefs";
 import "./style.css";
 // Element Plus：按需引入，只注册 components/ui/ 收敛层实际用到的组件。
 // 为什么按需而非全量：全量注册会把整个 EP 打进产物，而本项目只用到
-// 按钮 / 标签 / 下拉 / 数字输入 / 复选框等少数几个。
+// 按钮 / 标签 / 下拉 / 数字输入 / 复选框 / 日期区间等少数几个。
 // 收敛边界见 docs/adr/0020-tech-stack-layered-verdict.md 与 components/ui/index.ts。
 import {
   ElButton,
   ElCheckbox,
   ElConfigProvider,
+  ElDatePicker,
   ElDialog,
   ElInputNumber,
   ElOption,
@@ -28,6 +29,7 @@ import zhCn from "element-plus/es/locale/lang/zh-cn";
 import "element-plus/es/components/button/style/css";
 import "element-plus/es/components/checkbox/style/css";
 import "element-plus/es/components/config-provider/style/css";
+import "element-plus/es/components/date-picker/style/css";
 import "element-plus/es/components/dialog/style/css";
 import "element-plus/es/components/input-number/style/css";
 import "element-plus/es/components/option/style/css";
@@ -57,6 +59,7 @@ createApp(App)
   .component("ElButton", ElButton)
   .component("ElCheckbox", ElCheckbox)
   .component("ElConfigProvider", ElConfigProvider)
+  .component("ElDatePicker", ElDatePicker)
   .component("ElDialog", ElDialog)
   .component("ElInputNumber", ElInputNumber)
   .component("ElOption", ElOption)

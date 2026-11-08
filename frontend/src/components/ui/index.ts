@@ -66,3 +66,13 @@ export { default as AppTag } from "./AppTag.vue";
  * 都是无障碍细节，自建版本容易漏；EP 已做对。
  */
 export { default as AppDialog } from "./AppDialog.vue";
+
+/**
+ * 应用日期区间选择器：包住 el-date-picker 的 daterange，统一值格式与字号缩放。
+ *
+ * 为什么不让业务代码直接用 el-date-picker：区间值在不同写法下可能是
+ * Date 对象 / 时间戳 / 字符串，散落到各页面极易出现「一处 YYYY-MM-DD、
+ * 一处带时分秒」的静默漂移；收敛成 [from, to] 字符串数组后，
+ * 业务层只跟 from/to 打交道，EP 换版本也不外溢。
+ */
+export { default as AppDateRangePicker } from "./AppDateRangePicker.vue";

@@ -340,39 +340,125 @@ export const KPI_CARDS = [
   { key: "roi", label: "ROI", derived: true },
 ] as const;
 
-/** 默认勾选列数（V1.0 只启用勾选，不实现配置面板的分组 / 全选 / 重置）。 */
-export const DEFAULT_KEY_COUNT = 10;
-
 /**
- * 生成默认勾选列：原子指标打底，并固定留出 2 个派生指标。
+ * 生成默认勾选列：字典全选（2026-11-08 D7）。
  *
  * @remarks
- * 为什么不是「字典前 10 项」：字典里 5 个派生排在最后（sort_order 20~24），
- * 取前 10 项会全是原子列 ⇒ 首屏看不到派生重算值。
- * 留出 2 个派生（转化率、客单价）能让「原子 → 派生」的对账关系一眼可见；
- * 表头是单行指标名，不按 kind 分组，勾选集合只决定「有哪些列」。
- * 返回的**选取集合**不决定列序：页面始终按字典 sort_order 渲染。
+ * 用户要求「指标勾选默认全选」，首屏直接给全 24 列。性能契约 §4.1 本就按
+ * 50 行 × 24 列预算，故不新增 DOM 开销；横向滚动与 sticky 前两列由表格承担。
+ * 返回顺序 = 字典顺序（DB sort_order），**实际展示顺序由
+ * `orderMetricsForDisplay()` 决定**，勾选集合只回答「有哪些列」。
+ * ⛔ 用户手动取消到 0 列时由页面独立空态提示，不在此处兜底重新全选。
  *
  * @param metrics - /meta 下发的字典。
- * @param count - 默认列数，取 DEFAULT_KEY_COUNT。
- * @returns 被勾选的 metric_key 数组。
+ * @returns 全部 metric_key，顺序与字典一致。
  * @example
  * ```ts
- * defaultSelectedKeys(meta.metrics).length; // 10
+ * defaultSelectedKeys([{ metric_key: "a" } as OpsMetric]); // ["a"]
+ * defaultSelectedKeys([]); // []
  * ```
  */
-export function defaultSelectedKeys(
-  metrics: OpsMetric[],
-  count = DEFAULT_KEY_COUNT,
-): string[] {
-  const atomic = metrics.filter((m) => m.kind === "atomic");
+export function defaultSelectedKeys(metrics: OpsMetric[]): string[] {
+  return metrics.map((m) => m.metric_key);
+}
+
+/**
+ * 解析派生指标的 `分子key/分母key` 公式。
+ *
+ * @remarks
+ * 表头中文公式与展示列序都要读同一个结构，抽出来避免两处各自 split
+ * 却对「非法公式」给出不同的回退行为（判定与渲染分离，ai-rules §3）。
+ * 空串、缺分子或分母、多段一律返回 null，由调用方决定如何回退。
+ *
+ * @param formula - 字典下发的公式字符串；原子指标为空串。
+ * @returns [分子 key, 分母 key]；无法解析时返回 null。
+ * @example
+ * ```ts
+ * parseFormula("buyers/visitors"); // ["buyers", "visitors"]
+ * parseFormula(""); // null
+ * ```
+ */
+function parseFormula(formula: string): [string, string] | null {
+  if (!formula) return null;
+  const parts = formula.split("/");
+  if (parts.length !== 2 || !parts[0] || !parts[1]) return null;
+  return [parts[0], parts[1]];
+}
+
+/**
+ * 表头悬停文案：把字典里的 key 表达式翻译成中文口径（D7）。
+ *
+ * @remarks
+ * 旧写法 `:title="m.formula || m.cn_name"` 会让 5 个派生列弹出
+ * `buyers/visitors` 这类代码变量名。这里用公式的 key 反查字典
+ * `cn_name` 拼出「转化率 = 成交人数 ÷ 访客数」——中文全部来自字典，
+ * 前端硬编码公式数仍为 0（SPEC F-08），改字典即改文案。
+ * ⚠️ 分子或分母查不到中文名、公式不是 `a/b` 时，只回中文名 + 单位：
+ * 宁可少给信息，也绝不把 key 漏给用户。
+ *
+ * @param m - 当前列的字典项。
+ * @param dict - /meta 下发的完整字典，用于 key → 中文名反查。
+ * @returns 可直接放进 `title` 的中文文案。
+ * @example
+ * ```ts
+ * metricTitle(derived, meta.metrics); // "转化率 = 成交人数 ÷ 访客数"
+ * metricTitle(atomic, meta.metrics);  // "访客数（人）"
+ * ```
+ */
+export function metricTitle(m: OpsMetric, dict: OpsMetric[]): string {
+  const unit = m.unit ? `（${m.unit}）` : "";
+  const fallback = `${m.cn_name}${unit}`;
+  if (m.kind !== "derived") return fallback;
+  const parts = parseFormula(m.formula);
+  if (!parts) return fallback;
+  const byKey = new Map(dict.map((x) => [x.metric_key, x.cn_name]));
+  const num = byKey.get(parts[0]);
+  const den = byKey.get(parts[1]);
+  if (!num || !den) return fallback;
+  return `${m.cn_name} = ${num} ÷ ${den}`;
+}
+
+/**
+ * 展示列序：派生指标紧跟其公式的分母列（D7「分母锚点」）。
+ *
+ * @remarks
+ * 字典 sort_order 把 5 个派生排在最后（20~24），读表时「访客数 / 成交人数」
+ * 与由它们算出的「转化率」隔了十几列。这里按 formula 的分母把派生插回源头
+ * 指标中间：转化率落在访客数与成交人数之间、客单价落在成交人数之后，
+ * 依此类推。位置从字典现推，⛔ 不硬编码任何 key 或序号，新增指标 0 改码。
+ *
+ * ⚠️ 这是**视图投影**：DB `ops_metric_dict.sort_order` 仍是存储序的唯一
+ * 事实来源，本函数只决定页面与导出 CSV 的排列。若未来出现第 2 个列序
+ * 消费者，应把重排下沉到 `/meta` 下发，避免两处各排一次。
+ * 分母不在字典、或公式无法解析的派生列，按字典相对顺序追加末尾，
+ * 保证不丢列、不重复。
+ *
+ * @param metrics - /meta 下发的字典（已按 sort_order 升序）。
+ * @returns 新的数组，顺序为「原子列 + 紧跟其后的派生列」；不修改入参。
+ * @example
+ * ```ts
+ * orderMetricsForDisplay(meta.metrics).length; // 24（与入参等长）
+ * ```
+ */
+export function orderMetricsForDisplay(metrics: OpsMetric[]): OpsMetric[] {
+  const byKey = new Map(metrics.map((m) => [m.metric_key, m]));
   const derived = metrics.filter((m) => m.kind === "derived");
-  const derivedTake = Math.min(2, derived.length, count);
-  const atomicTake = Math.min(atomic.length, count - derivedTake);
-  return [
-    ...atomic.slice(0, atomicTake).map((m) => m.metric_key),
-    ...derived.slice(0, derivedTake).map((m) => m.metric_key),
-  ];
+  const inserted = new Set<string>();
+  const out: OpsMetric[] = [];
+  for (const m of metrics) {
+    if (m.kind === "derived") continue;
+    out.push(m);
+    for (const d of derived) {
+      if (inserted.has(d.metric_key)) continue;
+      const parts = parseFormula(d.formula);
+      if (parts && parts[1] === m.metric_key && byKey.has(parts[1])) {
+        out.push(d);
+        inserted.add(d.metric_key);
+      }
+    }
+  }
+  for (const d of derived) if (!inserted.has(d.metric_key)) out.push(d);
+  return out;
 }
 
 // ====================== 方案 C：月度趋势与「月份之间」的环比标注 ======================

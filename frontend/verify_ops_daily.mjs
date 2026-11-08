@@ -4,7 +4,6 @@
 // 这里把行为锁死，避免「页面上正常、导出里把 null 写成 0.00」这类静默漂移。
 // 运行：npm run verify:ops
 import {
-  DEFAULT_KEY_COUNT,
   EMPTY,
   EXPORT_BATCH,
   EXPORT_CONCURRENCY,
@@ -23,8 +22,10 @@ import {
   formatValue,
   formatWan,
   isMissing,
+  metricTitle,
   momSymbol,
   monthMom,
+  orderMetricsForDisplay,
   previousRange,
   queryString,
   spanMom,
@@ -115,13 +116,12 @@ eq(formatTrend(120, 100), "+20.00%", "环比文案带正号");
 eq(formatTrend(80, 100), "-20.00%", "环比文案带负号");
 eq(formatTrend(100, null), "", "上期缺失无环比文案");
 
-// ---- KPI 卡：4 张、后两张派生；默认勾选 10 列 ----
+// ---- KPI 卡：4 张、后两张派生 ----
 eq(KPI_CARDS.length, 4, "4 张 KPI 卡");
 eq(KPI_CARDS.filter((c) => c.derived).length, 2, "2 张派生卡");
 eq(KPI_CARDS.map((c) => c.key), ["sales_amount", "visitors", "conversion_rate", "roi"], "KPI 卡 key");
-eq(DEFAULT_KEY_COUNT, 10, "默认勾选 10 列");
 
-// ---- 默认列：8 原子 + 2 派生，保证单行表头首屏就能看到派生重算值 ----
+// ---- 默认勾选 = 字典全选（2026-11-08 D7）----
 const fakeDict = [
   ...Array.from({ length: 19 }, (_, i) => metric(`a${i}`, `原子${i}`)),
   ...Array.from({ length: 5 }, (_, i) => ({
@@ -129,10 +129,45 @@ const fakeDict = [
   })),
 ];
 const picked = defaultSelectedKeys(fakeDict);
-eq(picked.length, 10, "默认勾选 10 列");
-eq(picked.filter((k) => k.startsWith("d")).length, 2, "其中 2 个派生指标");
-eq(picked.slice(0, 8).every((k) => k.startsWith("a")), true, "其余 8 个是原子指标");
-eq(defaultSelectedKeys([metric("x", "X")]).length, 1, "字典不足 10 项时按实际数量");
+eq(picked.length, fakeDict.length, "默认勾选 = 字典全量 24 列");
+eq(picked, fakeDict.map((m) => m.metric_key), "默认勾选顺序 = 字典顺序");
+eq(defaultSelectedKeys([metric("x", "X")]).length, 1, "字典只有 1 项时只勾 1 项");
+eq(defaultSelectedKeys([]), [], "空字典返回空数组不抛异常");
+
+// ---- 表头弹窗：全中文，零代码变量名（D7）----
+const titleDict = [
+  metric("visitors", "访客数", "人"),
+  metric("buyers", "成交人数", "人"),
+  { ...metric("conversion_rate", "转化率", "%"), kind: "derived", formula: "buyers/visitors" },
+  { ...metric("roi", "ROI", "倍"), kind: "derived", formula: "promo_order_amount/promo_cost" },
+];
+eq(metricTitle(titleDict[0], titleDict), "访客数（人）", "原子列 = 中文名 + 单位");
+eq(metricTitle(titleDict[2], titleDict), "转化率 = 成交人数 ÷ 访客数", "派生列 = 中文名 + 中文分子 ÷ 中文分母");
+eq(metricTitle(titleDict[3], titleDict), "ROI（倍）", "分子/分母查不到中文名时只回中文名");
+eq(metricTitle(titleDict[3], titleDict).includes("promo_"), false, "任何情况下不得把 key 漏进弹窗");
+eq(metricTitle({ ...titleDict[2], formula: "buyers" }, titleDict), "转化率（%）", "公式不是 a/b 时优雅回退");
+
+// ---- 展示列序：派生紧跟分母（D7）----
+const orderDict = [
+  metric("sales_amount", "销售额"),
+  metric("visitors", "访客数", "人"),
+  metric("buyers", "成交人数", "人"),
+  { ...metric("conversion_rate", "转化率", "%"), kind: "derived", formula: "buyers/visitors" },
+  { ...metric("avg_price", "客单价", "元"), kind: "derived", formula: "sales_amount/buyers" },
+  { ...metric("ppc", "PPC", "元"), kind: "derived", formula: "promo_cost/missing_key" },
+];
+const ordered = orderMetricsForDisplay(orderDict);
+eq(
+  ordered.map((m) => m.metric_key),
+  ["sales_amount", "visitors", "conversion_rate", "buyers", "avg_price", "ppc"],
+  "转化率夹在访客数与成交人数之间、客单价紧跟成交人数",
+);
+eq(ordered.length, orderDict.length, "重排不丢列");
+eq(new Set(ordered.map((m) => m.metric_key)).size, orderDict.length, "重排后 key 唯一不重复");
+eq(orderMetricsForDisplay([]), [], "空字典返回空数组");
+const visibleOrder = orderMetricsForDisplay(orderDict)
+  .filter((m) => new Set(["visitors", "conversion_rate", "buyers"]).has(m.metric_key));
+eq(visibleOrder.map((m) => m.metric_key), ["visitors", "conversion_rate", "buyers"], "勾选只决定有哪些列、不改列序");
 
 // ---- 方案 C：月份之间的环比徽章（真实 8/9/10 月数据，与 DB 汇总一致） ----
 eq(monthMom(1784381.57, 1684635.96), { text: "+5.92%", cls: "up" }, "自营 8→9 环比 +5.92%（绿涨）");

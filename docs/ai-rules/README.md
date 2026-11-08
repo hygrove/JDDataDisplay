@@ -206,7 +206,7 @@
 - `npm run verify:virtual` → `verify_virtual_list.mjs`：虚拟滚动行高映射。
 - `npm run verify:font` → `verify_font.mjs`：字号缩放令牌化（防回退）。
 - `npm run verify:ops` → `verify_ops_daily.mjs`（**116 断言**）：店铺运营页纯函数层——月度环比与符号、SVG 几何与徽章位置、刻度与线型、字典驱动列、NULL/0 显示、分批导出与 CSV BOM、请求参数拼装、`classifyOpsError()` 401/403 判定与渲染分离、`shopTypeLabel()` 已知类型中文标注 / 未知类型原样回显。
-- `npm run verify:ep` → `verify_element_plus.mjs`（**144 断言**）：Element Plus 收敛层静态检查——业务组件不直写 `el-*` 标签 / 不直引或自定义 `--el-*` 变量、收敛层 6 个组件齐备、每个用到的 EP 组件均已注册且引入样式。
+- `npm run verify:ep` → `verify_element_plus.mjs`（**149 断言**）：Element Plus 收敛层静态检查——业务组件不直写 `el-*` 标签 / 不直引或自定义 `--el-*` 变量、收敛层 7 个组件齐备、每个用到的 EP 组件均已注册且引入样式。
 
 ### 前端 · 真浏览器视觉回归（⛔ 未并入 `npm run verify`）
 - `verify_visual_font.mjs`：字号缩放全链路 + localStorage 持久化。需 `npm run dev` 在 5173 跑 + `npm install --no-save playwright`（系统 Edge channel），再 `node verify_visual_font.mjs`；截图落 `.scratch/font-scale/`。

@@ -74,3 +74,12 @@
 - **修复令牌映射被 EP 覆盖（关键）**：`style.css` 的 `--el-*` 映射原写在 `:root`，与 EP `base.css` 的 `:root` 同特异性；EP 样式后加载，导致映射整体失效（实测 primary 仍是 EP 默认 `#409eff`、font-base 仍是 `14px`、overlay 仍是 `#00000080`）。改为 `:root:root`（特异性 0,2,0）后，实测 primary 恢复 `#e1251b`、font-base 为 `calc(13px * var(--font-scale))`、overlay 为项目令牌。**这是映射层能否生效的前提，不是可选优化**。
 - **弹层迁移到 `AppDialog`**：`SettingsControl.vue` 与 `RestockPanel.vue` 的自建遮罩层改为经 `AppDialog` 包装 `el-dialog`。因为 `el-dialog` 被 teleport 到 `body`，`AppDialog` 内对其外壳（`.el-dialog` / `__header` / `__body`）的样式必须用 `:global()` 才能命中；直接写在 scoped 样式里会静默失效。此前两处 modal 的 Esc 监听、滚动锁、遮罩点击关闭均由 EP 接管，业务组件删除对应手写逻辑。
 - **已知遗留**：`RestockPanel.vue` 中 `.rp-param input, .rp-param select` 的尺寸规则在参数区改用 `AppNumberInput` / `AppSelect` 后不再命中，参数区高度由 EP 组件自身尺寸决定。若后续需要精确复刻原 16px/34px 参数栏，应在 `AppNumberInput` / `AppSelect` 上加尺寸变体，而不是回写裸选择器。
+
+## 维护修订（2026-11-08）：日期**筛选控件**局部迁移，收敛层扩至 7 个组件
+
+- **决策的部分修订**：上文 Consequences 写的「核心表格与日期选择器不迁移」**只修订其中一半**。2026-11-08 用户看完五项静态预览后拍板 ①B，把店铺运营数据页 `OpsDailyView.vue` 筛选栏的「起始日期 + 结束日期」两个原生 `<input type="date">` 合并成一个整体控件，选型为 EP `el-date-picker type="daterange"`。
+- **边界（必须守住）**：迁移的是**一个筛选栏区间输入**，不是核心表格。`ElTable` / `ElPagination` / `ElTooltip` / `ElPopover` / `ElIcon` **仍不注册、不迁移**；指标矩阵继续用原生 `<table>` + sticky + `v-memo`，每页 50 行的性能契约不变。原结论对「核心表格」依旧完全成立。
+- **为什么改口**：① 两个独立日期框在视觉与交互上是「两个控件」，用户明确要「一个整体」；② EP daterange 在一个日历弹层内框选起止、天然保证起 ≤ 止，省掉原先 `:min="from"` / `:max="to"` 的双向联动；③ 项目已有收敛层与 `verify:ep` 机器闸门，新增一个语义包装的边际成本远低于自研双日历。评审时已提示过 ①B 会撞 `verify:ep` 的 `el-*` 黑名单，解法不是加例外，而是**把控件放进收敛层**（这正是该闸门设计的目的）。
+- **落地**：新建 `components/ui/AppDateRangePicker.vue`（第 7 个语义包装），业务页只认 `AppDateRangePicker` 与 `[from, to] | null` 字符串数组，用 `dateRange` computed 桥接既有 `from` / `to` ref，避免为换控件把 `baseQuery` / `previousRange` / 导出文件名一整串改成数组下标；`main.ts` 注册 `ElDatePicker` + 引入 `date-picker/style/css`；`verify:ep` ④ 导出检查数组 6 → 7，⑤ 自动校验注册与样式（实测 149/0）。
+- **代价（如实登记）**：新增懒加载 chunk `DateRangePicker-*.js` 18.75 kB（gzip 7.35 kB）+ 同名 CSS 9.81 kB（gzip 1.87 kB），不进首屏包。这是「一个筛选控件换一个整体交互」付出的体积，接受并监控。
+- **验证**：`npm run build` ✅、`npm run verify` 全链 ✅、真浏览器（8014 隔离 DB + Edge CDP）**16/16**，含「全区间把新日期推回控件」与「换日期后真的重查数据」两条交互断言。详见 `.scratch/ops-daily/SPEC.md` v1.5 §12 与工单 08。
