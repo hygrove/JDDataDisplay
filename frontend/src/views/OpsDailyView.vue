@@ -1,8 +1,9 @@
 <script setup lang="ts">
 // 店铺运营数据页（方案 A+B+C 图表）：B 指标矩阵打底 + A 顶部 4 张 KPI 卡 +
 // C 月度销售额趋势（按店铺类型拆解 + 月份之间环比徽章）。
-// ⚠️ 表头是单行指标名，不再标注「原子 / 派生」分组；派生公式走中文 title 悬停（D7）。
-//    列序由 orderMetricsForDisplay 按「分母锚点」投影，DB sort_order 仍是存储序 SSOT（D7）。
+// ⚠️ 表头是双层：第一行六组业务域组名（colspan），第二行指标名；派生公式走中文 title 悬停（D7）。
+//    组内列序由 METRIC_GROUPS 配置决定，orderMetricsForDisplay 仍作成员来源（分母锚点），
+//    DB sort_order 仍是存储序 SSOT。表头 / 数据行 / CSV 共用 groupedCells 的同一份列序。
 //
 // 三重隔离：独立路由 /ops-daily，不注册 modules/index.ts、不进 manifest v-for、
 // 不落入 /module/:moduleId ⇒ 单品明细与库存页 0 改动。
@@ -29,6 +30,8 @@ import {
   defaultRange,
   defaultSelectedKeys,
   exportPages,
+  flattenGroupedMetrics,
+  groupMetricsForDisplay,
   metricTitle,
   orderMetricsForDisplay,
   shopTypeLabel,
@@ -42,6 +45,7 @@ import {
   type OpsDailyMeta,
   type OpsDailyRow,
   type OpsMetric,
+  type OpsMetricGroupView,
   type OpsMonthlyPoint,
   type OpsQuery,
   type MonthlyMomBadge,
@@ -130,16 +134,35 @@ const metricsByKey = computed(() => {
 });
 
 /**
- * 当前勾选列（D7）：顺序恒按「分母锚点」展示序，勾选只决定「有哪些列」。
- * 表格与导出 CSV 共用它 ⇒ 两者列序自动一致（SPEC F-05）。
+ * 当前勾选的原始列：勾选只决定「有哪些列」，最终列序交给分组投影决定。
  */
-const visibleMetrics = computed<OpsMetric[]>(() => {
+const orderedSelected = computed<OpsMetric[]>(() => {
   const picked = new Set(selectedKeys.value);
   return orderMetricsForDisplay(meta.value?.metrics ?? []).filter((m) => picked.has(m.metric_key));
 });
 
+/**
+ * 表头分组投影（2026-11-09 拍板：六组业务域 + 闭合框线）。
+ * ⚠️ 表头、tbody 数据行与 CSV 导出**共用同一份列序**，否则组名行的 colspan
+ * 会与数据列错位（SPEC F-05 的分组版）。
+ */
+const visibleGroups = computed<OpsMetricGroupView[]>(() =>
+  groupMetricsForDisplay(orderedSelected.value),
+);
+/** 逐列摊平：thead 第二行与 tbody 共用，组首尾判定已在纯函数层，模板零判定。 */
+const groupedCells = computed(() => visibleGroups.value.flatMap((g) => g.cells));
+/** 扁平列数组：导出按钮的禁用判定与 buildOpsCsv() 仍消费它。 */
+const visibleMetrics = computed<OpsMetric[]>(() => flattenGroupedMetrics(visibleGroups.value));
+
 const derivedAll = computed(() => (meta.value?.metrics ?? []).filter((m) => m.kind === "derived"));
 const maxPage = computed(() => Math.max(1, Math.ceil(total.value / PAGE_SIZE)));
+/**
+ * 已有表格数据时，重查（翻页 / 换筛选）期间保留旧表格 DOM。
+ * ⚠️ 曾把 .od-scroll（max-height: 62vh）整块换成 95px 的 loading 占位，
+ * 页面高度骤降 ~440px ⇒ .main 的 scrollTop 被浏览器夹紧，图表重新进入视口、
+ * 表格被顶下去；能否弹回只靠浏览器滚动锚定，实测不保证（用户截图即失效场景）。
+ */
+const hasRenderedRows = computed(() => rows.value.length > 0);
 
 /**
  * 方案 C 图表几何全部由纯函数算好，模板只渲染（判定层 0 计算、便于 node 断言）。
@@ -173,11 +196,16 @@ const legendDemos = computed<MonthlyMomBadge[]>(() =>
     .filter((b): b is MonthlyMomBadge => Boolean(b)),
 );
 
-/** 勾选面板分组（分组标题只是展示，不影响字典是唯一列来源）。 */
-const metricGroups = computed(() => [
-  { title: "原子指标", items: (meta.value?.metrics ?? []).filter((m) => m.kind === "atomic") },
-  { title: "派生指标（查询时重算）", items: derivedAll.value },
-]);
+/**
+ * 勾选面板分组：复用表头同一份业务域配置，避免两处分类口径不一致。
+ * 原本「原子 / 派生」的信息改由每个派生项后的「计算」小标签承载。
+ */
+const metricGroups = computed(() =>
+  groupMetricsForDisplay(meta.value?.metrics ?? []).map((g) => ({
+    title: g.title,
+    items: g.cells.map((c) => c.metric),
+  })),
+);
 
 /**
  * 把接口异常映射到页面状态（视图只做赋值，判定在 opsDaily.ts 纯函数层）。
@@ -501,7 +529,8 @@ onBeforeUnmount(() => {
         <!-- D9 实时结果条：换条件走既有防抖重查，total 更新后这里自动刷新。 -->
         <div class="od-result-bar" data-testid="ops-result-bar">
           <span class="orb-chip">筛选结果</span>
-          <span v-if="state === 'loading'" class="orb-note">正在按新条件查询…</span>
+          <!-- 翻页同样会进 loading，文案用两种重查都成立的说法。 -->
+          <span v-if="state === 'loading'" class="orb-note">正在加载…</span>
           <template v-else>
             <span>共 <b>{{ total }}</b> 行</span>
             <span class="orb-sep">·</span>
@@ -714,6 +743,7 @@ onBeforeUnmount(() => {
                   @change="toggleKey(m.metric_key)"
                 />
                 <span>{{ m.cn_name }}</span>
+                <small v-if="m.kind === 'derived'" class="od-check-derived">计算</small>
               </label>
             </div>
           </div>
@@ -733,7 +763,7 @@ onBeforeUnmount(() => {
       </section>
 
       <section class="od-table-wrap" aria-label="指标矩阵">
-        <div v-if="state === 'loading'" class="od-loading" data-testid="ops-state-loading">
+        <div v-if="state === 'loading' && !hasRenderedRows" class="od-loading" data-testid="ops-state-loading">
           正在加载数据…
         </div>
         <template v-else>
@@ -746,41 +776,61 @@ onBeforeUnmount(() => {
             <div class="od-state-title">未勾选任何指标</div>
             <p class="od-state-desc">在「指标勾选」里至少选择一列后再导出。</p>
           </div>
-          <div v-else class="od-scroll">
+          <div v-else class="od-scroll" :class="{ 'is-refreshing': state === 'loading' }">
             <table class="od-table">
-              <!-- 表头只保留一行指标名：不再标注「原子 / 派生」分组（用户 2026-11-06 要求）。
-                   派生列的公式走中文 title 悬停（D7）；列序按分母锚点投影（D7）；
-                   勾选面板里的分组文字不是表头，不受影响。 -->
+              <!-- 双层表头（2026-11-09 拍板：六组业务域 + 闭合框线）。
+                   组名行用 colspan 横跨本组全部列；指标行与 tbody 共用 groupedCells
+                   ⇒ 表头、数据、CSV 三者列序恒一致。组首/组尾由纯函数给出
+                   groupStart / groupEnd，⛔ 不用 :nth-child（勾选改变列数即错位）。 -->
               <thead>
-                <tr>
-                  <th class="od-sticky">日期</th>
-                  <th class="od-sticky od-sticky-2">店铺</th>
-                  <th>类型</th>
+                <tr class="od-row-groups">
+                  <th class="od-sticky od-col-date od-dim-l" rowspan="2" scope="col">日期</th>
+                  <th class="od-sticky od-sticky-2 od-col-shop" rowspan="2" scope="col">店铺</th>
+                  <th class="od-sticky od-sticky-3 od-col-type od-dim-r" rowspan="2" scope="col">类型</th>
                   <th
-                    v-for="m in visibleMetrics"
-                    :key="m.metric_key"
-                    :title="metricTitle(m, meta?.metrics ?? [])"
-                    :class="{ 'od-th-derived': m.kind === 'derived' }"
+                    v-for="g in visibleGroups"
+                    :key="g.key"
+                    class="od-group-th"
+                    :colspan="g.span"
+                    scope="colgroup"
+                  ><span class="od-group-label">{{ g.title }}</span></th>
+                </tr>
+                <tr class="od-row-metrics">
+                  <th
+                    v-for="cell in groupedCells"
+                    :key="cell.metric.metric_key"
+                    :title="metricTitle(cell.metric, meta?.metrics ?? [])"
+                    :class="{
+                      'od-th-derived': cell.metric.kind === 'derived',
+                      'od-box-l': cell.groupStart,
+                      'od-box-r': cell.groupEnd,
+                    }"
+                    scope="col"
                   >
-                    {{ m.cn_name }}<small v-if="m.unit" class="od-unit">{{ m.unit }}</small>
+                    {{ cell.metric.cn_name }}<small v-if="cell.metric.unit" class="od-unit">{{ cell.metric.unit }}</small>
                   </th>
                 </tr>
               </thead>
               <tbody>
                 <tr
-                  v-for="row in rows"
+                  v-for="(row, i) in rows"
                   :key="`${row.date}|${row.shop}|${row.shop_type}`"
-                  v-memo="[row, visibleMetrics]"
+                  v-memo="[row, groupedCells, i === rows.length - 1]"
+                  :class="{ 'od-last-row': i === rows.length - 1 }"
                 >
-                  <td class="od-sticky">{{ row.date }}</td>
-                  <td class="od-sticky od-sticky-2">{{ row.shop }}</td>
-                  <td>{{ shopTypeLabel(row.shop_type) }}</td>
+                  <td class="od-sticky od-col-date od-dim-l">{{ row.date }}</td>
+                  <td class="od-sticky od-sticky-2 od-col-shop" :title="row.shop">{{ row.shop }}</td>
+                  <td class="od-sticky od-sticky-3 od-col-type od-dim-r">{{ shopTypeLabel(row.shop_type) }}</td>
                   <td
-                    v-for="m in visibleMetrics"
-                    :key="m.metric_key"
-                    :class="{ 'is-missing': isMissing(row.values[m.metric_key]) }"
+                    v-for="cell in groupedCells"
+                    :key="cell.metric.metric_key"
+                    :class="{
+                      'is-missing': isMissing(row.values[cell.metric.metric_key]),
+                      'od-box-l': cell.groupStart,
+                      'od-box-r': cell.groupEnd,
+                    }"
                   >
-                    {{ formatValue(row.values[m.metric_key], m) }}
+                    {{ formatValue(row.values[cell.metric.metric_key], cell.metric) }}
                   </td>
                 </tr>
               </tbody>
@@ -1154,6 +1204,15 @@ onBeforeUnmount(() => {
   cursor: pointer;
 }
 .od-check input { accent-color: var(--color-brand); cursor: pointer; }
+/* 勾选面板改按业务域分组后，「派生 / 查询时重算」的信息改由小标签承载。 */
+.od-check-derived {
+  font-size: calc(11px * var(--font-scale));
+  color: var(--color-text-5);
+  border: 1px solid var(--color-border-2);
+  border-radius: var(--radius-xs);
+  padding: 0 3px;
+  line-height: 1.4;
+}
 .od-export { display: flex; align-items: center; gap: 10px; }
 .od-note { font-size: calc(12px * var(--font-scale)); color: var(--color-text-5); }
 
@@ -1186,37 +1245,93 @@ onBeforeUnmount(() => {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   min-width: 0;
+  /* L 形锁定：三个维度列定宽，sticky 的 left 才算得准（内容自适应会错位）。
+     组名行高度同时是指标行 sticky 的 top 偏移，两者共用同一个变量。 */
+  --od-col-date: 112px;
+  --od-col-shop: 128px;
+  --od-col-type: 64px;
+  --od-group-head-h: 30px;
 }
-.od-scroll { overflow-x: auto; overflow-y: auto; max-height: 62vh; }
+/* 高度恒定：满页由 max-height 限高，末页行数少时由 min-height 撑住。
+   ⚠️ 少了 min-height，最后一页（如 10 行）会比满页矮 ~144px ⇒ 页面变矮、
+   .main 的 scrollTop 被夹紧，表格视角一样会被带走（真浏览器实测）。 */
+.od-scroll { overflow-x: auto; overflow-y: auto; min-height: 62vh; max-height: 62vh; }
+/* 重查期间的局部指示：只降透明度，DOM 与高度不变 ⇒ 滚动位置不会被夹紧。 */
+.od-scroll.is-refreshing { opacity: .6; }
 .od-table { border-collapse: separate; border-spacing: 0; width: 100%; font-size: calc(12.5px * var(--font-scale)); }
 .od-table th,
 .od-table td {
   padding: 7px 10px;
   text-align: right;
   white-space: nowrap;
-  border-bottom: 1px solid var(--color-border-4);
+  /* 闭合框线：组内每列都有竖线，比原来只留行线更清晰。
+     ⛔ 边框只用边框令牌，不拿文字令牌凑（ai-rules §3）。 */
+  border-right: 1px solid var(--color-border-2);
+  border-bottom: 1px solid var(--color-border-2);
   font-variant-numeric: tabular-nums;
 }
 .od-table thead th {
   position: sticky;
-  top: 0;
   z-index: 3;
   background: var(--color-surface-head);
   color: var(--color-brand-darker);
   font-weight: 600;
   border-bottom: 1px solid var(--color-brand-border);
 }
-/* 表头已改单行：不再有第二行 sticky 偏移，也不再有分组表头样式 */
+/* 双行表头吸顶：组名行贴顶，指标行贴在组名行之下 ⇒ L 形的横边。 */
+.od-table thead .od-row-groups th { top: 0; z-index: 4; }
+.od-table thead .od-row-metrics th { top: var(--od-group-head-h); z-index: 3; }
+/* 组名条 = 每组矩形框的顶边：灰底 + 深色边框 + 上圆角。 */
+.od-table thead .od-group-th {
+  height: var(--od-group-head-h);
+  line-height: 18px;
+  padding: 5px 10px;
+  text-align: left;
+  background: var(--color-surface-2);
+  color: var(--color-text-2);
+  border: 1px solid var(--color-divider-strong);
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+}
+/* 组名文字横向吸左：宽表滚到组中间时，组名条本体已滑出视野，
+   文字仍贴在三个固定维度列右边界 ⇒ 看得到当前列属于哪一组。
+   sticky 只在所属 th 的范围内生效，不会串到隔壁组。 */
+.od-table thead .od-group-label {
+  position: sticky;
+  left: calc(var(--od-col-date) + var(--od-col-shop) + var(--od-col-type) + 10px);
+  display: inline-block;
+}
 .od-th-derived { color: var(--color-brand-dark) !important; }
 .od-unit { margin-left: 3px; font-weight: 400; color: var(--color-text-5); }
+/* 组框左右两条边：由纯函数给的 groupStart / groupEnd 标记驱动，
+   ⛔ 不用 :nth-child（勾选改变列数时按位置选列必然错位）。 */
+.od-table .od-box-l { border-left: 1px solid var(--color-divider-strong); }
+.od-table .od-box-r { border-right: 1px solid var(--color-divider-strong); }
+.od-table .od-dim-l { border-left: 1px solid var(--color-divider-strong); }
+.od-table .od-dim-r { border-right: 1px solid var(--color-divider-strong); }
+/* 末行封底：六个矩形框各自闭合。用行 class 而非 :last-child，
+   与「不依赖结构位置」的约定保持一致。 */
+.od-table tbody tr.od-last-row td { border-bottom: 1px solid var(--color-divider-strong); }
 /* ⛔ 不用 :nth-child（ai-rules §5：依赖「每行列数相同」这个隐藏前提，
-   勾选指标改变列数时极易错位）。前两列本来就有 od-sticky 类，直接按类选中。 */
+   勾选指标改变列数时极易错位）。三个维度列本来就有 od-sticky 类，直接按类选中。 */
 .od-table td.od-sticky,
 .od-table th.od-sticky { text-align: left; }
+/* 三个维度列定宽：宽度与 sticky 的 left 同源，横滚时严丝合缝。
+   长店名省略显示，完整名称走 td 的 title 属性。 */
+.od-col-date { width: var(--od-col-date); min-width: var(--od-col-date); max-width: var(--od-col-date); overflow: hidden; text-overflow: ellipsis; }
+.od-col-shop { width: var(--od-col-shop); min-width: var(--od-col-shop); max-width: var(--od-col-shop); overflow: hidden; text-overflow: ellipsis; }
+.od-col-type { width: var(--od-col-type); min-width: var(--od-col-type); max-width: var(--od-col-type); overflow: hidden; text-overflow: ellipsis; }
 .od-sticky { position: sticky; left: 0; z-index: 2; background: var(--color-surface); }
-.od-sticky-2 { left: 96px; }
-.od-table thead .od-sticky { z-index: 4; background: var(--color-surface-head); }
-/* 固定列表头背景与其他 th 一致，单行表头不再需要第二层覆盖 */
+.od-sticky-2 { left: var(--od-col-date); }
+.od-sticky-3 { left: calc(var(--od-col-date) + var(--od-col-shop)); }
+/* 交叉格（rowspan=2 的维度表头）必须盖住两行表头，否则横滚时会露缝。 */
+.od-table thead .od-sticky {
+  background: var(--color-surface-2);
+  color: var(--color-text-2);
+  border-bottom: 1px solid var(--color-divider-strong);
+}
+/* 交叉格须压过组名行（z-index:4），否则横滚到边界会露缝；
+   选择器带上 .od-row-groups 才能赢过那条更高特异性的规则。 */
+.od-table thead .od-row-groups th.od-sticky { z-index: 5; }
 .od-table tbody tr:hover td { background: var(--color-surface-2); }
 .od-table tbody tr:hover .od-sticky { background: var(--color-surface-2); }
 .od-table .is-missing { color: var(--color-text-6); }

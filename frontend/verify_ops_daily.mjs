@@ -21,6 +21,9 @@ import {
   formatTrend,
   formatValue,
   formatWan,
+  flattenGroupedMetrics,
+  groupMetricsForDisplay,
+  METRIC_GROUPS,
   isMissing,
   metricTitle,
   momSymbol,
@@ -317,6 +320,95 @@ const partial = buildShopSelectOptions(allShops, ["pop", "self"],
 eq(partial.length, 18, "部分映射缺失不丢店");
 eq(partial.filter((o) => o.group === "__unclassified__").length, 1, "缺映射的店归「未分类」");
 eq(buildShopSelectOptions([], ["pop", "self"], typeMap).length, 1, "空店铺列表只有「全部店铺」");
+
+// ---- 方案 C：业务域分组表头（判定与渲染分离，组边界由纯函数给出） ----
+const atomicKeys = [
+  "sales_amount", "visitors", "buyers", "search_traffic",
+  "compensation_amount", "refund_amount", "refund_duration",
+  "supplement_principal", "supplement_commission", "supplement_orders",
+  "promo_clicks", "promo_order_amount", "promo_cost",
+  "jd_union_commission", "jd_union_order_amount",
+  "service_consult_score", "logistics_score", "aftersale_score", "product_experience_score",
+];
+const derivedFormulas = [
+  ["conversion_rate", "buyers/visitors"],
+  ["avg_price", "sales_amount/buyers"],
+  ["ppc", "promo_cost/promo_clicks"],
+  ["roi", "promo_order_amount/promo_cost"],
+  ["jd_union_commission_rate", "jd_union_commission/jd_union_order_amount"],
+];
+const mkMetric = (metric_key, kind, formula) => ({
+  metric_key, cn_name: metric_key, source_name: metric_key, kind, formula,
+  db_column: metric_key, unit: "", is_baseline: false, sort_order: 0, precision: 2,
+});
+const groupDict = [
+  ...atomicKeys.map((k) => mkMetric(k, "atomic", "")),
+  ...derivedFormulas.map(([k, f]) => mkMetric(k, "derived", f)),
+];
+
+eq(METRIC_GROUPS.length, 6, "分组配置是 6 组");
+eq(METRIC_GROUPS.map((g) => g.title),
+  ["店铺核心数据", "售后服务类", "补单类", "京准通推广类", "京东联盟类", "动态评分类"],
+  "组名与拍板一致");
+eq(METRIC_GROUPS.reduce((n, g) => n + g.keys.length, 0), 24, "六组共覆盖 24 个指标");
+eq(new Set(METRIC_GROUPS.flatMap((g) => g.keys)).size, 24, "分组配置无重复 key");
+
+const grouped = groupMetricsForDisplay(groupDict);
+eq(grouped.length, 6, "完整字典投影出 6 组");
+eq(grouped.map((g) => g.span), [6, 3, 3, 5, 3, 4], "各组 colspan 与拍板列数一致");
+eq(grouped.every((g) => g.span === g.cells.length), true, "colspan 恒等于实际列数");
+eq(flattenGroupedMetrics(grouped).length, 24, "展开后不丢列");
+eq(new Set(flattenGroupedMetrics(grouped).map((m) => m.metric_key)).size, 24, "展开后不重复");
+eq(grouped[0].cells.map((c) => c.metric.metric_key).join(","),
+  "sales_amount,visitors,conversion_rate,buyers,avg_price,search_traffic",
+  "核心组列序按拍板顺序");
+eq(grouped[4].cells[1].metric.metric_key, "jd_union_commission_rate",
+  "联盟组佣金比例按拍板排在第 2 列");
+eq(grouped.every((g) => g.cells[0].groupStart && g.cells[g.cells.length - 1].groupEnd), true,
+  "每组首列有左框、末列有右框");
+eq(grouped.every((g) => g.cells.slice(1, -1).every((c) => !c.groupStart && !c.groupEnd)), true,
+  "组内列不带组框线");
+eq(grouped[0].cells[0].groupEnd, false, "多列组的首列不是末列");
+
+// 单列组必须四边闭合；未列入配置的指标一律进「未分类」，不丢列
+const single = groupMetricsForDisplay(groupDict,
+  [{ key: "x", title: "单列", keys: ["sales_amount"] }]);
+eq(single.length, 2, "自定义分组 + 未分类兜底共 2 组");
+eq(single[0].cells[0].groupStart && single[0].cells[0].groupEnd, true,
+  "单列组首尾标记同时为真（框闭合）");
+eq(single[1].title, "未分类", "未列入配置的指标进「未分类」组");
+eq(single[1].span, 23, "未分类组收齐剩余 23 列");
+eq(flattenGroupedMetrics(single).length, 24, "自定义分组仍不丢列");
+
+// 字典新增指标：前端 0 改码，自动成组且列序连续
+const grown = groupMetricsForDisplay([...groupDict, mkMetric("new_metric", "atomic", "")]);
+eq(grown.length, 7, "新增指标自动多一组");
+eq(grown[6].title, "未分类", "新指标归未分类");
+eq(flattenGroupedMetrics(grown).length, 25, "新增指标不丢");
+
+// 勾选子集：空组不渲染，colspan 随勾选变化，框线闭合不错位
+const subset = groupMetricsForDisplay(groupDict.filter((m) =>
+  ["sales_amount", "roi", "product_experience_score"].includes(m.metric_key)));
+eq(subset.length, 3, "勾选 3 列只渲染 3 个非空组");
+eq(subset.map((g) => g.span), [1, 1, 1], "子集各组 colspan=1");
+eq(subset.every((g) => g.cells[0].groupStart && g.cells[0].groupEnd), true,
+  "单列组四边闭合");
+eq(flattenGroupedMetrics(subset).map((m) => m.metric_key),
+  ["sales_amount", "roi", "product_experience_score"], "子集列序按组顺序展开");
+eq(groupMetricsForDisplay([]).length, 0, "空字典无分组，不渲染空 thead");
+
+// 表头 / 数据行 / CSV 必须同源：把分组摊平结果直接喂给 buildOpsCsv，
+// 锁死「按组重排不会让导出列序与屏幕错位」（code-review-zh Spec 轴收尾项）。
+const csvMetrics = flattenGroupedMetrics(grouped);
+const csvLinked = buildOpsCsv(csvMetrics, [
+  { date: "2026-10-02", shop: "示例店", shop_type: "pop", values: {} },
+]);
+const csvLines = csvLinked.split("\r\n");
+eq(csvLines[0].split(","), ["日期", "店铺", "类型", ...csvMetrics.map((m) => m.cn_name)],
+  "CSV 表头列序 = 分组摊平列序（表头/数据/导出同源）");
+eq(csvLines[1].split(",").length, csvMetrics.length + 3, "CSV 数据行列数与表头一致");
+eq(csvLines[1].split(",").slice(3).every((c) => c === EMPTY), true,
+  "缺值按 -- 输出，分组重排不影响 NULL/0 分离");
 
 console.log(`\n合计：PASS ${pass} / FAIL ${fail}`);
 if (fail) {

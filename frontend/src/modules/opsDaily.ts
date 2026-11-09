@@ -463,6 +463,169 @@ export function orderMetricsForDisplay(metrics: OpsMetric[]): OpsMetric[] {
   return out;
 }
 
+// ====================== 指标业务域分组表头（2026-11-09 拍板：闭合框线） ======================
+
+/** 一组的视图层配置；`keys` 的顺序即组内列序。 */
+export interface OpsMetricGroup {
+  /** 稳定键，供 v-for 的 :key 使用，不参与展示。 */
+  key: string;
+  /** 表头第一行显示的组名。 */
+  title: string;
+  /** 组内指标的 metric_key；未列入任何组的指标自动进「未分类」。 */
+  keys: readonly string[];
+}
+
+/** 一个可渲染单元格：指标 + 组边界标记，模板零判定（ai-rules §3 判定与渲染分离）。 */
+export interface OpsMetricCell {
+  metric: OpsMetric;
+  /** 该组首列 ⇒ 加左框线。 */
+  groupStart: boolean;
+  /** 该组末列 ⇒ 加右框线。 */
+  groupEnd: boolean;
+}
+
+/** 一组的可渲染投影；`span` 直接供 thead 的 `colspan` 使用。 */
+export interface OpsMetricGroupView {
+  key: string;
+  title: string;
+  span: number;
+  cells: OpsMetricCell[];
+}
+
+/**
+ * 六组业务域划分（**视图层配置**，⛔ 不是 DB `sort_order` 的替代）。
+ *
+ * @remarks
+ * 组内顺序按拍板时用户列出的顺序，例如京东联盟组是「佣金 → 佣金比例 → 成交金额」，
+ * 与「分母锚点」投影把派生列挂在分母之后略有不同；`orderMetricsForDisplay()`
+ * 仍作为**成员来源**复用，保证派生列不丢、字典新增项不漏。
+ * 组名「售后服务类」刻意带「类」字，避开与动态评分指标「售后服务」的术语重载。
+ * ⚠️ 这里按 key 列举是短期方案；`groupMetricsForDisplay()` 已把 groups 做成入参，
+ * 未来由 `/meta` 下发分组时直接替换实参即可，视图 0 改码。
+ */
+export const METRIC_GROUPS: readonly OpsMetricGroup[] = [
+  {
+    key: "core",
+    title: "店铺核心数据",
+    keys: ["sales_amount", "visitors", "conversion_rate", "buyers", "avg_price", "search_traffic"],
+  },
+  {
+    key: "aftersale",
+    title: "售后服务类",
+    keys: ["compensation_amount", "refund_amount", "refund_duration"],
+  },
+  {
+    key: "supplement",
+    title: "补单类",
+    keys: ["supplement_principal", "supplement_commission", "supplement_orders"],
+  },
+  {
+    key: "jzt",
+    title: "京准通推广类",
+    keys: ["promo_clicks", "ppc", "promo_order_amount", "promo_cost", "roi"],
+  },
+  {
+    key: "union",
+    title: "京东联盟类",
+    keys: ["jd_union_commission", "jd_union_commission_rate", "jd_union_order_amount"],
+  },
+  {
+    key: "score",
+    title: "动态评分类",
+    keys: ["service_consult_score", "logistics_score", "aftersale_score", "product_experience_score"],
+  },
+];
+
+/** 未列入配置的指标的兜底组键。 */
+const UNCLASSIFIED_GROUP_KEY = "__unclassified__";
+
+/**
+ * 把指标字典投影成「逐组 → 逐列」的可渲染结构。
+ *
+ * @remarks
+ * 先复用 `orderMetricsForDisplay()` 拿到全量列（派生列由 formula 定位，不丢不重），
+ * 再按配置把每组的 key 取出来排成列序；**空组不输出**，避免 thead 出现 `colspan=0`。
+ * 未被任何组认领的指标统一追加到「未分类」组 ⇒ 字典新增指标前端 0 改码。
+ * 组首/组尾标记在这里算好，视图只按标记加 class，⛔ 不用 `:nth-child`
+ * （勾选改变列数时按位置选列必然错位，ai-rules §5）。单列组的首列会同时带
+ * `groupStart` 与 `groupEnd`，这样闭合框四面都有线。
+ *
+ * @param metrics - /meta 下发的字典（可只含当前勾选的列）。
+ * @param groups - 分组配置；默认 `METRIC_GROUPS`，预留给未来后端字典下发。
+ * @returns 非空组的投影数组；空输入返回空数组。
+ * @example
+ * ```ts
+ * const g = groupMetricsForDisplay(meta.metrics);
+ * g[0].span;                 // 6（店铺核心数据 6 列）
+ * g[0].cells[0].groupStart; // true
+ * ```
+ */
+export function groupMetricsForDisplay(
+  metrics: OpsMetric[],
+  groups: readonly OpsMetricGroup[] = METRIC_GROUPS,
+): OpsMetricGroupView[] {
+  const ordered = orderMetricsForDisplay(metrics);
+  const byKey = new Map(ordered.map((m) => [m.metric_key, m]));
+  const used = new Set<string>();
+  const out: OpsMetricGroupView[] = [];
+
+  const push = (g: OpsMetricGroup, items: OpsMetric[]): void => {
+    if (!items.length) return;
+    for (const m of items) used.add(m.metric_key);
+    const last = items.length - 1;
+    out.push({
+      key: g.key,
+      title: g.title,
+      span: items.length,
+      cells: items.map((metric, i) => ({
+        metric,
+        groupStart: i === 0,
+        groupEnd: i === last,
+      })),
+    });
+  };
+
+  for (const g of groups) {
+    const seen = new Set<string>();
+    const items: OpsMetric[] = [];
+    for (const k of g.keys) {
+      // 配置里重复写同一个 key、或跨组重复时只保留首次出现的那一列。
+      if (seen.has(k) || used.has(k)) continue;
+      seen.add(k);
+      const m = byKey.get(k);
+      if (m) items.push(m);
+    }
+    push(g, items);
+  }
+
+  const rest = ordered.filter((m) => !used.has(m.metric_key));
+  if (rest.length) {
+    push(
+      {
+        key: UNCLASSIFIED_GROUP_KEY,
+        title: "未分类",
+        keys: rest.map((m) => m.metric_key),
+      },
+      rest,
+    );
+  }
+  return out;
+}
+
+/**
+ * 把分组投影摊平回指标数组。
+ *
+ * @remarks
+ * 表头、`tbody` 数据行与 `buildOpsCsv()` 导出**必须共用这一份列序**，
+ * 否则组名行的 `colspan` 会与数据列错位（SPEC F-05 的分组版）。
+ *
+ * @param groups - `groupMetricsForDisplay()` 的结果。
+ * @returns 按组顺序展开的指标数组，无重复。
+ */
+export function flattenGroupedMetrics(groups: OpsMetricGroupView[]): OpsMetric[] {
+  return groups.flatMap((g) => g.cells.map((c) => c.metric));
+}
+
 // ====================== 方案 C：月度趋势与「月份之间」的环比标注 ======================
 
 /** 月份间环比徽章的展示契约（判定与渲染分离，判定全在本文件）。 */
