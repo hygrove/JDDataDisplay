@@ -27,18 +27,19 @@ import {
   buildShopSelectOptions,
   buildOpsCsv,
   classifyOpsError,
-  defaultRange,
+  defaultMonthRange,
   defaultSelectedKeys,
   exportPages,
   flattenGroupedMetrics,
   groupMetricsForDisplay,
   metricTitle,
   orderMetricsForDisplay,
+  resolveDefaultShop,
   shopTypeLabel,
   formatTrend,
   formatValue,
   isMissing,
-  previousRange,
+  previousMonthRange,
   shouldCloseMetricPanel,
   spanMom,
   trendClass,
@@ -75,9 +76,23 @@ const shopType = ref("");
 const selectedKeys = ref<string[]>([]);
 
 /**
+ * D13：用户是否**显式改过**日期区间 / 店铺。
+ *
+ * @remarks
+ * 默认值只在「用户从未主动设过」时生效（SPEC §17.4）：用户在**本页会话内**
+ * 手选过区间 / 店铺后，`/meta` 重新加载（重试）不该把他拽回默认值。
+ * 先例：`SpuAnalysisView.vue` 的 `rangeSet`。
+ *
+ * ⚠️ 这是**页面内存态**（`ref`），⛔ 不写 `localStorage` ⇒ **重进页面 = 新会话**，
+ * 默认值重新生效是符合预期的，不是 bug。
+ */
+const rangeSet = ref(false);
+const shopTouched = ref(false);
+
+/**
  * 日期区间控件的 v-model 桥接（D7）：EP 用 `[from, to]` 数组，
  * 页面状态与接口查询仍是两个独立的 `from` / `to` ref，避免为换控件
- * 把 baseQuery、previousRange、导出文件名等一整串逻辑改成数组下标。
+ * 把 baseQuery、previousMonthRange、导出文件名等一整串逻辑改成数组下标。
  * 清空（null）刻意忽略：`clearable=false` 且空区间会让首屏失去数据。
  */
 const dateRange = computed<[string, string] | null>({
@@ -88,6 +103,8 @@ const dateRange = computed<[string, string] | null>({
     if (!v) return;
     from.value = v[0];
     to.value = v[1];
+    // D13：用户显式选过区间 ⇒ 之后重进页面不再被默认值覆盖。
+    rangeSet.value = true;
   },
 });
 const panelOpen = ref(false);
@@ -218,7 +235,9 @@ function applyError(e: unknown): void {
   if (verdict.state === "error") errorText.value = verdict.message;
 }
 
-/** 拉取字典并初始化默认区间 / 默认勾选列。 */
+/**
+ * 拉取字典并初始化默认区间 / 默认店铺 / 默认勾选列。
+ */
 async function loadMeta(): Promise<boolean> {
   try {
     const m = await fetchOpsDailyMeta();
@@ -227,8 +246,16 @@ async function loadMeta(): Promise<boolean> {
       // D7：默认全选 24 列，首屏即可看到全部指标与派生重算值。
       selectedKeys.value = defaultSelectedKeys(m.metrics);
     }
-    if (m.data_through) {
-      const r = defaultRange(m.data_through, 30);
+    // D13：默认店铺 = 钻芯旗舰店。⛔ 存在性校验在纯函数里做，库里没有就降级「全部店铺」。
+    // 用户显式选过别的店时不再覆盖（与 rangeSet 同一套语义）。
+    if (!shopTouched.value) {
+      shop.value = resolveDefaultShop(m.shops);
+    }
+    // D13：默认区间 = 整月自然段（⛔ 不再是滚动 30 天）。
+    // ⚠️ 用户在本页会话内手动改过区间后不再覆盖（`rangeSet` 是内存态，
+    // ⛔ 不跨会话 ⇒ 重进页面仍会回到默认整月，那是预期行为）。
+    if (m.data_through && !rangeSet.value) {
+      const r = defaultMonthRange(m.data_through);
       from.value = r.from;
       to.value = r.to;
     }
@@ -255,7 +282,8 @@ async function loadData(): Promise<void> {
   state.value = "loading";
 
   const q = baseQuery.value;
-  const prev = previousRange(q.from, q.to);
+  // D13：上期跟月份走（上一个自然月的整月），⛔ 不再是「等长 N 天」。
+  const prev = previousMonthRange(q.from, q.to);
   try {
     const [cur, prevData] = await Promise.all([
       fetchOpsDailyData({ ...q, page: page.value, page_size: PAGE_SIZE }, signal),
@@ -306,6 +334,7 @@ const shopSelectOptions = computed(() =>
 /** AppSelect 的值类型比 `shop` 宽（number|string|undefined），统一收敛成 string。 */
 function onShopChange(v: number | string | undefined): void {
   shop.value = v == null ? "" : String(v);
+  shopTouched.value = true;
   onFilterChange();
 }
 
@@ -323,6 +352,7 @@ function useAllRange(): void {
   if (meta.value?.data_from && meta.value.data_through) {
     from.value = meta.value.data_from;
     to.value = meta.value.data_through;
+    rangeSet.value = true;
     onFilterChange();
   }
 }

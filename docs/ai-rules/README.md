@@ -205,7 +205,7 @@
 - `npm run verify:inventory` → `verify_inventory_display.mjs`：库存/补货展示判定（矩阵表与补货工作台共用实现）。
 - `npm run verify:virtual` → `verify_virtual_list.mjs`：虚拟滚动行高映射。
 - `npm run verify:font` → `verify_font.mjs`：字号缩放令牌化（防回退）。
-- `npm run verify:ops` → `verify_ops_daily.mjs`（**176 断言**）：店铺运营页纯函数层——月度环比与符号、SVG 几何与徽章位置、刻度与线型、字典驱动列、NULL/0 显示、分批导出与 CSV BOM、请求参数拼装、`classifyOpsError()` 401/403 判定与渲染分离、`shopTypeLabel()` 已知类型中文标注 / 未知类型原样回显、`shouldCloseMetricPanel()` 浮层收起判定、`buildShopSelectOptions()` 店铺分组字典驱动 / 映射缺失降级 / 新增类型自动成组、六组业务域分组投影（colspan / 组首尾框线 / 未分类兜底 / 勾选子集）与 CSV 列序联动。
+- `npm run verify:ops` → `verify_ops_daily.mjs`（**194 断言**）：店铺运营页纯函数层——月度环比与符号、SVG 几何与徽章位置、刻度与线型、字典驱动列、NULL/0 显示、分批导出与 CSV BOM、请求参数拼装、`classifyOpsError()` 401/403 判定与渲染分离、`shopTypeLabel()` 已知类型中文标注 / 未知类型原样回显、`shouldCloseMetricPanel()` 浮层收起判定、`buildShopSelectOptions()` 店铺分组字典驱动 / 映射缺失降级 / 新增类型自动成组、六组业务域分组投影（colspan / 组首尾框线 / 未分类兜底 / 勾选子集）与 CSV 列序联动、**D13 默认整月自然段（`defaultMonthRange`）+ 默认店铺存在性校验降级（`resolveDefaultShop`）+ 上期跟月份走（`previousMonthRange`，含日号钳制 / 闰年 / 跨多月不重叠 / 两端月末语义一致）**。
 - `npm run verify:ep` → `verify_element_plus.mjs`（**151 断言**）：Element Plus 收敛层静态检查——业务组件不直写 `el-*` 标签 / 不直引或自定义 `--el-*` 变量、收敛层 7 个组件齐备、每个用到的 EP 组件（含 D9 的 `el-option-group`）均已注册且引入样式。
 
 ### 前端 · 真浏览器视觉回归（⛔ 未并入 `npm run verify`）

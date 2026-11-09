@@ -230,52 +230,160 @@ export function buildOpsCsv(metrics: OpsMetric[], rows: OpsDailyRow[]): string {
 }
 
 /**
- * 以数据最新日为终点，生成默认查询区间（含终点共 days 天）。
+ * 默认查询区间：**整月自然段**（D13）。
  *
  * @remarks
- * 首屏必须出真数据（D2），所以不能默认空区间；取近 30 天既保证有数据，
- * 又不会一上来把整段历史铺到表格里。全区间由页面上的按钮显式切换。
+ * 用户口径「日期默认最近的一个月」⇒ 给的是**自然月**（1 号 ~ 月末），
+ * ⛔ 不是滚动 N 天（D13 之前是滚动 30 天，那给的是 `2026-10-02~10-31`）。
+ *
+ * 「11 月没数据就往前推一个月」由 `data_through` 天然满足：
+ * `data_through` 是库内 `max(date)`，它所在的月份定义上就是**最后一个有数据的月份**
+ * ⇒ ⛔ 不需要逐月回溯，⛔ 后端不必新增 `months` 字段。
+ *
+ * `to` 取 `min(月末, data_through)`：当月数据未满时收在数据截至日，
+ * 既不越界到未来（EP 的 `disabledDate` 只拦用户点选、不钳制程序赋值），
+ * 也避免出现「未来日期的空行」。
+ *
+ * ⚠️ **不保证「本期 / 上期」等长**：整月默认下 10 月（31 天）的上期是 9 月（30 天），
+ * 天数天然不等——这正是「跟月份走」的含义（比自然月），SPEC §17.3 已登记为口径变更。
+ * ⛔ 别把它当回归。
  *
  * @param through - 库内最大日期 "YYYY-MM-DD"。
- * @param days - 区间天数，默认 30。
- * @returns 起止日期。
+ * @returns 整月自然段的起止日期。
  * @example
  * ```ts
- * defaultRange("2026-10-31"); // { from: "2026-10-02", to: "2026-10-31" }
+ * defaultMonthRange("2026-10-31"); // { from: "2026-10-01", to: "2026-10-31" }
+ * defaultMonthRange("2026-11-05"); // { from: "2026-11-01", to: "2026-11-05" }
  * ```
  */
-export function defaultRange(through: string, days = 30): { from: string; to: string } {
-  const DAY = 86_400_000;
-  const end = Date.parse(`${through}T00:00:00Z`);
-  const start = end - Math.max(1, days - 1) * DAY;
-  return { from: new Date(start).toISOString().slice(0, 10), to: through };
+export function defaultMonthRange(through: string): { from: string; to: string } {
+  const y = Number(through.slice(0, 4));
+  const m = Number(through.slice(5, 7)); // 1-12
+  const monthEnd = `${through.slice(0, 7)}-${String(lastDayOfMonth(y, m)).padStart(2, "0")}`;
+  return { from: `${through.slice(0, 7)}-01`, to: monthEnd < through ? monthEnd : through };
 }
 
 /**
- * 算出与当前区间等长的「上一期」区间，供 KPI 卡环比使用。
+ * 某年某月的最后一天（UTC 口径，避免本地时区与夏令时偏移）。
+ *
+ * @param year - 完整年份，如 2026。
+ * @param month - 月份，1-12。
+ * @returns 该月天数（28~31）。
+ */
+function lastDayOfMonth(year: number, month: number): number {
+  // Date.UTC 的 month 是 0-based ⇒ 传 month 本身即「下个月 0 号」，正是本月最后一天。
+  return new Date(Date.UTC(year, month, 0)).getUTCDate();
+}
+
+/**
+ * 日期串是否为本月的**最后一天**。
  *
  * @remarks
- * 用 UTC 毫秒计算再截回日期串，避免本地时区夏令时导致的天数偏差。
+ * D13 的上期平移要区分两种语义：
+ * - `to` 是月末 ⇒ 它表达「这个月的结束」，平移后应落在**目标月的月末**；
+ * - `to` 不是月末 ⇒ 它表达「第几天」，平移后按日号平移并钳制。
+ * ⛔ 混为一谈会让 9 月整月的上期变成 `08-30`（少一天）——静默错一截。
+ *
+ * @param date - 日期 "YYYY-MM-DD"。
+ * @returns true = 该日是所在月的最后一天。
+ */
+function isMonthEnd(date: string): boolean {
+  const y = Number(date.slice(0, 4));
+  const m = Number(date.slice(5, 7));
+  return Number(date.slice(8, 10)) === lastDayOfMonth(y, m);
+}
+
+/**
+ * 把日期串平移若干个自然月，日号**钳制**到目标月的最后一天（D13）。
+ *
+ * @remarks
+ * ⚠️ 钳制而非让 `Date` 自动进位：`10-31` 平移到 9 月（30 天）必须得到 `09-30`，
+ * 若放任 `Date` 进位会变成 `10-01` —— 那是「下个月」，静默错一个月。
+ * 闰年 2 月同理：`03-31` → `02-29`（2028）/ `02-28`（平年）。
+ *
+ * @param date - 原日期 "YYYY-MM-DD"。
+ * @param months - 平移月数，负数表示往前。
+ * @param monthEnd - true = 按「月末」语义平移（落目标月的最后一天），false = 按日号平移。
+ * @returns 平移并钳制后的日期。
+ */
+function shiftMonths(date: string, months: number, monthEnd = false): string {
+  const y = Number(date.slice(0, 4));
+  const m = Number(date.slice(5, 7)); // 1-12
+  const d = Number(date.slice(8, 10));
+  // 用「绝对月序」做加减，跨年（1 月 -1 月）不用特判。
+  const total = y * 12 + (m - 1) + months;
+  const ny = Math.floor(total / 12);
+  const nm = (total - ny * 12) + 1; // 回到 1-12
+  const nd = monthEnd ? lastDayOfMonth(ny, nm) : Math.min(d, lastDayOfMonth(ny, nm));
+  return `${String(ny).padStart(4, "0")}-${String(nm).padStart(2, "0")}-${String(nd).padStart(2, "0")}`;
+}
+
+/**
+ * 算出「上期」区间：**跟月份走**（D13）。
+ *
+ * @remarks
+ * 用户口径「上期改整月（跟月份走，不固定 30 天）」⇒ 上期是本期的**自然月平移**，
+ * ⛔ 不再是旧口径的「等长 N 天」。
+ *
+ * 为什么不是「取上一个自然月」：本期可能跨多个月（用户手选区间），
+ * 此时上期必须整体前移**所跨的月数**，⛔ 否则上期会与本期重叠、环比失真。
+ * 单月区间（首屏默认）两种算法一致：10/01~10/31 ⇒ 09/01~09/30。
+ *
+ * ⚠️ **两端必须用同一套语义**：`from` 与 `to` 各自按「是月末就按月末平移、
+ * 否则按日号平移并钳制」处理（见 `isMonthEnd`）。
+ * ⛔ 若只给 `to` 用月末语义、`from` 恒按日号，会出现
+ * `11-30~11-30`（1 天）的上期变成 `10-30~10-31`（2 天）——上期比本期还长，
+ * 环比被污染。实测手选「月末起」的区间必踩。
  *
  * @param from - 当前区间起点 "YYYY-MM-DD"。
  * @param to - 当前区间终点 "YYYY-MM-DD"。
- * @returns 上一期起止日期。
+ * @returns 上期起止日期。
  * @example
  * ```ts
- * previousRange("2026-10-01", "2026-10-31"); // { from: "2026-09-01", to: "2026-09-30" }
+ * previousMonthRange("2026-10-01", "2026-10-31"); // { from: "2026-09-01", to: "2026-09-30" }
+ * previousMonthRange("2026-03-31", "2026-03-31"); // { from: "2026-02-28", to: "2026-02-28" }
+ * previousMonthRange("2026-11-30", "2026-11-30"); // { from: "2026-10-31", to: "2026-10-31" }
  * ```
  */
-export function previousRange(from: string, to: string): { from: string; to: string } {
-  const DAY = 86_400_000;
-  const start = Date.parse(`${from}T00:00:00Z`);
-  const end = Date.parse(`${to}T00:00:00Z`);
-  const days = Math.max(1, Math.round((end - start) / DAY) + 1);
-  const prevEnd = start - DAY;
-  const prevStart = prevEnd - (days - 1) * DAY;
+export function previousMonthRange(from: string, to: string): { from: string; to: string } {
+  const span =
+    (Number(to.slice(0, 4)) * 12 + Number(to.slice(5, 7))) -
+    (Number(from.slice(0, 4)) * 12 + Number(from.slice(5, 7))) + 1;
   return {
-    from: new Date(prevStart).toISOString().slice(0, 10),
-    to: new Date(prevEnd).toISOString().slice(0, 10),
+    from: shiftMonths(from, -span, isMonthEnd(from)),
+    to: shiftMonths(to, -span, isMonthEnd(to)),
   };
+}
+
+/**
+ * 默认店铺（D13）：首屏预选的店铺名。
+ *
+ * @remarks
+ * ⚠️ 店铺名是**业务事实**、不在 `ops_metric_dict` 里 ⇒ 走前端配置常量，
+ * ⛔ 不进字典表（字典只管指标列，掺入店铺会让「字典驱动列」语义变浑）。
+ *
+ * ⛔ 落地时**必须**配合 `resolveDefaultShop()` 做存在性校验：
+ * 店铺改名 / 库未导入该店时降级为「全部店铺」，否则会静默筛空、页面看着正常却是 0 行。
+ */
+export const DEFAULT_SHOP = "钻芯旗舰店";
+
+/**
+ * 校验默认店铺是否存在，不存在则降级为「全部店铺」（D13）。
+ *
+ * @remarks
+ * 「全部店铺」在本页的约定值是**空串**（`/data` 的 `shop` 参数为空即不过滤）。
+ *
+ * @param shops - `/meta.shops`（库内 `DISTINCT shop`）；`meta` 未就绪时为 undefined。
+ * @returns 默认店铺名，或空串（全部店铺）。
+ * @example
+ * ```ts
+ * resolveDefaultShop(["钻芯旗舰店", "京喜自营"]); // "钻芯旗舰店"
+ * resolveDefaultShop(["京喜自营"]);               // ""
+ * ```
+ */
+export function resolveDefaultShop(shops?: readonly string[] | null): string {
+  if (!shops || !shops.length) return "";
+  return shops.includes(DEFAULT_SHOP) ? DEFAULT_SHOP : "";
 }
 
 /** 涨跌方向：up=涨（绿）、down=跌（红）、flat=持平或无法比较。 */

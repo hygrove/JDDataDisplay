@@ -15,7 +15,8 @@ import {
   classifyOpsError,
   csvCell,
   shopTypeLabel,
-  defaultRange,
+  DEFAULT_SHOP,
+  defaultMonthRange,
   defaultSelectedKeys,
   exportPages,
   formatTrend,
@@ -29,9 +30,10 @@ import {
   momSymbol,
   monthMom,
   orderMetricsForDisplay,
-  previousRange,
+  previousMonthRange,
   buildShopSelectOptions,
   queryString,
+  resolveDefaultShop,
   shouldCloseMetricPanel,
   spanMom,
   trendClass,
@@ -103,11 +105,39 @@ eq(lines[1], "2026-08-01,A店,pop,100.00,0", "真实 0 导出为 0 不是 --");
 eq(lines[2].includes(`${EMPTY},12`), true, "缺失值导出 -- 原样保留");
 eq(buildOpsCsv(cols, []).split("\r\n").length, 1, "空数据只出表头");
 
-// ---- 区间：默认近 30 天、上期等长 ----
-eq(defaultRange("2026-10-31", 30), { from: "2026-10-02", to: "2026-10-31" }, "默认近 30 天");
-// 10/01~10/31 共 31 天 ⇒ 等长上期是 08/31~09/30（跨月，别按自然月想当然写成 09/01）
-eq(previousRange("2026-10-01", "2026-10-31"), { from: "2026-08-31", to: "2026-09-30" }, "上期等长区间");
-eq(previousRange("2026-08-01", "2026-08-01"), { from: "2026-07-31", to: "2026-07-31" }, "单日区间的上期也是单日");
+// ---- D13：默认整月自然段（不是滚动 30 天） ----
+// 库里 max(date)=2026-10-31 ⇒ 默认落在 2026-10，给的是 10/01~10/31 而非 10/02~10/31
+eq(defaultMonthRange("2026-10-31"), { from: "2026-10-01", to: "2026-10-31" }, "默认整月自然段：10 月给 1 号到月末");
+// 当月只到月中 ⇒ to 收在 data_through，既不越界到未来、也保证与上期等长可比
+eq(defaultMonthRange("2026-11-05"), { from: "2026-11-01", to: "2026-11-05" }, "月中默认：to 收在数据截至日");
+eq(defaultMonthRange("2026-08-01"), { from: "2026-08-01", to: "2026-08-01" }, "月初默认：区间收在数据截至日");
+eq(defaultMonthRange("2026-01-31"), { from: "2026-01-01", to: "2026-01-31" }, "跨年取 1 月：from 不越到上一年 12 月");
+eq(defaultMonthRange("2026-12-15"), { from: "2026-12-01", to: "2026-12-15" }, "12 月默认仍在当年内");
+
+// ---- D13：上期跟月份走（上一个自然月的整月），不是等长 N 天 ----
+eq(previousMonthRange("2026-10-01", "2026-10-31"), { from: "2026-09-01", to: "2026-09-30" }, "10 月整月的上期是 9 月整月");
+eq(previousMonthRange("2026-09-01", "2026-09-30"), { from: "2026-08-01", to: "2026-08-31" }, "9 月整月的上期是 8 月整月");
+eq(previousMonthRange("2026-01-01", "2026-01-31"), { from: "2025-12-01", to: "2025-12-31" }, "1 月的上期跨年到上一年 12 月");
+// ⚠️ 日号钳制：31 号平移到 9 月（30 天）必须钳到 30，⛔ 不能让 Date 进位成 10/01
+eq(previousMonthRange("2026-08-31", "2026-08-31"), { from: "2026-07-31", to: "2026-07-31" }, "8/31 的上期仍是 7/31（钳制不进位）");
+eq(previousMonthRange("2026-03-31", "2026-03-31"), { from: "2026-02-28", to: "2026-02-28" }, "3/31 的上期钳到 2/28（平年）");
+// 闰年：2028-02 有 29 天 ⇒ 3/31 的上期是 2/29
+eq(previousMonthRange("2028-03-31", "2028-03-31"), { from: "2028-02-29", to: "2028-02-29" }, "3/31 的上期在闰年是 2/29");
+// 跨多月区间：上期整体前移「所跨月数」个月，⛔ 不能与本期重叠（否则环比失真）
+eq(previousMonthRange("2026-08-01", "2026-10-31"), { from: "2026-05-01", to: "2026-07-31" }, "跨 3 个月的区间：上期是前 3 个月，不与本期重叠");
+eq(previousMonthRange("2026-10-15", "2026-10-20"), { from: "2026-09-15", to: "2026-09-20" }, "月内区间：上期是上月同样日段");
+// ⚠️ from 与 to 必须是同一套月末/日号语义（双轴审查抓出）：
+//    首版只给 to 用月末语义 ⇒ 手选「月末起」区间时上期比本期还长。
+eq(previousMonthRange("2026-11-30", "2026-11-30"), { from: "2026-10-31", to: "2026-10-31" }, "月末单日区间的上期仍是月末单日（1 天，不是 2 天）");
+eq(previousMonthRange("2026-02-28", "2026-02-28"), { from: "2026-01-31", to: "2026-01-31" }, "平年 2/28 的上期是 1/31（都是月末，不多一天）");
+eq(previousMonthRange("2026-09-30", "2026-10-31"), { from: "2026-07-31", to: "2026-08-31" }, "月末起跨月区间：两端都按月末平移");
+
+// ---- D13：默认店铺存在性校验，缺失降级为「全部店铺」 ----
+eq(DEFAULT_SHOP, "钻芯旗舰店", "默认店铺常量");
+eq(resolveDefaultShop(["钻芯旗舰店", "京喜自营"]), "钻芯旗舰店", "默认店铺存在于库里时选中它");
+eq(resolveDefaultShop(["京喜自营"]), "", "默认店铺不在库里时降级为全部店铺");
+eq(resolveDefaultShop([]), "", "库里没有店铺时降级为全部店铺");
+eq(resolveDefaultShop(undefined), "", "meta 未就绪时降级为全部店铺");
 
 // ---- D3 绿涨红跌：up 对应 --color-up，down 对应 --color-down ----
 eq(trendClass(120, 100), "up", "上涨 → up（绿）");
